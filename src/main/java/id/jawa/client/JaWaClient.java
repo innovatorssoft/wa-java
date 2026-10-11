@@ -170,6 +170,13 @@ public final class JaWaClient implements AutoCloseable {
     private final java.util.concurrent.CountDownLatch closeLatch = new java.util.concurrent.CountDownLatch(1);
     private static final int PRE_KEY_UPLOAD_COUNT = 30;
 
+    private final MessagingService messagingService = new MessagingService(this);
+    private final GroupService groupService = new GroupService(this);
+    private final MediaService mediaService = new MediaService(this);
+    private final NewsletterService newsletterService = new NewsletterService(this);
+    private final ProfileService profileService = new ProfileService(this);
+    private final ChatService chatService = new ChatService(this);
+
     public JaWaClient(AuthStore store) {
         this(store, null);
     }
@@ -225,6 +232,24 @@ public final class JaWaClient implements AutoCloseable {
     public boolean autoReadReceipt() { return autoReadReceipt; }
     public boolean autoComposingPresence() { return autoComposingPresence; }
     public boolean autoPreKeyUpload() { return autoPreKeyUpload; }
+
+    /** Access messaging sub-service (text, interactive buttons, list, carousel, poll, etc.). */
+    public MessagingService messages() { return messagingService; }
+
+    /** Access group chat sub-service (create group, update participants, subjects, etc.). */
+    public GroupService groups() { return groupService; }
+
+    /** Access media sub-service (upload/download images, videos, audio, documents, etc.). */
+    public MediaService media() { return mediaService; }
+
+    /** Access newsletter/channel sub-service. */
+    public NewsletterService newsletters() { return newsletterService; }
+
+    /** Access profile and account privacy sub-service. */
+    public ProfileService profile() { return profileService; }
+
+    /** Access chat management sub-service (pin, archive, mute, presence, etc.). */
+    public ChatService chats() { return chatService; }
 
     /** Open the WebSocket, run the handshake, and start dispatching stanzas. Blocks until handshake completes. */
     public synchronized void connect() throws Exception {
@@ -1379,7 +1404,7 @@ public final class JaWaClient implements AutoCloseable {
             }));
         }
         java.util.concurrent.CompletableFuture<Void> all = java.util.concurrent.CompletableFuture
-            .allOf(futures.toArray(new java.util.concurrent.CompletableFuture[0]));
+            .allOf(futures.toArray(new java.util.concurrent.CompletableFuture<?>[0]));
         return all.thenCompose(v -> {
             java.util.List<MessageEncoder.CarouselCard> cards = new java.util.ArrayList<>();
             for (var f : futures) cards.add(f.join());

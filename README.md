@@ -38,7 +38,7 @@ implementation 'io.github.jochris:JaWa:0.0.3'
 
 ```text
 id.jawa
-├── client/                     <-- Primary Client Facade & Event Listeners
+├── client/                     <-- Primary Client Facade & Modular Sub-Services
 ├── protocol/                   <-- Wire Protocol, Codecs & Cryptography
 │   ├── connection/             <-- WebSocket, Noise XX Handshake & Transport
 │   ├── codec/                  <-- Binary XML Node Encoder / Decoder
@@ -243,6 +243,36 @@ JaWaClient client = new JaWaClient(store)
 | `.autoReadReceipt(boolean)` | `false` | Sends an automatic `receipt type=read` (blue ticks) to the sender upon receiving inbound messages. |
 | `.autoComposingPresence(boolean)` | `false` | Sends a `composing` presence status (typing...) prior to dispatching outgoing messages. |
 | `.autoPreKeyUpload(boolean)` | `true` | Automatically uploads 30 fresh Signal One-Time PreKeys when server inventory falls below 5. |
+
+---
+
+## 🧩 Modular Sub-Services
+
+`JaWaClient` organizes functionality into clean, domain-scoped sub-services for clearer and more discoverable API access:
+
+```java
+/* 1. Messaging Service (Text, replies, mentions, buttons, lists, carousel, polls, reactions, receipts) */
+client.messages().sendText(chatJid, "Hello from JaWa!");
+client.messages().sendReaction(chatJid, msgId, null, false, "👍");
+
+/* 2. Group Service (Group creation, participant management, metadata, pictures) */
+client.groups().createGroup("Developers Chat", List.of("628123456789"));
+
+/* 3. Media Service (Images, videos, audio/PTT, documents, view-once, download) */
+client.media().sendImage(chatJid, imageBytes, "image/jpeg", "Check this out!");
+
+/* 4. Newsletter Service (Channels / newsletters text, messages, reactions, history) */
+client.newsletters().sendText(newsletterJid, "New update published!");
+
+/* 5. Profile Service (Status bio, profile pictures, blocklist) */
+client.profile().updateStatus("Building with JaWa ☕");
+
+/* 6. Chat Service (Pin, archive, mute, typing indicators, registered number checks) */
+client.chats().sendChatPresence(chatJid, ChatPresence.COMPOSING);
+```
+
+> [!NOTE]
+> All legacy top-level methods on `JaWaClient` (e.g. `client.sendText(...)`, `client.createGroup(...)`) remain fully supported for 100% backward compatibility.
 
 ---
 
