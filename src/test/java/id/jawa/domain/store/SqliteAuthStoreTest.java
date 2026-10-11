@@ -101,4 +101,24 @@ public class SqliteAuthStoreTest {
             assertThat(appStateKeyStorage2.get(appKeyId)).isNotNull();
         }
     }
+
+    @Test
+    public void testMaintenanceMethods(@TempDir Path tempDir) {
+        Path dbPath = tempDir.resolve("maint.db");
+        try (SqliteAuthStore store = new SqliteAuthStore(dbPath)) {
+            assertThat(store.checkIntegrity()).isTrue();
+            store.vacuum();
+
+            var stats = store.getStats();
+            assertThat(stats).containsKey("credentials");
+            assertThat(stats.get("credentials")).isEqualTo(0);
+
+            store.savePreKey(1, new KeyPair25519(new byte[32], new byte[32]));
+            store.savePreKey(2, new KeyPair25519(new byte[32], new byte[32]));
+            assertThat(store.getStats().get("prekeys")).isEqualTo(2);
+
+            store.clearAll();
+            assertThat(store.getStats().get("prekeys")).isEqualTo(0);
+        }
+    }
 }

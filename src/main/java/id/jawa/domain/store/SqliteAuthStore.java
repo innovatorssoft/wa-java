@@ -357,8 +357,52 @@ public final class SqliteAuthStore implements AuthStore, AutoCloseable {
         return s == null ? d : Integer.parseInt(s);
     }
 
+    public synchronized void vacuum() {
+        try (Connection conn = getConnection(); Statement stmt = conn.createStatement()) {
+            stmt.executeUpdate("VACUUM");
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to VACUUM SQLite database", e);
+        }
+    }
+
+    public synchronized boolean checkIntegrity() {
+        try (Connection conn = getConnection();
+             Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery("PRAGMA integrity_check")) {
+            return rs.next() && "ok".equalsIgnoreCase(rs.getString(1));
+        } catch (SQLException e) {
+            return false;
+        }
+    }
+
+    public synchronized void clearAll() {
+        try (Connection conn = getConnection(); Statement stmt = conn.createStatement()) {
+            stmt.executeUpdate("DELETE FROM credentials");
+            stmt.executeUpdate("DELETE FROM sessions");
+            stmt.executeUpdate("DELETE FROM prekeys");
+            stmt.executeUpdate("DELETE FROM sender_keys");
+            stmt.executeUpdate("DELETE FROM appstate_keys");
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to clear SQLite tables", e);
+        }
+    }
+
+    public synchronized Map<String, Integer> getStats() {
+        Map<String, Integer> stats = new LinkedHashMap<>();
+        String[] tables = {"credentials", "sessions", "prekeys", "sender_keys", "appstate_keys"};
+        try (Connection conn = getConnection(); Statement stmt = conn.createStatement()) {
+            for (String table : tables) {
+                try (ResultSet rs = stmt.executeQuery("SELECT COUNT(*) FROM " + table)) {
+                    stats.put(table, rs.next() ? rs.getInt(1) : 0);
+                }
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to fetch SQLite stats", e);
+        }
+        return stats;
+    }
+
     @Override
     public void close() {
-        /* Connections in DriverManager open and close per operation */
     }
 }
