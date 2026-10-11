@@ -7,7 +7,7 @@
 
     <groupId>io.github.jochris</groupId>
     <artifactId>JaWa</artifactId>
-    <version>0.0.3</version>
+    <version>0.0.4</version>
     <name>JaWa</name>
     <description>Java WhatsApp Web library</description>
     <url>https://github.com/jochris/JaWa</url>

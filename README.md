@@ -20,14 +20,14 @@ Import `JaWa` as a dependency into your Java project:
 <dependency>
     <groupId>io.github.jochris</groupId>
     <artifactId>JaWa</artifactId>
-    <version>0.0.3</version>
+    <version>0.0.4</version>
 </dependency>
 ```
 
 ### Gradle
 
 ```groovy
-implementation 'io.github.jochris:JaWa:0.0.3'
+implementation 'io.github.jochris:JaWa:0.0.4'
 ```
 
 ---
