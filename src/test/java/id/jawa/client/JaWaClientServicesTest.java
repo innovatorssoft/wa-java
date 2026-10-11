@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 package id.jawa.client;
 
 import id.jawa.domain.store.FileAuthStore;
@@ -23,7 +22,6 @@ class JaWaClientServicesTest {
         assertThat(client.profile()).isNotNull();
         assertThat(client.chats()).isNotNull();
 
-        // Check singleton/stable references
         assertThat(client.messages()).isSameAs(client.messages());
         assertThat(client.groups()).isSameAs(client.groups());
         assertThat(client.media()).isSameAs(client.media());

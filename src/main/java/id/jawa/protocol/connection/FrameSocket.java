@@ -49,26 +49,33 @@ public final class FrameSocket implements AutoCloseable {
     private final byte[] introHeader;
     private final byte[] readBuf = new byte[WaConstants.FRAME_MAX_SIZE];
     private int readBufLen = 0;
+    private final String wsUrl;
     private WebSocket ws;
 
-    public FrameSocket(byte[] routingInfo) {
+    public FrameSocket(byte[] routingInfo, String wsUrl) {
         this.introHeader = (routingInfo == null || routingInfo.length == 0)
             ? WaConstants.WA_HEADER
             : buildRoutedHeader(routingInfo);
+        this.wsUrl = (wsUrl == null || wsUrl.isBlank()) ? WaConstants.WS_URL : wsUrl;
     }
 
-    public FrameSocket() { this(null); }
+    public FrameSocket(byte[] routingInfo) {
+        this(routingInfo, WaConstants.WS_URL);
+    }
 
-    /** Connect to {@code wss://web.whatsapp.com/ws/chat}. Blocks until the WS upgrade completes. */
+    public FrameSocket() { this(null, WaConstants.WS_URL); }
+
+    public String wsUrl() { return wsUrl; }
+
     public void connect() throws IOException, WebSocketException {
         if (ws != null) throw new IllegalStateException("already connected");
         ws = new WebSocketFactory()
                 .setConnectionTimeout(15_000)
-                .createSocket(WaConstants.WS_URL)
+                .createSocket(wsUrl)
                 .addHeader("Origin", WaConstants.ORIGIN)
                 .addListener(new Adapter());
         ws.connect();
-        LOG.debug("WS connected to {}", WaConstants.WS_URL);
+        LOG.debug("WS connected to {}", wsUrl);
     }
 
     /** Send a single framed payload. {@code payload} is the post-header / post-length payload. */

@@ -164,6 +164,7 @@ public final class JaWaClient implements AutoCloseable {
     private boolean autoReadReceipt = false;
     private boolean autoComposingPresence = false;
     private boolean autoPreKeyUpload = true;
+    private String wsUrl = WaConstants.WS_URL;
 
     private static final long[] RECONNECT_BACKOFF_MS = {2_000, 4_000, 8_000, 16_000, 30_000, 60_000};
     /** Counts down exactly once when {@link #close()} fires; lets {@link #join()} block across reconnects. */
@@ -232,23 +233,17 @@ public final class JaWaClient implements AutoCloseable {
     public boolean autoReadReceipt() { return autoReadReceipt; }
     public boolean autoComposingPresence() { return autoComposingPresence; }
     public boolean autoPreKeyUpload() { return autoPreKeyUpload; }
+    public JaWaClient wsUrl(String url) {
+        this.wsUrl = (url == null || url.isBlank()) ? WaConstants.WS_URL : url;
+        return this;
+    }
+    public String wsUrl() { return wsUrl; }
 
-    /** Access messaging sub-service (text, interactive buttons, list, carousel, poll, etc.). */
     public MessagingService messages() { return messagingService; }
-
-    /** Access group chat sub-service (create group, update participants, subjects, etc.). */
     public GroupService groups() { return groupService; }
-
-    /** Access media sub-service (upload/download images, videos, audio, documents, etc.). */
     public MediaService media() { return mediaService; }
-
-    /** Access newsletter/channel sub-service. */
     public NewsletterService newsletters() { return newsletterService; }
-
-    /** Access profile and account privacy sub-service. */
     public ProfileService profile() { return profileService; }
-
-    /** Access chat management sub-service (pin, archive, mute, presence, etc.). */
     public ChatService chats() { return chatService; }
 
     /** Open the WebSocket, run the handshake, and start dispatching stanzas. Blocks until handshake completes. */
@@ -266,7 +261,7 @@ public final class JaWaClient implements AutoCloseable {
             LOG.info("Found paired creds — login mode (jid={})", creds.meJid);
         }
 
-        frame = new FrameSocket(null);
+        frame = new FrameSocket(null, wsUrl);
         frame.connect();
 
         // ---- Noise XX, client side ----
