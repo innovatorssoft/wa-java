@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-3.0-or-later */
 package id.jawa.domain.store;
 
 import id.jawa.domain.model.AuthCreds;
@@ -39,7 +38,6 @@ public class SqliteAuthStoreTest {
         c.platform = "android";
 
         try (SqliteAuthStore store = new SqliteAuthStore(dbPath)) {
-            /* 1. Auth Credentials in SQLite */
             assertThat(store.load()).isNull();
             assertThat(store.isPaired()).isFalse();
 
@@ -50,7 +48,6 @@ public class SqliteAuthStoreTest {
             assertThat(loaded).isNotNull();
             assertThat(loaded.registrationId).isEqualTo(12345);
 
-            /* 2. Signal Session Storage in SQLite */
             FileSessionStorage sessionStorage = new FileSessionStorage(store);
             SignalProtocolAddress addr = new SignalProtocolAddress("628123456789", 0);
             SessionRecord sessionRecord = new SessionRecord();
@@ -58,21 +55,18 @@ public class SqliteAuthStoreTest {
             assertThat(sessionStorage.contains(addr)).isTrue();
             assertThat(sessionStorage.size()).isEqualTo(1);
 
-            /* 3. Pre-Key Storage in SQLite */
             FilePreKeyStorage preKeyStorage = new FilePreKeyStorage(store);
             KeyPair25519 preKey = new KeyPair25519(new byte[32], new byte[32]);
             preKeyStorage.put(101, preKey);
             assertThat(preKeyStorage.get(101)).isNotNull();
             assertThat(preKeyStorage.size()).isEqualTo(1);
 
-            /* 4. Sender Key Storage in SQLite */
             FileSenderKeyStorage senderKeyStorage = new FileSenderKeyStorage(store);
             SenderKeyName senderKeyName = new SenderKeyName("group123@g.us", addr);
             senderKeyStorage.put(senderKeyName, new byte[]{10, 20, 30});
             assertThat(senderKeyStorage.get(senderKeyName)).containsExactly((byte)10, (byte)20, (byte)30);
             assertThat(senderKeyStorage.size()).isEqualTo(1);
 
-            /* 5. App-State Key Storage in SQLite */
             FileAppStateKeyStorage appStateKeyStorage = new FileAppStateKeyStorage(store);
             byte[] appKeyId = new byte[]{1, 2, 3, 4};
             AppStateKey appStateKey = new AppStateKey(appKeyId, new byte[32]);
@@ -81,7 +75,6 @@ public class SqliteAuthStoreTest {
             assertThat(appStateKeyStorage.size()).isEqualTo(1);
         }
 
-        /* Verify persistence when reopened */
         try (SqliteAuthStore store2 = new SqliteAuthStore(dbPath)) {
             assertThat(store2.isPaired()).isTrue();
 

@@ -85,10 +85,7 @@ public class PhoneNumberResolverExample {
 
             @Override
             public void onMessage(MessageReceiver.Decoded d) {
-                /* Get the sender JID (can be PN or LID format) */
                 String senderJid = d.senderJid();
-
-                /* Extract clean Phone Number digits */
                 String phoneNumber = extractPhoneNumber(senderJid);
 
                 System.out.println("Pesan dari nomor HP: +" + phoneNumber);
@@ -105,13 +102,11 @@ public class PhoneNumberResolverExample {
 
         String userPart = senderJid.split("@")[0].split(":")[0];
 
-        /* Check if senderJid is LID format and mapped to PN in LID_TO_PN_MAP */
         String mappedPn = JaWaClient.LID_TO_PN_MAP.get(userPart + "@lid");
         if (mappedPn != null) {
             return mappedPn.split("@")[0].split(":")[0].replaceAll("[^0-9]", "");
         }
 
-        /* Return clean phone number digits */
         return userPart.replaceAll("[^0-9]", "");
     }
 }
@@ -145,7 +140,6 @@ public class PhonePairingExample {
         client.listener(new JaWaClient.Listener() {
             @Override
             public void onQr(List<String> qrs) {
-                /* Request an 8-character phone pairing code */
                 String targetPhone = "6285607589072";
                 client.requestPairingCode(targetPhone, null).whenComplete((code, err) -> {
                     if (err != null) {
@@ -222,16 +216,9 @@ public class QrPairingExample {
 
 ```java
 JaWaClient client = new JaWaClient(store)
-    /* Auto-reconnect on transient network drop (default: true) */
     .autoReconnect(true)
-
-    /* Automatically send 'read' receipt (blue ticks) when inbound messages arrive (default: false) */
     .autoReadReceipt(true)
-
-    /* Automatically send 'composing' presence (typing...) before sending outgoing messages (default: false) */
     .autoComposingPresence(true)
-
-    /* Automatically upload 30 fresh One-Time PreKeys when server stock is low (default: true) */
     .autoPreKeyUpload(true);
 ```
 
@@ -251,23 +238,17 @@ JaWaClient client = new JaWaClient(store)
 `JaWaClient` organizes functionality into clean, domain-scoped sub-services for clearer and more discoverable API access:
 
 ```java
-/* 1. Messaging Service (Text, replies, mentions, buttons, lists, carousel, polls, reactions, receipts) */
 client.messages().sendText(chatJid, "Hello from JaWa!");
 client.messages().sendReaction(chatJid, msgId, null, false, "👍");
 
-/* 2. Group Service (Group creation, participant management, metadata, pictures) */
 client.groups().createGroup("Developers Chat", List.of("628123456789"));
 
-/* 3. Media Service (Images, videos, audio/PTT, documents, view-once, download) */
 client.media().sendImage(chatJid, imageBytes, "image/jpeg", "Check this out!");
 
-/* 4. Newsletter Service (Channels / newsletters text, messages, reactions, history) */
 client.newsletters().sendText(newsletterJid, "New update published!");
 
-/* 5. Profile Service (Status bio, profile pictures, blocklist) */
 client.profile().updateStatus("Building with JaWa ☕");
 
-/* 6. Chat Service (Pin, archive, mute, typing indicators, registered number checks) */
 client.chats().sendChatPresence(chatJid, ChatPresence.COMPOSING);
 ```
 
@@ -375,7 +356,7 @@ public class CarouselExample {
 
 ---
 
-### 6. SQLite Database Session Storage
+### 6. SQLite Database Session Storage & Maintenance
 
 Save and restore WhatsApp credentials & session state using an SQLite database (`SqliteAuthStore`):
 
@@ -386,12 +367,17 @@ import id.jawa.client.JaWaClient;
 import id.jawa.domain.store.SqliteAuthStore;
 
 import java.nio.file.Path;
+import java.util.Map;
 
 public class SqliteSessionExample {
 
     public static void main(String[] args) throws Exception {
-        /* SQLite database session store */
         SqliteAuthStore store = new SqliteAuthStore(Path.of("sessions/app.db"));
+
+        boolean isHealthy = store.checkIntegrity();
+        store.vacuum();
+        Map<String, Integer> stats = store.getStats();
+
         JaWaClient client = new JaWaClient(store, Path.of("sessions/app.signal")).autoReconnect(true);
 
         client.listener(new JaWaClient.Listener() {
@@ -406,6 +392,15 @@ public class SqliteSessionExample {
     }
 }
 ```
+
+#### SQLite Maintenance API Reference
+
+| Method | Description |
+| :--- | :--- |
+| `store.checkIntegrity()` | Runs `PRAGMA integrity_check` to verify database health. Returns `true` if intact. |
+| `store.vacuum()` | Executes `VACUUM` to compact disk size and reclaim unused space after pruning prekeys. |
+| `store.getStats()` | Returns active row counts across `credentials`, `sessions`, `prekeys`, `sender_keys`, and `appstate_keys`. |
+| `store.clearAll()` | Clears all stored records and keys for clean session unpairing and reset. |
 
 ---
 
@@ -424,7 +419,6 @@ public class MediaDownloadExample {
     public static void onIncomingMessage(JaWaClient client, MessageReceiver.Decoded decoded) {
         if (decoded.message() == null) return;
 
-        /* Auto-download and decrypt file bytes */
         byte[] mediaBytes = client.downloadMedia(decoded.message());
         if (mediaBytes != null) {
             System.out.println("Downloaded decrypted file: " + mediaBytes.length + " bytes");
@@ -449,15 +443,12 @@ import java.util.List;
 public class ProfilePrivacyExample {
 
     public static void manageProfile(JaWaClient client, String targetJid) throws Exception {
-        /* Update profile bio/status */
         client.updateProfileStatus("Built with JaWa Library 🚀");
 
-        /* Fetch profile picture URL (preview) */
         String avatarUrl = client.fetchProfilePictureUrl(targetJid).get();
         System.out.println("Avatar URL: " + avatarUrl);
 
-        /* Block contact & fetch current blocklist */
-        client.updateBlockStatus(targetJid, true /* block */);
+        client.updateBlockStatus(targetJid, true);
         List<String> blockedJids = client.fetchBlockList().get();
         System.out.println("Blocked Contacts: " + blockedJids);
     }
@@ -478,13 +469,8 @@ import id.jawa.client.JaWaClient;
 public class ChatManagementExample {
 
     public static void manageChat(JaWaClient client, String chatJid) {
-        /* Pin chat */
-        client.pinChat(chatJid, true /* pin */);
-
-        /* Archive chat */
-        client.archiveChat(chatJid, true /* archive */);
-
-        /* Mute chat for 8 hours (28800 seconds) */
+        client.pinChat(chatJid, true);
+        client.archiveChat(chatJid, true);
         client.muteChat(chatJid, 8 * 3600);
     }
 }

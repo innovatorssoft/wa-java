@@ -85,8 +85,6 @@ public final class SqliteAuthStore implements AuthStore, AutoCloseable {
         }
     }
 
-    /* AuthCreds Persistence */
-
     @Override
     public synchronized AuthCreds load() throws IOException {
         Map<String, String> kv = readKv();
@@ -145,8 +143,6 @@ public final class SqliteAuthStore implements AuthStore, AutoCloseable {
         return c != null && c.account != null && c.meJid != null;
     }
 
-    /* Signal Sessions Persistence */
-
     public synchronized Map<String, byte[]> loadSessions() throws IOException {
         Map<String, byte[]> out = new HashMap<>();
         try (Connection conn = getConnection();
@@ -182,8 +178,6 @@ public final class SqliteAuthStore implements AuthStore, AutoCloseable {
             throw new IllegalStateException("Failed to delete session for " + address + " from SQLite", e);
         }
     }
-
-    /* Pre-Keys Persistence */
 
     public synchronized Map<Integer, KeyPair25519> loadPreKeys() throws IOException {
         Map<Integer, KeyPair25519> out = new HashMap<>();
@@ -238,8 +232,6 @@ public final class SqliteAuthStore implements AuthStore, AutoCloseable {
         }
     }
 
-    /* Sender-Keys Persistence */
-
     public synchronized Map<String, byte[]> loadSenderKeys() throws IOException {
         Map<String, byte[]> out = new HashMap<>();
         try (Connection conn = getConnection();
@@ -276,8 +268,6 @@ public final class SqliteAuthStore implements AuthStore, AutoCloseable {
         }
     }
 
-    /* App-State Keys Persistence */
-
     public synchronized Map<String, byte[]> loadAppStateKeys() throws IOException {
         Map<String, byte[]> out = new HashMap<>();
         try (Connection conn = getConnection();
@@ -313,8 +303,6 @@ public final class SqliteAuthStore implements AuthStore, AutoCloseable {
             throw new IllegalStateException("Failed to delete app-state key " + id + " from SQLite", e);
         }
     }
-
-    /* Helper Methods */
 
     private Map<String, String> readKv() throws IOException {
         Map<String, String> kv = new LinkedHashMap<>();
