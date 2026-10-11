@@ -178,6 +178,11 @@ public final class JaWaClient implements AutoCloseable {
     private final ProfileService profileService = new ProfileService(this);
     private final ChatService chatService = new ChatService(this);
 
+    private final java.util.concurrent.ConcurrentHashMap<String, id.jawa.feature.messaging.GroupListQuery.GroupInfo>
+        groupCache = new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.concurrent.ConcurrentHashMap<String, java.util.List<id.jawa.domain.model.DeviceInfo>>
+        deviceCache = new java.util.concurrent.ConcurrentHashMap<>();
+
     public JaWaClient(AuthStore store) {
         this(store, null);
     }
@@ -1099,12 +1104,23 @@ public final class JaWaClient implements AutoCloseable {
         return n;
     }
 
-    /** Fetch pre-key bundles for the given per-device JIDs and install Signal sessions for each. */
     public java.util.concurrent.CompletableFuture<java.util.List<org.whispersystems.libsignal.SignalProtocolAddress>>
             fetchBundlesAndInstallSessions(java.util.List<String> deviceJids) {
+        java.util.List<String> missing = new java.util.ArrayList<>();
+        for (String dj : deviceJids) {
+            id.jawa.domain.model.Jid j = id.jawa.domain.model.Jid.parse(dj);
+            if (j == null) continue;
+            org.whispersystems.libsignal.SignalProtocolAddress addr = id.jawa.feature.signal.SessionBootstrap.addressFor(j);
+            if (!protocolStore.containsSession(addr)) {
+                missing.add(dj);
+            }
+        }
+        if (missing.isEmpty()) {
+            return java.util.concurrent.CompletableFuture.completedFuture(java.util.List.of());
+        }
         String iqId = newIqId();
-        BinaryNode q = PreKeyBundleFetcher.buildFetchStanza(iqId, deviceJids);
-        LOG.debug("Sent pre-key fetch IQ id={} for {} devices", iqId, deviceJids.size());
+        BinaryNode q = PreKeyBundleFetcher.buildFetchStanza(iqId, missing);
+        LOG.debug("Sent pre-key fetch IQ id={} for {} devices", iqId, missing.size());
         return sendIqAsync(q).thenApply(resp -> {
             if ("error".equals(resp.attr("type"))) {
                 LOG.warn("Pre-key fetch error: {}", resp);
@@ -1135,16 +1151,22 @@ public final class JaWaClient implements AutoCloseable {
      */
     public java.util.concurrent.CompletableFuture<String>
             sendGroupMessage(String groupJid, id.jawa.proto.Wa.Message msg) {
-        return queryJoinedGroups().thenCompose(groups -> {
-            id.jawa.feature.messaging.GroupListQuery.GroupInfo target = null;
-            for (var g : groups) {
-                if (g.jid().equals(groupJid)) { target = g; break; }
-            }
+        id.jawa.feature.messaging.GroupListQuery.GroupInfo cached = groupCache.get(groupJid);
+        java.util.concurrent.CompletableFuture<id.jawa.feature.messaging.GroupListQuery.GroupInfo> targetFuture =
+            cached != null
+                ? java.util.concurrent.CompletableFuture.completedFuture(cached)
+                : queryJoinedGroups(true).thenApply(groups -> {
+                    for (var g : groups) {
+                        if (g.jid().equals(groupJid)) return g;
+                    }
+                    return null;
+                });
+
+        return targetFuture.thenCompose(target -> {
             if (target == null) {
                 return java.util.concurrent.CompletableFuture.failedFuture(
                     new IllegalStateException("not a member of group: " + groupJid));
             }
-            // Group-list participant JIDs may be device-suffixed; strip to bare for USync.
             java.util.LinkedHashSet<String> bareUsers = new java.util.LinkedHashSet<>();
             for (String pj : target.participantJids()) {
                 id.jawa.domain.model.Jid j = id.jawa.domain.model.Jid.parse(pj);
@@ -1851,6 +1873,15 @@ public final class JaWaClient implements AutoCloseable {
      */
     public java.util.concurrent.CompletableFuture<java.util.List<id.jawa.feature.messaging.GroupListQuery.GroupInfo>>
             queryJoinedGroups() {
+        return queryJoinedGroups(false);
+    }
+
+    public java.util.concurrent.CompletableFuture<java.util.List<id.jawa.feature.messaging.GroupListQuery.GroupInfo>>
+            queryJoinedGroups(boolean forceRefresh) {
+        if (!forceRefresh && !groupCache.isEmpty()) {
+            return java.util.concurrent.CompletableFuture.completedFuture(
+                new java.util.ArrayList<>(groupCache.values()));
+        }
         String iqId = newIqId();
         BinaryNode iq = id.jawa.feature.messaging.GroupListQuery.buildQuery(iqId);
         LOG.debug("Sent joined-groups query id={}", iqId);
@@ -1859,14 +1890,14 @@ public final class JaWaClient implements AutoCloseable {
                 LOG.warn("Group list query rejected: {}", resp);
                 return java.util.List.of();
             }
-            return id.jawa.feature.messaging.GroupListQuery.parseResponse(resp);
+            var list = id.jawa.feature.messaging.GroupListQuery.parseResponse(resp);
+            for (var g : list) {
+                groupCache.put(g.jid(), g);
+            }
+            return list;
         });
     }
 
-    /**
-     * Convenience: bootstrap Signal sessions for every active device of {@code targetUser}.
-     * Runs USync, then fetches the pre-key bundle for each device, then installs sessions.
-     */
     public java.util.concurrent.CompletableFuture<java.util.List<org.whispersystems.libsignal.SignalProtocolAddress>>
             bootstrapSessions(String targetUser) {
         return queryDevices(java.util.List.of(targetUser))
@@ -1885,19 +1916,33 @@ public final class JaWaClient implements AutoCloseable {
             });
     }
 
-    /**
-     * Query the device list for one or more JIDs (USync).
-     * Returns {@code targetJid → ordered device list}.
-     */
     public java.util.concurrent.CompletableFuture<java.util.Map<String, java.util.List<id.jawa.domain.model.DeviceInfo>>>
             queryDevices(java.util.Collection<String> targetJids) {
+        java.util.Map<String, java.util.List<id.jawa.domain.model.DeviceInfo>> result = new java.util.HashMap<>();
+        java.util.List<String> missing = new java.util.ArrayList<>();
+        for (String tj : targetJids) {
+            var cached = deviceCache.get(tj);
+            if (cached != null) {
+                result.put(tj, cached);
+            } else {
+                missing.add(tj);
+            }
+        }
+        if (missing.isEmpty()) {
+            return java.util.concurrent.CompletableFuture.completedFuture(result);
+        }
         String iqId = newIqId();
         String sid = "jawa-" + Bytes.toHex(Bytes.random(4));
-        BinaryNode q = id.jawa.feature.messaging.UsyncQuery.buildDeviceListQuery(iqId, sid, targetJids);
-        LOG.debug("Sent USync device-list query id={} sid={} for {}", iqId, sid, targetJids);
+        BinaryNode q = id.jawa.feature.messaging.UsyncQuery.buildDeviceListQuery(iqId, sid, missing);
+        LOG.debug("Sent USync device-list query id={} sid={} for {}", iqId, sid, missing);
         return sendIqAsync(q).thenApply(resp -> {
             LOG.debug("USync response: {}", resp);
-            return id.jawa.feature.messaging.UsyncQuery.parseDeviceListResult(resp);
+            var parsed = id.jawa.feature.messaging.UsyncQuery.parseDeviceListResult(resp);
+            for (var entry : parsed.entrySet()) {
+                deviceCache.put(entry.getKey(), entry.getValue());
+                result.put(entry.getKey(), entry.getValue());
+            }
+            return result;
         });
     }
 
