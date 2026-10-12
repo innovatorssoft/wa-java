@@ -116,6 +116,9 @@ public final class JaWaClient implements AutoCloseable {
     private boolean autoReadReceipt = false;
     private boolean autoComposingPresence = false;
     private boolean autoPreKeyUpload = true;
+    private boolean autoEphemeral = true;
+    private final java.util.concurrent.ConcurrentHashMap<String, Integer>
+        chatEphemeralTimers = new java.util.concurrent.ConcurrentHashMap<>();
     private String wsUrl = WaConstants.WS_URL;
 
     private static final long[] RECONNECT_BACKOFF_MS = {2_000, 4_000, 8_000, 16_000, 30_000, 60_000};
@@ -174,6 +177,57 @@ public final class JaWaClient implements AutoCloseable {
     public boolean autoReadReceipt() { return autoReadReceipt; }
     public boolean autoComposingPresence() { return autoComposingPresence; }
     public boolean autoPreKeyUpload() { return autoPreKeyUpload; }
+    public boolean autoEphemeral() { return autoEphemeral; }
+    public boolean isAutoEphemeral() { return autoEphemeral; }
+
+    public JaWaClient autoEphemeral(boolean enabled) {
+        this.autoEphemeral = enabled;
+        return this;
+    }
+
+    public java.util.Map<String, Integer> getChatEphemeralTimers() {
+        return chatEphemeralTimers;
+    }
+
+    public void setChatEphemeralTimer(String chatJid, int timerSeconds) {
+        if (chatJid == null) return;
+        if (timerSeconds > 0) {
+            chatEphemeralTimers.put(chatJid, timerSeconds);
+        } else {
+            chatEphemeralTimers.remove(chatJid);
+        }
+    }
+
+    public int getChatEphemeralTimer(String chatJid) {
+        if (chatJid == null) return 0;
+        return chatEphemeralTimers.getOrDefault(chatJid, 0);
+    }
+
+    public id.jawa.proto.Wa.Message wrapEphemeralIfNeeded(String chatJid, id.jawa.proto.Wa.Message msg) {
+        if (!autoEphemeral || msg == null || chatJid == null) {
+            return msg;
+        }
+        if (msg.hasEphemeralMessage() || msg.hasProtocolMessage() || msg.hasReactionMessage()) {
+            return msg;
+        }
+        String key = chatJid;
+        id.jawa.domain.model.Jid parsed = id.jawa.domain.model.Jid.parse(chatJid);
+        if (parsed != null && !chatJid.endsWith("@g.us")) {
+            key = parsed.user() + "@" + parsed.server();
+        }
+        Integer timer = chatEphemeralTimers.get(key);
+        if (timer == null && !key.equals(chatJid)) {
+            timer = chatEphemeralTimers.get(chatJid);
+        }
+        if (timer != null && timer > 0) {
+            return id.jawa.proto.Wa.Message.newBuilder()
+                .setEphemeralMessage(id.jawa.proto.Wa.Message.FutureProofMessage.newBuilder()
+                    .setMessage(msg))
+                .build();
+        }
+        return msg;
+    }
+
     public JaWaClient wsUrl(String url) {
         this.wsUrl = (url == null || url.isBlank()) ? WaConstants.WS_URL : url;
         return this;
@@ -803,6 +857,7 @@ public final class JaWaClient implements AutoCloseable {
 
     public java.util.concurrent.CompletableFuture<String>
             sendDmMessage(String toUser, id.jawa.proto.Wa.Message msg) {
+        final id.jawa.proto.Wa.Message outboundMsg = wrapEphemeralIfNeeded(toUser, msg);
         String ownBareJid;
         if (toUser != null && toUser.endsWith("@lid") && creds.meLid != null && !creds.meLid.isBlank()) {
             id.jawa.domain.model.Jid lidJid = id.jawa.domain.model.Jid.parse(creds.meLid);
@@ -869,7 +924,7 @@ public final class JaWaClient implements AutoCloseable {
                 try {
                     MessageSender.Result result = MessageSender.buildDualIdentityStanza(
                         protocolStore, creds, msgId, finalRoutingJid,
-                        allDeviceJids, encryptionDeviceJids, msg);
+                        allDeviceJids, encryptionDeviceJids, outboundMsg);
                     send(result.stanza());
                     int ownCount = countOwnDevices(allDeviceJids, ownUser);
                     LOG.info("Sent message id={} to={} ({} device(s) total, {} own-companion DSM)",
@@ -947,6 +1002,7 @@ public final class JaWaClient implements AutoCloseable {
 
     public java.util.concurrent.CompletableFuture<Void> setDisappearingTimer(String chatJid, int timerSeconds) {
         if (chatJid == null) return java.util.concurrent.CompletableFuture.completedFuture(null);
+        setChatEphemeralTimer(chatJid, timerSeconds);
         if (chatJid.endsWith("@g.us")) {
             String iqId = newIqId();
             BinaryNode content = timerSeconds <= 0
@@ -974,6 +1030,7 @@ public final class JaWaClient implements AutoCloseable {
 
     public java.util.concurrent.CompletableFuture<String>
             sendGroupMessage(String groupJid, id.jawa.proto.Wa.Message msg) {
+        final id.jawa.proto.Wa.Message outboundMsg = wrapEphemeralIfNeeded(groupJid, msg);
         id.jawa.feature.messaging.GroupListQuery.GroupInfo cached = groupCache.get(groupJid);
         java.util.concurrent.CompletableFuture<id.jawa.feature.messaging.GroupListQuery.GroupInfo> targetFuture =
             cached != null
@@ -1016,7 +1073,7 @@ public final class JaWaClient implements AutoCloseable {
                         id.jawa.feature.messaging.GroupSender.Result result =
                             id.jawa.feature.messaging.GroupSender.buildStanza(
                                 protocolStore, senderKeyStore, creds, msgId,
-                                groupJid, allDeviceJids, msg);
+                                groupJid, allDeviceJids, outboundMsg);
                         if (result.phash() != null && !result.phash().isEmpty()) {
                             groupPhashMap.put(groupJid, result.phash());
                         }
@@ -1546,6 +1603,11 @@ public final class JaWaClient implements AutoCloseable {
             var list = id.jawa.feature.messaging.GroupListQuery.parseResponse(resp);
             for (var g : list) {
                 groupCache.put(g.jid(), g);
+                if (g.isEphemeral() && g.ephemeralExpiration() > 0) {
+                    chatEphemeralTimers.put(g.jid(), g.ephemeralExpiration());
+                } else {
+                    chatEphemeralTimers.remove(g.jid());
+                }
             }
             return list;
         });
@@ -1750,6 +1812,19 @@ public final class JaWaClient implements AutoCloseable {
                 } else if ("w:g2".equals(node.attr("xmlns")) && from != null && from.endsWith("@g.us")) {
                     groupCache.remove(from);
                     groupPhashMap.remove(from);
+                    BinaryNode ephChild = node.child("ephemeral");
+                    if (ephChild != null) {
+                        try {
+                            int exp = Integer.parseInt(ephChild.attr("expiration"));
+                            if (exp > 0) {
+                                chatEphemeralTimers.put(from, exp);
+                            } else {
+                                chatEphemeralTimers.remove(from);
+                            }
+                        } catch (Exception ignored) {}
+                    } else if (node.child("not_ephemeral") != null) {
+                        chatEphemeralTimers.remove(from);
+                    }
                     LOG.debug("Invalidated groupCache for {}", from);
                 }
             } else if ("receipt".equals(node.tag())) {
@@ -1824,6 +1899,26 @@ public final class JaWaClient implements AutoCloseable {
         try {
             id.jawa.feature.messaging.MessageReceiver.Decoded decoded =
                 id.jawa.feature.messaging.MessageReceiver.decode(message, protocolStore, senderKeyStore);
+            if (decoded.message() != null) {
+                if (decoded.message().hasProtocolMessage()) {
+                    var proto = decoded.message().getProtocolMessage();
+                    if (proto.getType() == id.jawa.proto.Wa.Message.ProtocolMessage.Type.EPHEMERAL_SETTING) {
+                        String chat = decoded.groupJid() != null ? decoded.groupJid() : decoded.senderJid();
+                        int exp = proto.getEphemeralExpiration();
+                        if (chat != null) {
+                            setChatEphemeralTimer(chat, exp);
+                        }
+                    }
+                } else {
+                    int exp = extractExpiration(decoded.message());
+                    if (exp > 0) {
+                        String chat = decoded.groupJid() != null ? decoded.groupJid() : decoded.senderJid();
+                        if (chat != null) {
+                            setChatEphemeralTimer(chat, exp);
+                        }
+                    }
+                }
+            }
             captureAppStateKeysFrom(decoded);
             try { listener.onMessage(decoded); }
             catch (Throwable t) { LOG.warn("listener.onMessage threw", t); }
@@ -1835,6 +1930,29 @@ public final class JaWaClient implements AutoCloseable {
             sendAck(message);
             sendRetryReceipt(message);
         }
+    }
+
+    private static int extractExpiration(id.jawa.proto.Wa.Message msg) {
+        if (msg == null) return 0;
+        if (msg.hasExtendedTextMessage() && msg.getExtendedTextMessage().hasContextInfo()) {
+            return msg.getExtendedTextMessage().getContextInfo().getExpiration();
+        }
+        if (msg.hasImageMessage() && msg.getImageMessage().hasContextInfo()) {
+            return msg.getImageMessage().getContextInfo().getExpiration();
+        }
+        if (msg.hasVideoMessage() && msg.getVideoMessage().hasContextInfo()) {
+            return msg.getVideoMessage().getContextInfo().getExpiration();
+        }
+        if (msg.hasDocumentMessage() && msg.getDocumentMessage().hasContextInfo()) {
+            return msg.getDocumentMessage().getContextInfo().getExpiration();
+        }
+        if (msg.hasAudioMessage() && msg.getAudioMessage().hasContextInfo()) {
+            return msg.getAudioMessage().getContextInfo().getExpiration();
+        }
+        if (msg.hasStickerMessage() && msg.getStickerMessage().hasContextInfo()) {
+            return msg.getStickerMessage().getContextInfo().getExpiration();
+        }
+        return 0;
     }
 
     private void sendAck(BinaryNode original) {

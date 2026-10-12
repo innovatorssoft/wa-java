@@ -490,6 +490,26 @@ public class ChatManagementExample {
 | 7 Days | `604800` | Messages disappear after 7 days. |
 | 90 Days | `7776000` | Messages disappear after 90 days. |
 
+#### Automatic Ephemeral Message Wrapping
+
+JaWa automatically wraps outbound messages in `ephemeralMessage` envelopes when a chat or group has an active disappearing timer (`autoEphemeral = true` by default). Inbound disappearing messages are also automatically unpacked so message text and media are directly accessible.
+
+```java
+client.autoEphemeral(true);
+
+client.chats().setDisappearingTimer(chatJid, 86400);
+
+int currentTimer = client.chats().getDisappearingTimer(chatJid);
+
+client.messages().sendText(chatJid, "This message automatically disappears after 24 hours!");
+```
+
+To configure or disable automatic wrapping:
+
+```java
+client.autoEphemeral(false);
+```
+
 ---
 
 ## 📄 License

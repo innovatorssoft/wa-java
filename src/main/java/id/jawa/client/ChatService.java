@@ -43,4 +43,8 @@ public final class ChatService {
     public CompletableFuture<Void> setDisappearingTimer(String chatJid, int timerSeconds) {
         return client.setDisappearingTimer(chatJid, timerSeconds);
     }
+
+    public int getDisappearingTimer(String chatJid) {
+        return client.getChatEphemeralTimer(chatJid);
+    }
 }

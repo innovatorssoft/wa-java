@@ -27,14 +27,21 @@ public final class GroupListQuery {
         long creationTimestamp,
         long subjectTimestamp,
         String owner,
-        List<String> participantJids
-    ) {}
+        List<String> participantJids,
+        boolean isEphemeral,
+        int ephemeralExpiration
+    ) {
+        public GroupInfo(String jid, String subject, long creationTimestamp, long subjectTimestamp, String owner, List<String> participantJids) {
+            this(jid, subject, creationTimestamp, subjectTimestamp, owner, participantJids, false, 0);
+        }
+    }
 
     public static BinaryNode buildQuery(String iqId) {
         BinaryNode participating = new BinaryNode("participating", Map.of(),
             List.of(
                 new BinaryNode("participants", Map.of(), null),
-                new BinaryNode("description",  Map.of(), null)
+                new BinaryNode("description",  Map.of(), null),
+                new BinaryNode("ephemeral",    Map.of(), null)
             ));
         return new BinaryNode("iq",
             Map.of(
@@ -64,7 +71,14 @@ public final class GroupListQuery {
                 String pj = p.attr("jid");
                 if (pj != null) participants.add(pj);
             }
-            out.add(new GroupInfo(groupJid, subject, creation, subjectTs, creator, participants));
+            boolean isEphemeral = false;
+            int ephemeralExpiration = 0;
+            BinaryNode ephNode = g.child("ephemeral");
+            if (ephNode != null) {
+                isEphemeral = true;
+                ephemeralExpiration = (int) parseLong(ephNode.attr("expiration"), 0);
+            }
+            out.add(new GroupInfo(groupJid, subject, creation, subjectTs, creator, participants, isEphemeral, ephemeralExpiration));
         }
         return out;
     }

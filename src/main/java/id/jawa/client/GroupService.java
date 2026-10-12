@@ -60,4 +60,8 @@ public final class GroupService {
     public CompletableFuture<Void> setDisappearingTimer(String groupJid, int timerSeconds) {
         return client.setDisappearingTimer(groupJid, timerSeconds);
     }
+
+    public int getDisappearingTimer(String groupJid) {
+        return client.getChatEphemeralTimer(groupJid);
+    }
 }

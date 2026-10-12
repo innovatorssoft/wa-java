@@ -138,8 +138,25 @@ public final class MessageReceiver {
             processSkdm(message.getSenderKeyDistributionMessage(), senderAddr, senderKeyStore);
         }
 
-        if (message.hasDeviceSentMessage() && message.getDeviceSentMessage().hasMessage()) {
-            message = message.getDeviceSentMessage().getMessage();
+        boolean unwrapped = true;
+        while (unwrapped) {
+            unwrapped = false;
+            if (message.hasEphemeralMessage() && message.getEphemeralMessage().hasMessage()) {
+                message = message.getEphemeralMessage().getMessage();
+                unwrapped = true;
+            } else if (message.hasViewOnceMessage() && message.getViewOnceMessage().hasMessage()) {
+                message = message.getViewOnceMessage().getMessage();
+                unwrapped = true;
+            } else if (message.hasViewOnceMessageV2() && message.getViewOnceMessageV2().hasMessage()) {
+                message = message.getViewOnceMessageV2().getMessage();
+                unwrapped = true;
+            } else if (message.hasDocumentWithCaptionMessage() && message.getDocumentWithCaptionMessage().hasMessage()) {
+                message = message.getDocumentWithCaptionMessage().getMessage();
+                unwrapped = true;
+            } else if (message.hasDeviceSentMessage() && message.getDeviceSentMessage().hasMessage()) {
+                message = message.getDeviceSentMessage().getMessage();
+                unwrapped = true;
+            }
         }
 
         String text = message.hasConversation() ? message.getConversation() : null;
