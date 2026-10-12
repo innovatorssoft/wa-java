@@ -182,6 +182,8 @@ public final class JaWaClient implements AutoCloseable {
         groupCache = new java.util.concurrent.ConcurrentHashMap<>();
     private final java.util.concurrent.ConcurrentHashMap<String, java.util.List<id.jawa.domain.model.DeviceInfo>>
         deviceCache = new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.concurrent.ConcurrentHashMap<String, String>
+        groupPhashMap = new java.util.concurrent.ConcurrentHashMap<>();
 
     public JaWaClient(AuthStore store) {
         this(store, null);
@@ -1192,9 +1194,12 @@ public final class JaWaClient implements AutoCloseable {
                         id.jawa.feature.messaging.GroupSender.buildStanza(
                             protocolStore, senderKeyStore, creds, msgId,
                             groupJid, allDeviceJids, msg);
+                    if (result.phash() != null && !result.phash().isEmpty()) {
+                        groupPhashMap.put(groupJid, result.phash());
+                    }
                     send(result.stanza());
-                    LOG.info("Sent group message id={} to={} ({} participant device(s), SKDM to {})",
-                        msgId, groupJid, allDeviceJids.size(), result.skdmRecipients());
+                    LOG.info("Sent group message id={} to={} ({} participant device(s), SKDM to {}, phash={})",
+                        msgId, groupJid, allDeviceJids.size(), result.skdmRecipients(), result.phash());
                     return msgId;
                 });
             });
@@ -2080,13 +2085,25 @@ public final class JaWaClient implements AutoCloseable {
             // fall through to ack + listener — pair-code notification still needs an ack
         }
 
-        // Server-pushed notifications and receipts MUST be acked, otherwise the offline
-        // queue piles up and the server eventually stops delivering <message> stanzas.
-        // We ack first, then fall through to listener.onStanza so consumers can read them.
         if ("notification".equals(node.tag()) || "receipt".equals(node.tag())) {
             try { sendAck(node); }
             catch (Throwable t) { LOG.warn("Failed to ack {}", node.tag(), t); }
-            if ("receipt".equals(node.tag())) {
+            if ("notification".equals(node.tag())) {
+                String type = node.attr("type");
+                String from = node.attr("from");
+                if ("devices".equals(type) && from != null) {
+                    deviceCache.remove(from);
+                    id.jawa.domain.model.Jid j = id.jawa.domain.model.Jid.parse(from);
+                    if (j != null) {
+                        deviceCache.remove(j.user() + "@" + j.server());
+                    }
+                    LOG.debug("Invalidated deviceCache for {}", from);
+                } else if ("w:g2".equals(node.attr("xmlns")) && from != null && from.endsWith("@g.us")) {
+                    groupCache.remove(from);
+                    groupPhashMap.remove(from);
+                    LOG.debug("Invalidated groupCache for {}", from);
+                }
+            } else if ("receipt".equals(node.tag())) {
                 try {
                     id.jawa.domain.model.Receipt parsed = id.jawa.domain.model.Receipt.parse(node);
                     if (parsed != null) listener.onReceipt(parsed);
