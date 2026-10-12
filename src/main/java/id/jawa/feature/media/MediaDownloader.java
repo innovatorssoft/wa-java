@@ -36,25 +36,38 @@ public final class MediaDownloader {
 
         if (msg.hasImageMessage()) {
             var img = msg.getImageMessage();
-            return fetchAndDecrypt(img.getUrl(), img.getMediaKey().toByteArray(), MediaCrypto.MediaType.IMAGE);
+            String url = resolveUrl(img.getUrl(), img.getDirectPath());
+            return fetchAndDecrypt(url, img.getMediaKey().toByteArray(), MediaCrypto.MediaType.IMAGE);
         }
         if (msg.hasVideoMessage()) {
             var vid = msg.getVideoMessage();
-            return fetchAndDecrypt(vid.getUrl(), vid.getMediaKey().toByteArray(), MediaCrypto.MediaType.VIDEO);
+            String url = resolveUrl(vid.getUrl(), vid.getDirectPath());
+            return fetchAndDecrypt(url, vid.getMediaKey().toByteArray(), MediaCrypto.MediaType.VIDEO);
         }
         if (msg.hasAudioMessage()) {
             var aud = msg.getAudioMessage();
-            return fetchAndDecrypt(aud.getUrl(), aud.getMediaKey().toByteArray(), MediaCrypto.MediaType.AUDIO);
+            String url = resolveUrl(aud.getUrl(), aud.getDirectPath());
+            return fetchAndDecrypt(url, aud.getMediaKey().toByteArray(), MediaCrypto.MediaType.AUDIO);
         }
         if (msg.hasDocumentMessage()) {
             var doc = msg.getDocumentMessage();
-            return fetchAndDecrypt(doc.getUrl(), doc.getMediaKey().toByteArray(), MediaCrypto.MediaType.DOCUMENT);
+            String url = resolveUrl(doc.getUrl(), doc.getDirectPath());
+            return fetchAndDecrypt(url, doc.getMediaKey().toByteArray(), MediaCrypto.MediaType.DOCUMENT);
         }
         if (msg.hasStickerMessage()) {
             var stk = msg.getStickerMessage();
-            return fetchAndDecrypt(stk.getUrl(), stk.getMediaKey().toByteArray(), MediaCrypto.MediaType.IMAGE);
+            String url = resolveUrl(stk.getUrl(), stk.getDirectPath());
+            return fetchAndDecrypt(url, stk.getMediaKey().toByteArray(), MediaCrypto.MediaType.IMAGE);
         }
 
+        return null;
+    }
+
+    private static String resolveUrl(String url, String directPath) {
+        if (url != null && !url.isBlank()) return url;
+        if (directPath != null && !directPath.isBlank()) {
+            return "https://mmg.whatsapp.net" + (directPath.startsWith("/") ? directPath : "/" + directPath);
+        }
         return null;
     }
 

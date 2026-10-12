@@ -906,18 +906,65 @@ public final class JaWaClient implements AutoCloseable {
         if (missing.isEmpty()) {
             return java.util.concurrent.CompletableFuture.completedFuture(java.util.List.of());
         }
-        String iqId = newIqId();
-        BinaryNode q = PreKeyBundleFetcher.buildFetchStanza(iqId, missing);
-        LOG.debug("Sent pre-key fetch IQ id={} for {} devices", iqId, missing.size());
-        return sendIqAsync(q).thenApply(resp -> {
-            if ("error".equals(resp.attr("type"))) {
-                LOG.warn("Pre-key fetch error: {}", resp);
-                return java.util.List.of();
-            }
-            var bundles = PreKeyBundleFetcher.parseResponse(resp);
-            LOG.debug("Parsed {} bundles", bundles.size());
-            return SessionBootstrap.installAll(protocolStore, bundles);
-        });
+        if (missing.size() <= 40) {
+            String iqId = newIqId();
+            BinaryNode q = PreKeyBundleFetcher.buildFetchStanza(iqId, missing);
+            LOG.debug("Sent pre-key fetch IQ id={} for {} devices", iqId, missing.size());
+            return sendIqAsync(q).thenApply(resp -> {
+                if ("error".equals(resp.attr("type"))) {
+                    LOG.warn("Pre-key fetch error: {}", resp);
+                    return java.util.List.of();
+                }
+                var bundles = PreKeyBundleFetcher.parseResponse(resp);
+                LOG.debug("Parsed {} bundles", bundles.size());
+                return SessionBootstrap.installAll(protocolStore, bundles);
+            });
+        }
+        int batchSize = 40;
+        java.util.List<java.util.concurrent.CompletableFuture<java.util.List<org.whispersystems.libsignal.SignalProtocolAddress>>> futures = new java.util.ArrayList<>();
+        for (int i = 0; i < missing.size(); i += batchSize) {
+            java.util.List<String> chunk = missing.subList(i, Math.min(i + batchSize, missing.size()));
+            String iqId = newIqId();
+            BinaryNode q = PreKeyBundleFetcher.buildFetchStanza(iqId, chunk);
+            futures.add(sendIqAsync(q).thenApply(resp -> {
+                if ("error".equals(resp.attr("type"))) {
+                    LOG.warn("Pre-key fetch error: {}", resp);
+                    return java.util.List.of();
+                }
+                var bundles = PreKeyBundleFetcher.parseResponse(resp);
+                return SessionBootstrap.installAll(protocolStore, bundles);
+            }));
+        }
+        return java.util.concurrent.CompletableFuture.allOf(futures.toArray(new java.util.concurrent.CompletableFuture<?>[0]))
+            .thenApply(v -> {
+                java.util.List<org.whispersystems.libsignal.SignalProtocolAddress> result = new java.util.ArrayList<>();
+                for (var f : futures) {
+                    result.addAll(f.join());
+                }
+                return result;
+            });
+    }
+
+    public java.util.concurrent.CompletableFuture<Void> setDisappearingTimer(String chatJid, int timerSeconds) {
+        if (chatJid == null) return java.util.concurrent.CompletableFuture.completedFuture(null);
+        if (chatJid.endsWith("@g.us")) {
+            String iqId = newIqId();
+            BinaryNode content = timerSeconds <= 0
+                ? new BinaryNode("not_ephemeral", java.util.Map.of(), null)
+                : new BinaryNode("ephemeral", java.util.Map.of("expiration", String.valueOf(timerSeconds)), null);
+            BinaryNode iq = new BinaryNode("iq",
+                java.util.Map.of("to", chatJid, "type", "set", "xmlns", "w:g2", "id", iqId),
+                java.util.List.of(content));
+            return sendIqAsync(iq).thenApply(res -> null);
+        } else {
+            id.jawa.proto.Wa.Message msg = id.jawa.proto.Wa.Message.newBuilder()
+                .setProtocolMessage(id.jawa.proto.Wa.Message.ProtocolMessage.newBuilder()
+                    .setType(id.jawa.proto.Wa.Message.ProtocolMessage.Type.EPHEMERAL_SETTING)
+                    .setEphemeralExpiration(timerSeconds)
+                    .setEphemeralSettingTimestamp(System.currentTimeMillis() / 1000L))
+                .build();
+            return sendMessage(chatJid, msg).thenApply(res -> null);
+        }
     }
 
     public java.util.concurrent.CompletableFuture<String>

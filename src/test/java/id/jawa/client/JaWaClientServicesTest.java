@@ -41,4 +41,12 @@ class JaWaClientServicesTest {
         assertThat(id2).startsWith("3EB0").hasSize(22);
         assertThat(id1).isNotEqualTo(id2);
     }
+
+    @Test
+    void setDisappearingTimerReturnsFutureForValidInputs(@TempDir Path tempDir) {
+        FileAuthStore store = new FileAuthStore(tempDir.resolve("test.session"));
+        JaWaClient client = new JaWaClient(store);
+        assertThat(client.chats().setDisappearingTimer(null, 86400)).isNotNull();
+        assertThat(client.groups().setDisappearingTimer(null, 0)).isNotNull();
+    }
 }

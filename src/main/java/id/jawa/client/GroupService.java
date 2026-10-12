@@ -56,4 +56,8 @@ public final class GroupService {
     public CompletableFuture<BinaryNode> removeGroupPicture(String groupJid) {
         return client.removeGroupPicture(groupJid);
     }
+
+    public CompletableFuture<Void> setDisappearingTimer(String groupJid, int timerSeconds) {
+        return client.setDisappearingTimer(groupJid, timerSeconds);
+    }
 }

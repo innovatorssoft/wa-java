@@ -39,4 +39,8 @@ public final class ChatService {
     public CompletableFuture<Map<String, ContactStatus>> isOnWhatsApp(List<String> phoneNumbers) {
         return client.isOnWhatsApp(phoneNumbers);
     }
+
+    public CompletableFuture<Void> setDisappearingTimer(String chatJid, int timerSeconds) {
+        return client.setDisappearingTimer(chatJid, timerSeconds);
+    }
 }

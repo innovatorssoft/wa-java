@@ -31,7 +31,7 @@ public final class PreKeyBundleFetcher {
     public static BinaryNode buildFetchStanza(String iqId, List<String> deviceJids) {
         List<BinaryNode> userNodes = new ArrayList<>(deviceJids.size());
         for (String j : deviceJids) {
-            userNodes.add(new BinaryNode("user", Map.of("jid", j), null));
+            userNodes.add(new BinaryNode("user", Map.of("jid", j, "reason", "identity"), null));
         }
         return new BinaryNode("iq",
             Map.of(
