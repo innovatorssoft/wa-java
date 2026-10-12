@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-3.0-or-later */
 package id.jawa.feature.appstate;
 
 import id.jawa.protocol.connection.*;
@@ -26,9 +25,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.stream.Stream;
 
-/**
- * Persistent backing for AppStateKey instances. Supports both file and SQLite storage.
- */
 public final class FileAppStateKeyStorage {
 
     private static final Logger LOG = LoggerFactory.getLogger(FileAppStateKeyStorage.class);

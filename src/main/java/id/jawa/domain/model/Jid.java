@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 package id.jawa.domain.model;
 
 import id.jawa.protocol.connection.*;
@@ -12,22 +11,8 @@ import id.jawa.feature.media.*;
 import id.jawa.feature.appstate.*;
 import id.jawa.feature.signal.*;
 
-
 import java.util.Objects;
 
-/**
- * WhatsApp JID. Mirrors Baileys' FullJid and whatsmeow's types.JID.
- *
- * <p>Wire forms supported:
- * <ul>
- *   <li>{@code user@server} — plain JID pair
- *   <li>{@code user_agent:device@server} — multi-device JID with agent
- *   <li>{@code user:device@server} — multi-device JID without agent
- * </ul>
- *
- * <p>{@link #domainType} encodes the server kind for AD-JID on-wire form:
- * 0=WhatsApp ({@code s.whatsapp.net}), 1=LID, 128=hosted, 129=hosted.lid.
- */
 public record Jid(String user, String server, int device, int agent, int domainType) {
 
     public static final String SERVER_WHATSAPP = "s.whatsapp.net";
@@ -64,7 +49,6 @@ public record Jid(String user, String server, int device, int agent, int domainT
     public boolean hasDevice() { return device != 0; }
     public boolean hasAgent()  { return agent  != 0; }
 
-    /** Parse a JID from its string form. Returns {@code null} if no '@'. */
     public static Jid parse(String s) {
         if (s == null) return null;
         int at = s.indexOf('@');
@@ -104,7 +88,6 @@ public record Jid(String user, String server, int device, int agent, int domainT
         };
     }
 
-    /** Server string for an AD-JID domainType byte. */
     public static String serverForDomain(int domainType, String fallback) {
         return switch (domainType) {
             case DOMAIN_LID         -> SERVER_LID;
@@ -114,7 +97,6 @@ public record Jid(String user, String server, int device, int agent, int domainT
         };
     }
 
-    /** Canonical wire string form. */
     public String asString() {
         StringBuilder sb = new StringBuilder(user.length() + server.length() + 8);
         sb.append(user);

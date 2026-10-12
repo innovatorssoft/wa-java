@@ -29,4 +29,16 @@ class JaWaClientServicesTest {
         assertThat(client.profile()).isSameAs(client.profile());
         assertThat(client.chats()).isSameAs(client.chats());
     }
+
+    @Test
+    void generateMessageIdHasWebPrefixAndValidFormat(@TempDir Path tempDir) {
+        FileAuthStore store = new FileAuthStore(tempDir.resolve("test.session"));
+        JaWaClient client = new JaWaClient(store);
+        String id1 = client.generateMessageId();
+        String id2 = client.messages().generateMessageId();
+
+        assertThat(id1).startsWith("3EB0").hasSize(22);
+        assertThat(id2).startsWith("3EB0").hasSize(22);
+        assertThat(id1).isNotEqualTo(id2);
+    }
 }

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 package id.jawa.protocol.crypto;
 
 import id.jawa.protocol.connection.*;
@@ -12,15 +11,9 @@ import id.jawa.feature.media.*;
 import id.jawa.feature.appstate.*;
 import id.jawa.feature.signal.*;
 
-
 import java.util.Arrays;
 import java.util.Objects;
 
-/**
- * Curve25519 key pair. Public and private keys are always 32 raw bytes (no leading
- * {@code 0x05} type byte — that prefix is a Signal Protocol wire convention applied
- * only by {@link Curve25519} when calling libsignal's curve operations).
- */
 public record KeyPair25519(byte[] privateKey, byte[] publicKey) {
     public KeyPair25519 {
         Objects.requireNonNull(privateKey, "privateKey");

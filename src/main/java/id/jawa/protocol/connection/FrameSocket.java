@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 package id.jawa.protocol.connection;
 
 import id.jawa.protocol.connection.*;
@@ -11,7 +10,6 @@ import id.jawa.feature.messaging.*;
 import id.jawa.feature.media.*;
 import id.jawa.feature.appstate.*;
 import id.jawa.feature.signal.*;
-
 
 import com.neovisionaries.ws.client.WebSocket;
 import com.neovisionaries.ws.client.WebSocketAdapter;
@@ -28,19 +26,10 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-/**
- * WebSocket transport that exchanges 24-bit-big-endian length-prefixed binary frames.
- *
- * <p>Maps to whatsmeow's {@code socket.FrameSocket} and the encoding half of Baileys'
- * {@code makeNoiseHandler}. The WA intro header ({@code 'W','A',6,3}) is prepended
- * once to the very first outbound frame and then dropped on subsequent sends.
- */
 public final class FrameSocket implements AutoCloseable {
 
     private static final Logger LOG = LoggerFactory.getLogger(FrameSocket.class);
 
-    /** Identity sentinel pushed on disconnect so that {@link #receive} wakes immediately
-     *  instead of waiting out its timeout. Distinct from any legitimate empty frame. */
     private static final byte[] CLOSED_SENTINEL = new byte[0];
 
     private final BlockingQueue<byte[]> incoming = new LinkedBlockingQueue<>();
@@ -78,7 +67,6 @@ public final class FrameSocket implements AutoCloseable {
         LOG.debug("WS connected to {}", wsUrl);
     }
 
-    /** Send a single framed payload. {@code payload} is the post-header / post-length payload. */
     public synchronized void send(byte[] payload) {
         if (ws == null || closed.get()) throw new IllegalStateException("socket not open");
         if (payload.length > WaConstants.FRAME_MAX_SIZE) {
@@ -94,7 +82,6 @@ public final class FrameSocket implements AutoCloseable {
         ws.sendBinary(frame);
     }
 
-    /** Block for the next complete frame payload (no length prefix). */
     public byte[] receive(long timeoutMs) throws InterruptedException {
         byte[] f = incoming.poll(timeoutMs, TimeUnit.MILLISECONDS);
         if (f == CLOSED_SENTINEL) throw new IllegalStateException("socket closed");
@@ -110,7 +97,7 @@ public final class FrameSocket implements AutoCloseable {
     }
 
     private static byte[] buildRoutedHeader(byte[] routingInfo) {
-        // 'E','D', 0, 1, len24_be (3 bytes), routingInfo..., WA_HEADER...
+
         int rl = routingInfo.length;
         byte[] h = new byte[7 + rl + WaConstants.WA_HEADER.length];
         h[0] = 'E'; h[1] = 'D';
@@ -141,23 +128,14 @@ public final class FrameSocket implements AutoCloseable {
                                    WebSocketFrame clientCloseFrame, boolean closedByServer) {
             LOG.debug("WS disconnected (closedByServer={})", closedByServer);
             closed.set(true);
-            // Wake any in-flight receive() immediately. Without this, a blocked poll waits
-            // out its full timeout (default 60s in the reader), which post-pair lets the
-            // server revoke our just-issued creds before we reconnect.
+
             incoming.offer(CLOSED_SENTINEL);
         }
     }
 
-    /**
-     * Append incoming WebSocket binary data to the read buffer and emit every
-     * complete framed payload. Handles cases where multiple frames are concatenated
-     * in one WS message OR a single frame's 3-byte length prefix is split across
-     * two WS messages.
-     */
     private synchronized void appendAndDispatch(byte[] chunk) {
         if (readBufLen + chunk.length > readBuf.length) {
-            // realloc by switching to ByteArrayOutputStream would be safer; for now, fail loudly.
-            // 16 MiB frame max means this only triggers under attack or extreme history sync.
+
             throw new IllegalStateException("read buffer overflow");
         }
         System.arraycopy(chunk, 0, readBuf, readBufLen, chunk.length);

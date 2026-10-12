@@ -135,4 +135,8 @@ public final class MessagingService {
     public void sendReadReceiptBatch(String chatJid, List<String> msgIds, String senderJid) {
         client.sendReadReceiptBatch(chatJid, msgIds, senderJid);
     }
+
+    public String generateMessageId() {
+        return client.generateMessageId();
+    }
 }

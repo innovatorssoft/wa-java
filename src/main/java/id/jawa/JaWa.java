@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 package id.jawa;
 
 import id.jawa.protocol.connection.*;
@@ -12,10 +11,6 @@ import id.jawa.feature.media.*;
 import id.jawa.feature.appstate.*;
 import id.jawa.feature.signal.*;
 
-
-/**
- * Placeholder root class. Public facade will be defined in id.jawa.client.JaWaClient.
- */
 public final class JaWa {
     public static final String VERSION = "0.0.4";
     private JaWa() {}

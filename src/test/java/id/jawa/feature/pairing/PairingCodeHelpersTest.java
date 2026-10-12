@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 package id.jawa.feature.pairing;
 
 import id.jawa.protocol.connection.*;
@@ -11,7 +10,6 @@ import id.jawa.feature.messaging.*;
 import id.jawa.feature.media.*;
 import id.jawa.feature.appstate.*;
 import id.jawa.feature.signal.*;
-
 
 import id.jawa.protocol.crypto.Bytes;
 import id.jawa.protocol.crypto.Crockford;
@@ -35,11 +33,10 @@ class PairingCodeHelpersTest {
 
     @Test
     void crockfordAlphabetMatchesBaileys() {
-        // WA-flavoured Crockford: 1-9 (no 0), A-Z minus I, O, U (L kept!).
-        // Anchored as a regression — bytesToCrockford in Baileys uses this exact 32-char set.
+
         assertThat(Crockford.ALPHABET).isEqualTo("123456789ABCDEFGHJKLMNPQRSTVWXYZ");
         assertThat(Crockford.ALPHABET).hasSize(32);
-        // The ambiguous chars dropped by WA:
+
         assertThat(Crockford.ALPHABET).doesNotContain("0", "I", "O", "U");
     }
 
@@ -70,13 +67,13 @@ class PairingCodeHelpersTest {
         byte[] iv = Bytes.random(16);
         byte[] pt = Bytes.utf8("the quick brown fox jumps over the lazy dog");
         byte[] ct = AesCtr.encrypt(key, iv, pt);
-        assertThat(ct).hasSize(pt.length); // CTR doesn't pad
+        assertThat(ct).hasSize(pt.length);
         assertThat(AesCtr.decrypt(key, iv, ct)).containsExactly(pt);
     }
 
     @Test
     void aesCtrEncryptsExactly32BytesEphemeralPub() {
-        // Wire-shape check: pairing flow encrypts a 32-byte Curve25519 pub
+
         byte[] key = Bytes.random(32);
         byte[] iv = Bytes.random(16);
         byte[] pub = Bytes.random(32);

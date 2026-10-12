@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 package id.jawa.protocol.codec;
 
 import id.jawa.protocol.connection.*;
@@ -12,7 +11,6 @@ import id.jawa.feature.media.*;
 import id.jawa.feature.appstate.*;
 import id.jawa.feature.signal.*;
 
-
 import id.jawa.domain.model.Jid;
 
 import java.io.ByteArrayInputStream;
@@ -25,14 +23,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.zip.InflaterInputStream;
 
-/**
- * Decodes the WhatsApp binary wire format back into {@link BinaryNode} trees.
- *
- * <p>Ports {@code WABinary/decode.ts} (Baileys) and {@code binary/decoder.go} (whatsmeow).
- *
- * <p>The very first byte is a flag: {@code 0x00 = raw}, bit 1 set ({@code & 0x02})
- * indicates the remainder is zlib-deflated (RFC 1950) and is transparently inflated.
- */
 public final class BinaryDecoder {
 
     private final byte[] data;
@@ -40,7 +30,6 @@ public final class BinaryDecoder {
 
     private BinaryDecoder(byte[] data) { this.data = data; this.pos = 0; }
 
-    /** One-shot decode. */
     public static BinaryNode decode(byte[] payload) {
         if (payload == null || payload.length == 0) {
             throw new IllegalArgumentException("empty payload");
@@ -62,8 +51,6 @@ public final class BinaryDecoder {
         }
         return new BinaryDecoder(body).readNode();
     }
-
-    // ---- node ----
 
     private BinaryNode readNode() {
         int listSize = readListSize(readByte());
@@ -109,8 +96,6 @@ public final class BinaryDecoder {
         };
     }
 
-    // ---- string ----
-
     private String readString(int tag) {
         if (tag >= 1 && tag < WaTokens.SINGLE.length) return WaTokens.SINGLE[tag];
         return switch (tag) {
@@ -144,8 +129,6 @@ public final class BinaryDecoder {
         byte[] b = readBytes(n);
         return new String(b, StandardCharsets.UTF_8);
     }
-
-    // ---- packed ----
 
     private String readPacked8(int tag) {
         int startByte = readByte();
@@ -183,8 +166,6 @@ public final class BinaryDecoder {
         if (v >= 10 && v < 16) return 'A' + (v - 10);
         throw new IllegalStateException("invalid hex: " + v);
     }
-
-    // ---- jid ----
 
     private String readJidPair() {
         String user = readString(readByte());
@@ -225,8 +206,6 @@ public final class BinaryDecoder {
         }
         return integrator + "-" + user + ":" + device + "@" + server;
     }
-
-    // ---- low-level ----
 
     private int readByte() {
         if (pos >= data.length) throw new IllegalStateException("end of stream");

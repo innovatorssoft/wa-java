@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 package id.jawa.protocol.codec;
 
 import id.jawa.protocol.connection.*;
@@ -12,7 +11,6 @@ import id.jawa.feature.media.*;
 import id.jawa.feature.appstate.*;
 import id.jawa.feature.signal.*;
 
-
 import id.jawa.domain.model.Jid;
 import org.junit.jupiter.api.Test;
 
@@ -25,8 +23,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class BinaryCodecTest {
-
-    // ---- WaTokens ----
 
     @Test
     void singleByteTokensLoaded() {
@@ -48,16 +44,14 @@ class BinaryCodecTest {
     void reverseIndex() {
         int[] msg = WaTokens.INDEX.get("message");
         assertThat(msg).isNotNull();
-        assertThat(msg[0]).isEqualTo(-1); // single byte
+        assertThat(msg[0]).isEqualTo(-1);
         assertThat(WaTokens.SINGLE[msg[1]]).isEqualTo("message");
 
         int[] reaction = WaTokens.INDEX.get("reaction");
         assertThat(reaction).isNotNull();
-        assertThat(reaction[0]).isGreaterThanOrEqualTo(0); // double byte
+        assertThat(reaction[0]).isGreaterThanOrEqualTo(0);
         assertThat(WaTokens.DOUBLE[reaction[0]][reaction[1]]).isEqualTo("reaction");
     }
-
-    // ---- Jid ----
 
     @Test
     void jidParsePlain() {
@@ -98,8 +92,6 @@ class BinaryCodecTest {
         assertThat(Jid.parse(null)).isNull();
     }
 
-    // ---- Round-trip: single-byte token ----
-
     @Test
     void roundTripSingleByteToken() {
         BinaryNode in = BinaryNode.of("message", Map.of("from", "628@s.whatsapp.net", "type", "text"));
@@ -111,8 +103,6 @@ class BinaryCodecTest {
         assertThat(out.content()).isNull();
     }
 
-    // ---- Round-trip: text content ----
-
     @Test
     void roundTripTextContent() {
         BinaryNode in = BinaryNode.text("body", Map.of(), "halo dunia");
@@ -120,12 +110,9 @@ class BinaryCodecTest {
         BinaryNode out = BinaryDecoder.decode(bytes);
 
         assertThat(out.tag()).isEqualTo("body");
-        // Non-tokenizable text encodes as BINARY_8 and decodes back as byte[].
-        // textContent() unifies both forms.
+
         assertThat(out.textContent()).isEqualTo("halo dunia");
     }
-
-    // ---- Round-trip: bytes content ----
 
     @Test
     void roundTripBytesContent() {
@@ -139,8 +126,6 @@ class BinaryCodecTest {
         assertThat(out.content()).isInstanceOf(byte[].class);
         assertThat((byte[]) out.content()).containsExactly(payload);
     }
-
-    // ---- Round-trip: nested children ----
 
     @Test
     void roundTripNestedChildren() {
@@ -162,8 +147,6 @@ class BinaryCodecTest {
         assertThat(kids.get(1).textContent()).isEqualTo("hi");
     }
 
-    // ---- Round-trip: nibble-packed (phone number) ----
-
     @Test
     void roundTripNibblePacked() {
         BinaryNode in = BinaryNode.text("number", Map.of(), "628123456789");
@@ -180,8 +163,6 @@ class BinaryCodecTest {
         assertThat(out.content()).isEqualTo("62812345");
     }
 
-    // ---- Round-trip: hex-packed ----
-
     @Test
     void roundTripHexPacked() {
         BinaryNode in = BinaryNode.text("hash", Map.of(), "DEADBEEF42");
@@ -190,16 +171,13 @@ class BinaryCodecTest {
         assertThat(out.content()).isEqualTo("DEADBEEF42");
     }
 
-    // ---- Wire-format byte assertions ----
-
     @Test
     void emptyNodeProducesKnownBytes() {
-        // tag "0" — special-case keepalive (whatsmeow special-cases this; we just round-trip).
-        // Here: <ping/> = LIST_8(248) + size 1 + token('ping' index)
+
         BinaryNode ping = BinaryNode.of("ping");
         byte[] bytes = BinaryEncoder.encode(ping);
         int pingTokenIndex = WaTokens.INDEX.get("ping")[1];
-        // flag(0x00) + LIST_8(0xF8) + size(0x01) + tokenIndex
+
         assertThat(bytes).containsExactly(0x00, 0xF8, 0x01, pingTokenIndex);
     }
 
@@ -211,11 +189,9 @@ class BinaryCodecTest {
         byte[] bytes = BinaryEncoder.encode(in);
         BinaryNode out = BinaryDecoder.decode(bytes);
         assertThat((byte[]) out.content()).containsExactly(payload);
-        // Sanity: somewhere there should be the BINARY_20 marker (0xFD) — 300 >= 256
+
         assertThat(HexFormat.of().formatHex(bytes)).contains("fd");
     }
-
-    // ---- Error paths ----
 
     @Test
     void decodeEmptyThrows() {

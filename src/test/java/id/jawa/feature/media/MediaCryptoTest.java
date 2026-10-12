@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 package id.jawa.feature.media;
 
 import id.jawa.protocol.connection.*;
@@ -11,7 +10,6 @@ import id.jawa.feature.messaging.*;
 import id.jawa.feature.media.*;
 import id.jawa.feature.appstate.*;
 import id.jawa.feature.signal.*;
-
 
 import org.junit.jupiter.api.Test;
 
@@ -72,7 +70,7 @@ class MediaCryptoTest {
         byte[] plaintext = "the quick brown fox jumps over the lazy dog".getBytes();
         var enc = MediaCrypto.encrypt(plaintext, bytes(0x11, 32), MediaCrypto.MediaType.VIDEO);
         assertThat(enc.fileSha256()).hasSize(32);
-        // fileSha256 must be over the PLAINTEXT, not the ciphertext
+
         byte[] manual = id.jawa.protocol.crypto.Sha256.hash(plaintext);
         assertThat(enc.fileSha256()).isEqualTo(manual);
         assertThat(enc.fileSha256()).isNotEqualTo(enc.fileEncSha256());

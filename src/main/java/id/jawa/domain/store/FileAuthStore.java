@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 package id.jawa.domain.store;
 
 import id.jawa.protocol.connection.*;
@@ -12,7 +11,6 @@ import id.jawa.feature.media.*;
 import id.jawa.feature.appstate.*;
 import id.jawa.feature.signal.*;
 
-
 import id.jawa.protocol.crypto.Bytes;
 import id.jawa.protocol.crypto.KeyPair25519;
 
@@ -22,15 +20,6 @@ import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-/**
- * Simple key=value file persistence for {@link AuthCreds}.
- *
- * <p>One file per session. Byte arrays serialize as base64. Missing fields decode as
- * {@code null} so partially-paired files load gracefully.
- *
- * <p>This is a reference implementation — production users should plug in their own
- * {@link AuthStore} backed by SQLite, an encrypted keystore, or whatever fits.
- */
 public final class FileAuthStore implements AuthStore {
 
     private final Path file;

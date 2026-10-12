@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 package id.jawa.protocol.crypto;
 
 import id.jawa.protocol.connection.*;
@@ -12,18 +11,11 @@ import id.jawa.feature.media.*;
 import id.jawa.feature.appstate.*;
 import id.jawa.feature.signal.*;
 
-
 import javax.crypto.Cipher;
 import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 import java.security.GeneralSecurityException;
 
-/**
- * AES-256-GCM with 12-byte IV and 128-bit tag appended to ciphertext.
- *
- * <p>Layout: {@code ciphertext || 16-byte-tag} — matches Node's {@code createCipheriv}
- * pattern used by Baileys and Go's {@code crypto/cipher.AEAD} pattern used by whatsmeow.
- */
 public final class AesGcm {
     private static final int TAG_BITS = 128;
 
@@ -51,7 +43,6 @@ public final class AesGcm {
         }
     }
 
-    /** Build the 12-byte IV used during Noise: 8 zero bytes then a big-endian uint32 counter. */
     public static byte[] noiseIv(long counter) {
         byte[] iv = new byte[12];
         iv[8]  = (byte) ((counter >> 24) & 0xFF);

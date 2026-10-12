@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 package id.jawa.protocol.crypto;
 
 import id.jawa.protocol.connection.*;
@@ -12,12 +11,10 @@ import id.jawa.feature.media.*;
 import id.jawa.feature.appstate.*;
 import id.jawa.feature.signal.*;
 
-
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import java.security.GeneralSecurityException;
 
-/** HMAC-SHA256. */
 public final class HmacSha256 {
     private HmacSha256() {}
 

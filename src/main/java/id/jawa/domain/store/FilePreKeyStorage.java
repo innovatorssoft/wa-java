@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-3.0-or-later */
 package id.jawa.domain.store;
 
 import id.jawa.protocol.connection.*;
@@ -27,9 +26,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.stream.Stream;
 
-/**
- * Persistent backing for pre-keys. Supports both file storage and pure SQLite storage.
- */
 public final class FilePreKeyStorage {
 
     private static final Logger LOG = LoggerFactory.getLogger(FilePreKeyStorage.class);

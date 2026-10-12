@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 package id.jawa.protocol.crypto;
 
 import id.jawa.protocol.connection.*;
@@ -12,11 +11,9 @@ import id.jawa.feature.media.*;
 import id.jawa.feature.appstate.*;
 import id.jawa.feature.signal.*;
 
-
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 
-/** SHA-256. */
 public final class Sha256 {
     private Sha256() {}
 

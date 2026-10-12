@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 package id.jawa.domain.model;
 
 import id.jawa.protocol.connection.*;
@@ -12,31 +11,11 @@ import id.jawa.feature.media.*;
 import id.jawa.feature.appstate.*;
 import id.jawa.feature.signal.*;
 
-
 import id.jawa.protocol.codec.BinaryNode;
 
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * A parsed {@code <receipt>} stanza. WhatsApp uses these to signal lifecycle events
- * for our outgoing messages (delivered, read, played by peer) as well as some
- * meta-traffic (server retry hints, server-side errors).
- *
- * <p>Possible {@link #type} values:
- * <ul>
- *   <li>{@code null} — delivery receipt (single grey tick on the sender's side)</li>
- *   <li>{@code "read"} — recipient opened the chat (blue ticks)</li>
- *   <li>{@code "played"} — recipient played a voice note</li>
- *   <li>{@code "retry"} — peer couldn't decrypt; expects us to re-encrypt with fresh prekeys</li>
- *   <li>{@code "server-error"} — server-side decrypt failure</li>
- *   <li>{@code "sender"} — confirmation from sender's own group-send relay</li>
- * </ul>
- *
- * <p>For batched receipts (multiple ids in one stanza), {@link #msgIds} carries the
- * full list — the receipt's top-level {@code id} attr is the first entry, the rest
- * come from {@code <list><item id=.../>...</list>} children.
- */
 public record Receipt(
     String type,
     String chatJid,
@@ -46,7 +25,6 @@ public record Receipt(
     long timestamp
 ) {
 
-    /** Parse a {@code <receipt>} BinaryNode. Returns {@code null} if required attrs are missing. */
     public static Receipt parse(BinaryNode node) {
         String id = node.attr("id");
         String from = node.attr("from");

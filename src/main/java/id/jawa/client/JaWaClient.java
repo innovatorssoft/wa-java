@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 package id.jawa.client;
 
 import id.jawa.protocol.connection.*;
@@ -11,7 +10,6 @@ import id.jawa.feature.messaging.*;
 import id.jawa.feature.media.*;
 import id.jawa.feature.appstate.*;
 import id.jawa.feature.signal.*;
-
 
 import com.google.protobuf.ByteString;
 import id.jawa.protocol.codec.BinaryDecoder;
@@ -43,20 +41,6 @@ import org.slf4j.LoggerFactory;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-/**
- * Top-level WhatsApp Web client.
- *
- * <p>Drives the connection lifecycle:
- * <ol>
- *   <li>Load (or generate) {@link AuthCreds}.
- *   <li>Open the WebSocket via {@link FrameSocket}.
- *   <li>Run the Noise XX handshake. On {@code clientFinish.payload}, send either
- *     a {@code RegisterPayload} (first pair) or {@code LoginPayload} (reconnect).
- *   <li>Enter the steady-state read loop. For first-pair, dispatch
- *     {@code <pair-device>} / {@code <pair-success>} IQs via {@link PairingHandler}.
- *   <li>Persist creds after pair-success.
- * </ol>
- */
 public final class JaWaClient implements AutoCloseable {
 
     private static final Logger LOG = LoggerFactory.getLogger(JaWaClient.class);
@@ -64,88 +48,56 @@ public final class JaWaClient implements AutoCloseable {
     public static final java.util.concurrent.ConcurrentHashMap<String, String> LID_TO_PN_MAP =
         new java.util.concurrent.ConcurrentHashMap<>();
 
-    /** Categorised reason the server tore the session down. */
     public enum TerminationReason {
-        /** {@code <failure reason="401">} — device record revoked; user unlinked us. */
+
         REVOKED,
-        /** Account suspended / banned by WhatsApp. */
+
         BANNED,
-        /** Another session for the same device took over ({@code <stream:error><conflict type="replaced"/>}). */
+
         REPLACED,
-        /** Client version too old (`<failure reason="405">`); bump {@link WaConstants#WA_VERSION}. */
+
         VERSION_OBSOLETE,
-        /** Transient server-side or network hiccup; auto-reconnect should keep trying. */
+
         TRANSIENT,
-        /** Server sent a stream error code we don't have a specific bucket for yet. */
+
         UNKNOWN
     }
 
     public interface Listener {
-        /** Server sent QR refs. Each string is {@code ref,noisePub,identityPub,advSecret} — render as a QR. */
+
         default void onQr(List<String> qrStrings) {}
-        /** Pairing completed; creds persisted. */
+
         default void onPaired(String jid, String pushName, String platform) {}
-        /** Steady-state connection up. */
+
         default void onConnected() {}
-        /**
-         * A {@code <message>} stanza was successfully decrypted.
-         *
-         * @param decoded the decoded payload — {@code text} is non-null for plain
-         *                conversation messages, null for media / reactions / etc.
-         */
+
         default void onMessage(id.jawa.feature.messaging.MessageReceiver.Decoded decoded) {}
-        /**
-         * Inbound {@code <receipt>} stanza, already parsed into a {@link id.jawa.domain.model.Receipt}.
-         * Fires before {@link #onStanza}; consumers that care about delivery/read/played
-         * lifecycle should override this instead of pattern-matching the raw stanza.
-         */
+
         default void onReceipt(id.jawa.domain.model.Receipt receipt) {}
 
-        /**
-         * Fired once when the primary phone has shared a fresh batch of app-state keys.
-         * After this fires, {@link #requestAppStateSync} can actually decrypt patches.
-         */
         default void onAppStateKeysReceived(int count) {}
 
-        /**
-         * Fired with every batch of decoded app-state mutations returned by
-         * {@link #requestAppStateSync}. Each {@link id.jawa.feature.appstate.AppStateProcessor.Mutation}
-         * carries a {@link id.jawa.proto.Wa.SyncActionData} whose nested {@code value}
-         * names the actual action (contact / pin / archive / mute / etc.); consumers
-         * project the ones they care about.
-         */
         default void onAppStateMutations(id.jawa.feature.appstate.PatchName name,
                                          java.util.List<id.jawa.feature.appstate.AppStateProcessor.Mutation> mutations) {}
 
-        /**
-         * Server has signalled the session can no longer continue (revoked device,
-         * banned account, version obsolete, etc.). Fires once before the underlying
-         * connection is torn down; consumers should clean up any per-session state.
-         *
-         * <p>{@code permanent} differentiates "device record gone, re-pair required"
-         * (true) from "transient kick, auto-reconnect will retry" (false). When
-         * {@code permanent} is true, auto-reconnect is suppressed regardless of the
-         * {@link #autoReconnect} flag.
-         */
         default void onTerminated(TerminationReason reason, String detail, boolean permanent) {}
 
-        /** Inbound stanza after handshake/pairing. */
+        default void onAck(BinaryNode ack) {}
         default void onStanza(BinaryNode node) {}
-        /** Fatal error. */
         default void onError(Throwable t) {}
     }
 
     private final AuthStore store;
     private SignalKeyStore signalStore = new InMemorySignalKeyStore();
     private id.jawa.domain.store.InMemorySenderKeyStore senderKeyStore = new id.jawa.domain.store.InMemorySenderKeyStore();
-    private final java.nio.file.Path signalDir; // null = sessions in-memory
-    private id.jawa.domain.store.FileSessionStorage sessionStorage; // built once when connecting if signalDir is set
-    private id.jawa.domain.store.FilePreKeyStorage preKeyStorage;   // ditto
-    private id.jawa.domain.store.FileSenderKeyStorage senderKeyStorage; // ditto
-    private id.jawa.feature.appstate.FileAppStateKeyStorage appStateKeyStorage; // ditto
+    private final java.nio.file.Path signalDir;
+    private id.jawa.domain.store.FileSessionStorage sessionStorage;
+    private id.jawa.domain.store.FilePreKeyStorage preKeyStorage;
+    private id.jawa.domain.store.FileSenderKeyStorage senderKeyStorage;
+    private id.jawa.feature.appstate.FileAppStateKeyStorage appStateKeyStorage;
     private id.jawa.feature.appstate.AppStateProcessor appStateProcessor;
-    private JaWaProtocolStore protocolStore;  // initialised in connect() once creds are loaded
-    private PairingCodeHandler pairCodeHandler; // populated on demand for pair-code flow
+    private JaWaProtocolStore protocolStore;
+    private PairingCodeHandler pairCodeHandler;
     private java.util.concurrent.ScheduledExecutorService keepalive;
     private Listener listener = new Listener() {};
     private FrameSocket frame;
@@ -154,9 +106,9 @@ public final class JaWaClient implements AutoCloseable {
     private AuthCreds creds;
     private Thread readerThread;
     private final AtomicBoolean closing = new AtomicBoolean(false);
-    /** Set by the pair-success handler so the reader exits cleanly into a login-mode reconnect. */
+
     private final AtomicBoolean reconnectAfterPair = new AtomicBoolean(false);
-    /** Set when the server tells us our creds are revoked or otherwise non-recoverable. */
+
     private final AtomicBoolean terminated = new AtomicBoolean(false);
     private final java.util.concurrent.atomic.AtomicInteger reconnectAttempts =
         new java.util.concurrent.atomic.AtomicInteger(0);
@@ -167,7 +119,7 @@ public final class JaWaClient implements AutoCloseable {
     private String wsUrl = WaConstants.WS_URL;
 
     private static final long[] RECONNECT_BACKOFF_MS = {2_000, 4_000, 8_000, 16_000, 30_000, 60_000};
-    /** Counts down exactly once when {@link #close()} fires; lets {@link #join()} block across reconnects. */
+
     private final java.util.concurrent.CountDownLatch closeLatch = new java.util.concurrent.CountDownLatch(1);
     private static final int PRE_KEY_UPLOAD_COUNT = 30;
 
@@ -184,19 +136,13 @@ public final class JaWaClient implements AutoCloseable {
         deviceCache = new java.util.concurrent.ConcurrentHashMap<>();
     private final java.util.concurrent.ConcurrentHashMap<String, String>
         groupPhashMap = new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.concurrent.locks.ReentrantLock messageSendLock =
+        new java.util.concurrent.locks.ReentrantLock();
 
     public JaWaClient(AuthStore store) {
         this(store, null);
     }
 
-    /**
-     * @param store     the auth store backing {@link AuthCreds} persistence
-     * @param signalDir optional directory for persistent Signal session state. When
-     *                  {@code null}, sessions live only in memory (lost on restart);
-     *                  when set, the file-backed store under this directory survives
-     *                  reconnects, eliminating retry-receipt churn for previously-paired
-     *                  peers.
-     */
     public JaWaClient(AuthStore store, java.nio.file.Path signalDir) {
         this.store = store;
         this.signalDir = signalDir;
@@ -204,33 +150,21 @@ public final class JaWaClient implements AutoCloseable {
 
     public JaWaClient listener(Listener l) { this.listener = l != null ? l : new Listener() {}; return this; }
 
-    /**
-     * Toggle automatic reconnect on unexpected disconnect (default {@code true}).
-     */
     public JaWaClient autoReconnect(boolean enabled) {
         this.autoReconnect = enabled;
         return this;
     }
 
-    /**
-     * Configures automatic sending of 'read' receipts when inbound messages arrive (default {@code false}).
-     */
     public JaWaClient autoReadReceipt(boolean enabled) {
         this.autoReadReceipt = enabled;
         return this;
     }
 
-    /**
-     * Configures automatic sending of 'composing' presence before dispatching outgoing messages (default {@code false}).
-     */
     public JaWaClient autoComposingPresence(boolean enabled) {
         this.autoComposingPresence = enabled;
         return this;
     }
 
-    /**
-     * Configures automatic pre-key uploads when server pre-key count drops below threshold (default {@code true}).
-     */
     public JaWaClient autoPreKeyUpload(boolean enabled) {
         this.autoPreKeyUpload = enabled;
         return this;
@@ -253,7 +187,6 @@ public final class JaWaClient implements AutoCloseable {
     public ProfileService profile() { return profileService; }
     public ChatService chats() { return chatService; }
 
-    /** Open the WebSocket, run the handshake, and start dispatching stanzas. Blocks until handshake completes. */
     public synchronized void connect() throws Exception {
         if (frame != null) throw new IllegalStateException("already connected");
 
@@ -271,12 +204,9 @@ public final class JaWaClient implements AutoCloseable {
         frame = new FrameSocket(null, wsUrl);
         frame.connect();
 
-        // ---- Noise XX, client side ----
-
         KeyPair25519 ephemeral = Curve25519.generateKeyPair();
         noise = new NoiseHandshake(ephemeral, WaConstants.WA_HEADER);
 
-        // Message 1: ClientHello
         Wa.HandshakeMessage clientHello = Wa.HandshakeMessage.newBuilder()
                 .setClientHello(Wa.HandshakeMessage.ClientHello.newBuilder()
                         .setEphemeral(ByteString.copyFrom(ephemeral.publicKey()))
@@ -284,7 +214,6 @@ public final class JaWaClient implements AutoCloseable {
                 .build();
         frame.send(clientHello.toByteArray());
 
-        // Message 2: ServerHello
         byte[] serverHelloBytes = frame.receive(15_000);
         if (serverHelloBytes == null) throw new IllegalStateException("ServerHello timeout");
         Wa.HandshakeMessage serverFrame = Wa.HandshakeMessage.parseFrom(serverHelloBytes);
@@ -297,7 +226,6 @@ public final class JaWaClient implements AutoCloseable {
             creds.noiseKey
         );
 
-        // Message 3: ClientFinish — encrypt ClientPayload with the NEW handshake key
         Wa.ClientPayload payload = isPairing
                 ? ClientPayloadBuilder.register(creds)
                 : ClientPayloadBuilder.login(creds);
@@ -330,15 +258,9 @@ public final class JaWaClient implements AutoCloseable {
             appStateProcessor  = new id.jawa.feature.appstate.AppStateProcessor(appStateKeyStorage);
         }
         protocolStore = new JaWaProtocolStore(creds, sessionStorage);
-        // Re-mirror any persisted pre-keys into libsignal's protocolStore so inbound
-        // <enc type=pkmsg> referencing a previously-uploaded one-time pre-key id can
-        // still resolve after restart.
+
         if (preKeyStorage != null) {
-            // Prune accumulated pre-keys before re-mirroring. Each successful login uploads
-            // PRE_KEY_UPLOAD_COUNT fresh keys (default 30) and the storage never clears the
-            // old ones on its own — after a few hundred connects the disk + libsignal mirror
-            // both balloon (we hit 7640+ keys mid-development, which delayed startup enough
-            // for the server to time out the handshake). Cap to 600 = ~20 sessions worth.
+
             preKeyStorage.pruneKeepHighest(600);
             for (var entry : preKeyStorage.snapshot().entrySet()) {
                 try {
@@ -357,13 +279,10 @@ public final class JaWaClient implements AutoCloseable {
         }
         LOG.info("Noise handshake complete — steady state {}", isPairing ? "(pairing)" : "(login)");
 
-        // ---- Start reader loop ----
-
         readerThread = Thread.ofVirtual().name("jawa-reader").start(this::readLoop);
         startKeepalive();
     }
 
-    /** Schedule a periodic w:p keepalive ping so the server doesn't disconnect us for inactivity. */
     private void startKeepalive() {
         if (keepalive != null) return;
         keepalive = java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
@@ -371,8 +290,7 @@ public final class JaWaClient implements AutoCloseable {
             t.setDaemon(true);
             return t;
         });
-        // Whatsmeow rolls a random interval per tick in [20..30) sec. We do the same to avoid
-        // any deterministic-traffic heuristic on the server side.
+
         Runnable tick = new Runnable() {
             @Override public void run() {
                 if (closing.get() || frame == null || !frame.isOpen()) return;
@@ -390,7 +308,7 @@ public final class JaWaClient implements AutoCloseable {
                 } catch (Throwable t) {
                     LOG.warn("Keepalive send failed", t);
                 }
-                // Random in [20..30) seconds — matches whatsmeow's KeepAliveIntervalMin/Max.
+
                 long delay = 20 + java.util.concurrent.ThreadLocalRandom.current().nextInt(10);
                 keepalive.schedule(this, delay, java.util.concurrent.TimeUnit.SECONDS);
             }
@@ -398,11 +316,6 @@ public final class JaWaClient implements AutoCloseable {
         keepalive.schedule(tick, 20, java.util.concurrent.TimeUnit.SECONDS);
     }
 
-    /**
-     * Block until {@link #close()} fires. Survives reconnects — the underlying reader
-     * thread may be swapped out mid-flight (e.g. post-pair auto-login) without unblocking
-     * the caller.
-     */
     public void join() throws InterruptedException {
         closeLatch.await();
     }
@@ -442,17 +355,6 @@ public final class JaWaClient implements AutoCloseable {
         }
     }
 
-    /**
-     * Tear down the dead WebSocket, sleep an exponentially-growing back-off, then
-     * call {@link #connect()} again. Same creds, same listener, same persistent Signal
-     * state — peers shouldn't notice the gap.
-     */
-    /**
-     * Watch every decoded inbound message for a {@code protocolMessage.appStateSyncKeyShare}
-     * — the primary phone ships these once when our companion device first comes online,
-     * and they're not re-sent on demand. Persisting them as soon as they arrive is how
-     * we participate in app-state sync at all.
-     */
     private void captureAppStateKeysFrom(id.jawa.feature.messaging.MessageReceiver.Decoded decoded) {
         if (appStateKeyStorage == null || decoded.message() == null) return;
         if (!decoded.message().hasProtocolMessage()) return;
@@ -473,17 +375,6 @@ public final class JaWaClient implements AutoCloseable {
         }
     }
 
-    /**
-     * Request a snapshot or incremental patch list from {@code w:sync:app:state} and
-     * decode every mutation in the response via {@link id.jawa.feature.appstate.AppStateProcessor}.
-     *
-     * @param name        which collection to sync ({@code regular_low} = chat
-     *                    archive state, {@code critical_unblock_low} = contacts, etc.)
-     * @param fromVersion {@code -1} for a fresh snapshot (typical first sync);
-     *                    otherwise an existing version to fetch patches since
-     * @return future resolving to every decoded mutation; empty list when nothing
-     *         to apply or when the IQ failed (logged)
-     */
     public java.util.concurrent.CompletableFuture<java.util.List<id.jawa.feature.appstate.AppStateProcessor.Mutation>>
             requestAppStateSync(id.jawa.feature.appstate.PatchName name, long fromVersion) {
         if (appStateProcessor == null) {
@@ -553,8 +444,7 @@ public final class JaWaClient implements AutoCloseable {
         if (conflict != null) {
             String type = conflict.attr("type", "");
             LOG.warn("Stream error: conflict type={} — another session for this device is active", type);
-            // <conflict type=replaced/> means another session took over. Don't auto-reconnect
-            // immediately; the user/operator may have started a second JaWa intentionally.
+
             terminated.set(true);
             try { listener.onTerminated(TerminationReason.REPLACED, "conflict type=" + type, true); }
             catch (Throwable t) { LOG.warn("listener.onTerminated threw", t); }
@@ -593,22 +483,16 @@ public final class JaWaClient implements AutoCloseable {
         }
     }
 
-    /**
-     * Tear down the current pairing connection and reopen as login mode. Called from a
-     * fresh virtual thread after pair-success — the server immediately follows pair-success
-     * with {@code stream:error 515} and a TCP close, and revokes the new creds within ~30s
-     * if we don't reconnect with a {@code LoginPayload}.
-     */
     private void doReconnectPostPair() {
         if (frame != null) { try { frame.close(); } catch (Throwable ignored) {} frame = null; }
         if (keepalive != null) { keepalive.shutdownNow(); keepalive = null; }
         noise = null;
         transport = null;
         pendingIqResults.clear();
-        // Brief settle so we don't race the server's own teardown of the pairing connection.
+
         try { Thread.sleep(500); }
         catch (InterruptedException ie) { Thread.currentThread().interrupt(); return; }
-        if (closing.get()) return; // caller invoked close() during the settle window
+        if (closing.get()) return;
         try {
             connect();
             LOG.info("Auto-reconnected post-pair → login mode");
@@ -622,15 +506,28 @@ public final class JaWaClient implements AutoCloseable {
     private final java.util.Map<String, java.util.function.Consumer<BinaryNode>> pendingIqResults
         = new java.util.concurrent.ConcurrentHashMap<>();
 
-    /** Random 16-char hex id for outgoing IQ stanzas. */
     private String newIqId() {
         return Bytes.toHex(Bytes.random(8));
     }
 
-    /**
-     * Send an IQ stanza and register a callback for the {@code <iq type=result|error>} response.
-     * The callback runs on the reader thread.
-     */
+    public String generateMessageId() {
+        java.nio.ByteBuffer bb = java.nio.ByteBuffer.allocate(8 + 64 + 16);
+        bb.putLong(System.currentTimeMillis() / 1000L);
+        if (creds != null && creds.meJid != null) {
+            id.jawa.domain.model.Jid j = id.jawa.domain.model.Jid.parse(creds.meJid);
+            if (j != null && j.user() != null) {
+                bb.put((j.user() + "@c.us").getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            }
+        }
+        bb.put(Bytes.random(16));
+        bb.flip();
+        byte[] input = new byte[bb.remaining()];
+        bb.get(input);
+        byte[] hash = Sha256.hash(input);
+        byte[] prefix = java.util.Arrays.copyOfRange(hash, 0, 9);
+        return "3EB0" + Bytes.toHex(prefix).toUpperCase();
+    }
+
     public String sendIq(BinaryNode iq, java.util.function.Consumer<BinaryNode> onResponse) {
         String id = iq.attr("id");
         if (id == null) throw new IllegalArgumentException("iq has no id attribute");
@@ -639,20 +536,12 @@ public final class JaWaClient implements AutoCloseable {
         return id;
     }
 
-    /** Send an IQ stanza and return a future that completes with the response. */
     public java.util.concurrent.CompletableFuture<BinaryNode> sendIqAsync(BinaryNode iq) {
         var f = new java.util.concurrent.CompletableFuture<BinaryNode>();
         sendIq(iq, f::complete);
         return f;
     }
 
-    /**
-     * Switch the current pairing session to phone-number pairing-code mode.
-     *
-     * @param phoneNumber  the phone number to pair, in international E.164 form without {@code +} (e.g. "628123…")
-     * @param customCode   optional fixed 8-char Crockford code; {@code null} = randomly generated
-     * @return future completing with the 8-char code that should be displayed to the user
-     */
     public java.util.concurrent.CompletableFuture<String> requestPairingCode(String phoneNumber, String customCode) {
         if (creds.account != null) {
             throw new IllegalStateException("already paired (creds.account is set) — cannot request a pairing code");
@@ -669,17 +558,6 @@ public final class JaWaClient implements AutoCloseable {
         });
     }
 
-    /**
-     * Send a text message to {@code toUser} (bare JID, e.g. {@code 628xxx@s.whatsapp.net}).
-     * Returns the message id once the stanza has been transmitted.
-     *
-     * <p>Pipeline: query devices for recipient AND own user → bootstrap sessions for both
-     * sets → encrypt per-device (DSM-wrap for own companions, bare for foreign) → send.
-     *
-     * <p>The own-user USync is what lets the user's other devices (notably the phone)
-     * insert the outgoing message into their local chat history. Without it, the message
-     * reaches the recipient but the sender's own phone shows no record of it.
-     */
     public java.util.concurrent.CompletableFuture<String> sendMessage(String chatJid, id.jawa.proto.Wa.Message msg) {
         if (chatJid.endsWith("@newsletter")) {
             return sendNewsletterMessage(chatJid, msg);
@@ -689,10 +567,6 @@ public final class JaWaClient implements AutoCloseable {
             : sendDmMessage(chatJid, msg);
     }
 
-    /**
-     * Send any {@link id.jawa.proto.Wa.Message} to the chat of the received message.
-     * Routes automatically depending on the JID suffix.
-     */
     public java.util.concurrent.CompletableFuture<String> sendMessage(
             id.jawa.feature.messaging.MessageReceiver.Decoded target, id.jawa.proto.Wa.Message msg) {
         String chatJid = target.groupJid() != null ? target.groupJid() : target.senderJid();
@@ -705,30 +579,15 @@ public final class JaWaClient implements AutoCloseable {
         return sendMessage(chatJid, msg);
     }
 
-    /**
-     * Send a plain text message to a user or a group.
-     * Routes automatically depending on the JID suffix.
-     */
     public java.util.concurrent.CompletableFuture<String> sendText(String chatJid, String text) {
         return sendMessage(chatJid, MessageEncoder.text(text));
     }
 
-    /**
-     * Send a plain text message replying/sending to the chat of the received message.
-     * Routes automatically depending on the JID suffix.
-     */
     public java.util.concurrent.CompletableFuture<String> sendText(
             id.jawa.feature.messaging.MessageReceiver.Decoded target, String text) {
         return sendMessage(target, MessageEncoder.text(text));
     }
 
-
-
-    /**
-     * Send a text that tags one or more users. The {@code text} must contain
-     * {@code @<number>} for each mention; {@code mentionedBareJids} lists the matching
-     * full bare JIDs. Routes DM vs group based on {@code chatJid} suffix.
-     */
     public java.util.concurrent.CompletableFuture<String> sendTextWithMentions(
             String chatJid, String text, java.util.List<String> mentionedBareJids) {
         id.jawa.proto.Wa.Message msg = MessageEncoder.textWithMentions(text, mentionedBareJids);
@@ -737,15 +596,6 @@ public final class JaWaClient implements AutoCloseable {
             : sendDmMessage(chatJid, msg);
     }
 
-    /**
-     * Send a poll. {@code selectableCount=1} produces a single-select poll;
-     * higher values produce multi-select; {@code 0} = unlimited.
-     *
-     * @param chatJid          DM bare JID or group {@code @g.us}
-     * @param name             the poll question
-     * @param options          1-12 option texts
-     * @param selectableCount  how many options each voter can pick
-     */
     public java.util.concurrent.CompletableFuture<String> sendPoll(
             String chatJid, String name, java.util.List<String> options, int selectableCount) {
         id.jawa.proto.Wa.Message msg = MessageEncoder.pollMessage(name, options, selectableCount);
@@ -754,10 +604,6 @@ public final class JaWaClient implements AutoCloseable {
             : sendDmMessage(chatJid, msg);
     }
 
-    /**
-     * Send a static location pin. {@code name} / {@code address} render as a caption
-     * below the pin; pass {@code null} or empty to skip.
-     */
     public java.util.concurrent.CompletableFuture<String> sendLocation(
             String chatJid, double latitude, double longitude, String name, String address) {
         id.jawa.proto.Wa.Message msg = MessageEncoder.locationMessage(latitude, longitude, name, address);
@@ -766,10 +612,6 @@ public final class JaWaClient implements AutoCloseable {
             : sendDmMessage(chatJid, msg);
     }
 
-    /**
-     * Send a contact card. Caller supplies a valid vCard string; see
-     * {@link MessageEncoder#contactMessage} for the minimal shape.
-     */
     public java.util.concurrent.CompletableFuture<String> sendContact(
             String chatJid, String displayName, String vcard) {
         id.jawa.proto.Wa.Message msg = MessageEncoder.contactMessage(displayName, vcard);
@@ -778,32 +620,19 @@ public final class JaWaClient implements AutoCloseable {
             : sendDmMessage(chatJid, msg);
     }
 
-    /**
-     * Send a WhatsApp Status / Story text with background ARGB color and font type.
-     *
-     * @param text           status text string
-     * @param backgroundArgb ARGB color integer (e.g. 0xFF005C4B or 0xFF5F0F40)
-     * @param fontType       font type ID (1=SERIF, 2=NORICAN, 3=BRYORDAN, 4=BEBASNEUE)
-     */
     public java.util.concurrent.CompletableFuture<String> sendStatusText(
             String text, int backgroundArgb, int fontType) {
         id.jawa.proto.Wa.Message msg = MessageEncoder.statusTextMessage(text, backgroundArgb, fontType);
         return sendDmMessage("status@broadcast", msg);
     }
 
-    /**
-     * Send a WhatsApp Status / Story media message (image or video proto).
-     */
     public java.util.concurrent.CompletableFuture<String> sendStatusMedia(id.jawa.proto.Wa.Message mediaMsg) {
         return sendDmMessage("status@broadcast", mediaMsg);
     }
 
-    /**
-     * Send a text message to a WhatsApp Newsletter / Channel (e.g. "120363xxx@newsletter").
-     */
     public java.util.concurrent.CompletableFuture<String> sendNewsletterText(
             String newsletterJid, String text) {
-        String msgId = newIqId();
+        String msgId = generateMessageId();
         byte[] msgBytes = MessageEncoder.encode(MessageEncoder.text(text));
         BinaryNode node = new BinaryNode("message",
             java.util.Map.of(
@@ -816,13 +645,9 @@ public final class JaWaClient implements AutoCloseable {
         return java.util.concurrent.CompletableFuture.completedFuture(msgId);
     }
 
-    /**
-     * Send an emoji reaction to a message in a WhatsApp Newsletter / Channel.
-     * Pass {@code reactionCode = null} or empty to remove an existing reaction.
-     */
     public java.util.concurrent.CompletableFuture<String> sendNewsletterReaction(
             String newsletterJid, String serverId, String reactionCode) {
-        String msgId = newIqId();
+        String msgId = generateMessageId();
         java.util.Map<String, String> attrs = new java.util.HashMap<>();
         attrs.put("to", newsletterJid);
         attrs.put("type", "reaction");
@@ -839,9 +664,6 @@ public final class JaWaClient implements AutoCloseable {
         return java.util.concurrent.CompletableFuture.completedFuture(msgId);
     }
 
-    /**
-     * Fetch recent messages from a WhatsApp Newsletter / Channel.
-     */
     public java.util.concurrent.CompletableFuture<BinaryNode> fetchNewsletterMessages(
             String newsletterJid, int count) {
         String iqId = newIqId();
@@ -856,16 +678,10 @@ public final class JaWaClient implements AutoCloseable {
         return sendIqAsync(node);
     }
 
-    /**
-     * Download and decrypt media bytes (Image, Video, Audio, Document, Sticker) from an inbound Wa.Message.
-     */
     public byte[] downloadMedia(id.jawa.proto.Wa.Message msg) {
         return id.jawa.feature.media.MediaDownloader.download(msg);
     }
 
-    /**
-     * Update account profile bio/status text.
-     */
     public java.util.concurrent.CompletableFuture<BinaryNode> updateProfileStatus(String statusText) {
         String iqId = newIqId();
         BinaryNode iq = new BinaryNode("iq",
@@ -874,9 +690,6 @@ public final class JaWaClient implements AutoCloseable {
         return sendIqAsync(iq);
     }
 
-    /**
-     * Fetch profile picture URL for a user or group JID. Returns null if not available/private.
-     */
     public java.util.concurrent.CompletableFuture<String> fetchProfilePictureUrl(String targetJid) {
         String iqId = newIqId();
         BinaryNode iq = new BinaryNode("iq",
@@ -888,9 +701,6 @@ public final class JaWaClient implements AutoCloseable {
         });
     }
 
-    /**
-     * Update a group's profile picture using raw JPEG/PNG image bytes.
-     */
     public java.util.concurrent.CompletableFuture<BinaryNode> updateGroupPicture(
             String groupJid, byte[] imageBytes) {
         if (imageBytes == null || imageBytes.length == 0) {
@@ -906,9 +716,6 @@ public final class JaWaClient implements AutoCloseable {
         return sendIqAsync(iq);
     }
 
-    /**
-     * Remove a group's profile picture.
-     */
     public java.util.concurrent.CompletableFuture<BinaryNode> removeGroupPicture(String groupJid) {
         String iqId = newIqId();
         BinaryNode picNode = new BinaryNode("picture",
@@ -920,27 +727,18 @@ public final class JaWaClient implements AutoCloseable {
         return sendIqAsync(iq);
     }
 
-    /**
-     * Update account's own profile picture using raw JPEG/PNG image bytes.
-     */
     public java.util.concurrent.CompletableFuture<BinaryNode> updateProfilePicture(byte[] imageBytes) {
         id.jawa.domain.model.Jid myJid = id.jawa.domain.model.Jid.parse(creds.meJid);
         String ownBareJid = myJid != null ? myJid.user() + "@s.whatsapp.net" : creds.meJid;
         return updateGroupPicture(ownBareJid, imageBytes);
     }
 
-    /**
-     * Remove account's own profile picture.
-     */
     public java.util.concurrent.CompletableFuture<BinaryNode> removeProfilePicture() {
         id.jawa.domain.model.Jid myJid = id.jawa.domain.model.Jid.parse(creds.meJid);
         String ownBareJid = myJid != null ? myJid.user() + "@s.whatsapp.net" : creds.meJid;
         return removeGroupPicture(ownBareJid);
     }
 
-    /**
-     * Block or unblock a contact.
-     */
     public java.util.concurrent.CompletableFuture<BinaryNode> updateBlockStatus(String targetJid, boolean block) {
         String iqId = newIqId();
         BinaryNode item = new BinaryNode("item", java.util.Map.of("action", block ? "block" : "unblock", "jid", targetJid), null);
@@ -950,9 +748,6 @@ public final class JaWaClient implements AutoCloseable {
         return sendIqAsync(iq);
     }
 
-    /**
-     * Fetch current blocklist JIDs.
-     */
     public java.util.concurrent.CompletableFuture<java.util.List<String>> fetchBlockList() {
         String iqId = newIqId();
         BinaryNode iq = new BinaryNode("iq",
@@ -971,9 +766,6 @@ public final class JaWaClient implements AutoCloseable {
         });
     }
 
-    /**
-     * Pin or unpin a chat.
-     */
     public java.util.concurrent.CompletableFuture<BinaryNode> pinChat(String chatJid, boolean pin) {
         String iqId = newIqId();
         BinaryNode item = new BinaryNode("pin", java.util.Map.of("jid", chatJid, "action", pin ? "pin" : "unpin"), null);
@@ -983,9 +775,6 @@ public final class JaWaClient implements AutoCloseable {
         return sendIqAsync(iq);
     }
 
-    /**
-     * Archive or unarchive a chat.
-     */
     public java.util.concurrent.CompletableFuture<BinaryNode> archiveChat(String chatJid, boolean archive) {
         String iqId = newIqId();
         BinaryNode item = new BinaryNode("archive", java.util.Map.of("jid", chatJid, "action", archive ? "archive" : "unarchive"), null);
@@ -995,9 +784,6 @@ public final class JaWaClient implements AutoCloseable {
         return sendIqAsync(iq);
     }
 
-    /**
-     * Mute or unmute a chat for the given duration in seconds (0 = unmute).
-     */
     public java.util.concurrent.CompletableFuture<BinaryNode> muteChat(String chatJid, long durationSeconds) {
         String iqId = newIqId();
         java.util.Map<String, String> attrs = new java.util.HashMap<>();
@@ -1015,11 +801,6 @@ public final class JaWaClient implements AutoCloseable {
         return sendIqAsync(iq);
     }
 
-    /**
-     * Send any {@link id.jawa.proto.Wa.Message} (text, reaction, etc.) as a DM. Handles
-     * USync device-list query, pre-key bundle fetch, Signal session install, per-device
-     * encrypt + DSM fan-out to own companion devices.
-     */
     public java.util.concurrent.CompletableFuture<String>
             sendDmMessage(String toUser, id.jawa.proto.Wa.Message msg) {
         String ownBareJid;
@@ -1083,16 +864,21 @@ public final class JaWaClient implements AutoCloseable {
             }
 
             return fetchBundlesAndInstallSessions(encryptionDeviceJids).thenApply(addresses -> {
-                String msgId = newIqId().toUpperCase();
-                MessageSender.Result result = MessageSender.buildDualIdentityStanza(
-                    protocolStore, creds, msgId, finalRoutingJid,
-                    allDeviceJids, encryptionDeviceJids, msg);
-                send(result.stanza());
-                int ownCount = countOwnDevices(allDeviceJids, ownUser);
-                LOG.info("Sent message id={} to={} ({} device(s) total, {} own-companion DSM)",
-                    msgId, finalRoutingJid, allDeviceJids.size(),
-                    Math.max(0, ownCount - 1));
-                return msgId;
+                String msgId = generateMessageId();
+                messageSendLock.lock();
+                try {
+                    MessageSender.Result result = MessageSender.buildDualIdentityStanza(
+                        protocolStore, creds, msgId, finalRoutingJid,
+                        allDeviceJids, encryptionDeviceJids, msg);
+                    send(result.stanza());
+                    int ownCount = countOwnDevices(allDeviceJids, ownUser);
+                    LOG.info("Sent message id={} to={} ({} device(s) total, {} own-companion DSM)",
+                        msgId, finalRoutingJid, allDeviceJids.size(),
+                        Math.max(0, ownCount - 1));
+                    return msgId;
+                } finally {
+                    messageSendLock.unlock();
+                }
             });
         });
     }
@@ -1134,23 +920,11 @@ public final class JaWaClient implements AutoCloseable {
         });
     }
 
-    /**
-     * Send a text message to a group. Pipeline:
-     * 1. Resolve participants by looking up the group in our joined-groups list.
-     * 2. USync each participant's bare JID to enumerate every device they have.
-     * 3. Bootstrap libsignal sessions for every participant device that doesn't have one.
-     * 4. Hand off to {@link id.jawa.feature.messaging.GroupSender} which builds + encrypts the stanza.
-     */
     public java.util.concurrent.CompletableFuture<String>
             sendGroupText(String groupJid, String text) {
         return sendGroupMessage(groupJid, MessageEncoder.text(text));
     }
 
-    /**
-     * Send any {@link id.jawa.proto.Wa.Message} (text, reaction, etc.) to a group.
-     * Handles participant resolution, USync, pre-key bundle fetch, session install,
-     * and the SKDM-per-participant + single skmsg fan-out.
-     */
     public java.util.concurrent.CompletableFuture<String>
             sendGroupMessage(String groupJid, id.jawa.proto.Wa.Message msg) {
         id.jawa.feature.messaging.GroupListQuery.GroupInfo cached = groupCache.get(groupJid);
@@ -1189,30 +963,31 @@ public final class JaWaClient implements AutoCloseable {
                     }
                 }
                 return fetchBundlesAndInstallSessions(allDeviceJids).thenApply(addresses -> {
-                    String msgId = newIqId().toUpperCase();
-                    id.jawa.feature.messaging.GroupSender.Result result =
-                        id.jawa.feature.messaging.GroupSender.buildStanza(
-                            protocolStore, senderKeyStore, creds, msgId,
-                            groupJid, allDeviceJids, msg);
-                    if (result.phash() != null && !result.phash().isEmpty()) {
-                        groupPhashMap.put(groupJid, result.phash());
+                    String msgId = generateMessageId();
+                    messageSendLock.lock();
+                    try {
+                        id.jawa.feature.messaging.GroupSender.Result result =
+                            id.jawa.feature.messaging.GroupSender.buildStanza(
+                                protocolStore, senderKeyStore, creds, msgId,
+                                groupJid, allDeviceJids, msg);
+                        if (result.phash() != null && !result.phash().isEmpty()) {
+                            groupPhashMap.put(groupJid, result.phash());
+                        }
+                        send(result.stanza());
+                        LOG.info("Sent group message id={} to={} ({} participant device(s), SKDM to {}, phash={})",
+                            msgId, groupJid, allDeviceJids.size(), result.skdmRecipients(), result.phash());
+                        return msgId;
+                    } finally {
+                        messageSendLock.unlock();
                     }
-                    send(result.stanza());
-                    LOG.info("Sent group message id={} to={} ({} participant device(s), SKDM to {}, phash={})",
-                        msgId, groupJid, allDeviceJids.size(), result.skdmRecipients(), result.phash());
-                    return msgId;
                 });
             });
         });
     }
 
-    /**
-     * Send a message to a newsletter (channel).
-     * Newsletters are sent in plaintext (no E2EE) using a `<plaintext>` node.
-     */
     public java.util.concurrent.CompletableFuture<String> sendNewsletterMessage(
             String newsletterJid, id.jawa.proto.Wa.Message msg) {
-        String msgId = newIqId().toUpperCase();
+        String msgId = generateMessageId();
 
         String msgType = "text";
         if (msg.hasImageMessage()) msgType = "image";
@@ -1233,21 +1008,6 @@ public final class JaWaClient implements AutoCloseable {
         return java.util.concurrent.CompletableFuture.completedFuture(msgId);
     }
 
-    /**
-     * Send a reaction to an existing message. Routes to {@link #sendDmMessage} for DM
-     * targets and {@link #sendGroupMessage} for group targets, based on {@code chatJid}
-     * suffix.
-     *
-     * @param chatJid           where the original message lives — group JID
-     *                          ({@code ...@g.us}) for group reactions, or the peer's
-     *                          bare JID for DMs
-     * @param targetMsgId       the original message's {@code id} attribute
-     * @param targetParticipant for group reactions, the device JID of the original
-     *                          message's sender; {@code null} for DMs
-     * @param fromMe            {@code true} if the target message was sent by us
-     * @param emoji             the reaction emoji; empty string removes our reaction
-     * @return future resolving to the reaction message's id
-     */
     public java.util.concurrent.CompletableFuture<String> sendReaction(
             String chatJid,
             String targetMsgId,
@@ -1263,10 +1023,6 @@ public final class JaWaClient implements AutoCloseable {
         return sendDmMessage(chatJid, msg);
     }
 
-    /**
-     * React to a received message.
-     * Automatically extracts target details from the decoded message.
-     */
     public java.util.concurrent.CompletableFuture<String> sendReaction(
             id.jawa.feature.messaging.MessageReceiver.Decoded target, String emoji) {
         String chatJid = target.groupJid() != null ? target.groupJid() : target.senderJid();
@@ -1281,18 +1037,6 @@ public final class JaWaClient implements AutoCloseable {
         return sendReaction(chatJid, target.msgId(), targetParticipant, fromMe, emoji);
     }
 
-    /**
-     * Send a text reply that quotes an existing message. Routes DM vs group based on
-     * {@code chatJid} suffix.
-     *
-     * @param chatJid       chat where the reply lives (group JID or peer's bare JID)
-     * @param text          the new reply text
-     * @param quotedMsgId   id of the message being quoted
-     * @param quotedSender  sender JID of the quoted message; {@code null} for DM
-     * @param quotedText    short preview of the quoted text; used to render the
-     *                      block-quote on the recipient's UI
-     * @return future resolving to the reply message's id
-     */
     public java.util.concurrent.CompletableFuture<String> sendReply(
             String chatJid,
             String text,
@@ -1307,10 +1051,6 @@ public final class JaWaClient implements AutoCloseable {
         return sendDmMessage(chatJid, msg);
     }
 
-    /**
-     * Send a text reply quoting a received message.
-     * Automatically extracts target details from the decoded message.
-     */
     public java.util.concurrent.CompletableFuture<String> sendReply(
             id.jawa.feature.messaging.MessageReceiver.Decoded target, String text) {
         String chatJid = target.groupJid() != null ? target.groupJid() : target.senderJid();
@@ -1323,10 +1063,6 @@ public final class JaWaClient implements AutoCloseable {
         return sendReply(chatJid, text, target.msgId(), quotedSender, quotedText);
     }
 
-    /**
-     * Send a {@code listMessage} — dropdown of selectable options grouped into
-     * sections. Routes DM vs group based on {@code chatJid} suffix.
-     */
     public java.util.concurrent.CompletableFuture<String> sendListMessage(
             String chatJid,
             String title,
@@ -1341,13 +1077,6 @@ public final class JaWaClient implements AutoCloseable {
             : sendDmMessage(chatJid, msg);
     }
 
-    /**
-     * Send an {@code interactiveMessage} with call-to-action buttons (URL / copy /
-     * call). Build the button list with {@link MessageEncoder.CtaButton#url},
-     * {@link MessageEncoder.CtaButton#copy}, {@link MessageEncoder.CtaButton#call}.
-     *
-     * <p>Routes DM vs group based on {@code chatJid} suffix.
-     */
     public java.util.concurrent.CompletableFuture<String> sendCtaButtons(
             String chatJid,
             String body,
@@ -1359,11 +1088,6 @@ public final class JaWaClient implements AutoCloseable {
             : sendDmMessage(chatJid, msg);
     }
 
-    /**
-     * Input shape for {@link #sendCarousel} — raw media bytes + buttons per card,
-     * before the per-card upload step. Use {@code mimetype} starting with
-     * {@code "image/"} or {@code "video/"} to pick the upload pipeline.
-     */
     public record CarouselCardInput(
         String title,
         String caption,
@@ -1373,15 +1097,6 @@ public final class JaWaClient implements AutoCloseable {
         java.util.List<MessageEncoder.CtaButton> buttons
     ) {}
 
-    /**
-     * Send a carousel — horizontally-scrollable cards. Each card's media is encrypted
-     * and uploaded in parallel; once all uploads land, the cards are assembled into
-     * an {@code interactiveMessage.carouselMessage} and routed through the existing
-     * DM/group pipeline.
-     *
-     * <p>WhatsApp rejects cards without a media header, so every input must carry
-     * non-empty {@code mediaBytes}.
-     */
     public java.util.concurrent.CompletableFuture<String> sendCarousel(
             String chatJid,
             String body,
@@ -1440,11 +1155,6 @@ public final class JaWaClient implements AutoCloseable {
         });
     }
 
-    /**
-     * Send a {@code buttonsMessage} — up to 3 quick-reply buttons rendered below
-     * {@code body}. When tapped, the recipient gets a {@code buttonsResponseMessage}
-     * with the matching {@code buttonId}.
-     */
     public java.util.concurrent.CompletableFuture<String> sendButtonsMessage(
             String chatJid,
             String body,
@@ -1456,17 +1166,6 @@ public final class JaWaClient implements AutoCloseable {
             : sendDmMessage(chatJid, msg);
     }
 
-    /**
-     * Edit a previously-sent text message. WhatsApp's UI shows the replacement and an
-     * "edited" tag. Subject to ~15-minute server-side edit window.
-     *
-     * @param chatJid       chat where the original was sent
-     * @param targetMsgId   id returned by the original {@link #sendText} /
-     *                      {@link #sendGroupText} call
-     * @param newText       the replacement text
-     * @return future resolving to the edit message's id (a new id, distinct from
-     *         {@code targetMsgId})
-     */
     public java.util.concurrent.CompletableFuture<String> sendEdit(
             String chatJid,
             String targetMsgId,
@@ -1480,10 +1179,6 @@ public final class JaWaClient implements AutoCloseable {
         return sendDmMessage(chatJid, msg);
     }
 
-    /**
-     * Edit a previously-sent message.
-     * Automatically extracts target details from the decoded message.
-     */
     public java.util.concurrent.CompletableFuture<String> sendEdit(
             id.jawa.feature.messaging.MessageReceiver.Decoded target, String newText) {
         String chatJid = target.groupJid() != null ? target.groupJid() : target.senderJid();
@@ -1494,30 +1189,6 @@ public final class JaWaClient implements AutoCloseable {
         return sendEdit(chatJid, target.msgId(), newText);
     }
 
-
-    /**
-     * Revoke (delete-for-everyone) a message.
-     *
-     * @param chatJid           chat where the original lives
-     * @param targetMsgId       id of the message to revoke
-     * @param targetParticipant for revoking someone else's message in a group (admin
-     *                          action), the sender's device JID; {@code null} when
-     *                          revoking your own
-     * @param fromMe            {@code true} if the target message was sent by us
-     */
-    /**
-     * Download + decrypt an inbound media payload referenced by a {@code Wa.Message}
-     * {@code imageMessage} / {@code videoMessage} / {@code audioMessage} /
-     * {@code documentMessage}. Prefer the {@code url} when set; fall back to
-     * {@code directPath} resolved via {@link #refreshMediaConn}.
-     *
-     * @param url            the {@code url} field on the inbound media message; may be empty
-     * @param directPath     the {@code directPath} field; required when {@code url} is empty
-     * @param mediaKey       32-byte media key
-     * @param fileEncSha256  envelope SHA-256 (over ciphertext+MAC); used for integrity check
-     * @param type           which {@code MediaType} the message was encrypted under
-     * @return future resolving to the plaintext bytes
-     */
     public java.util.concurrent.CompletableFuture<byte[]> downloadMedia(
             String url,
             String directPath,
@@ -1548,17 +1219,12 @@ public final class JaWaClient implements AutoCloseable {
             }));
     }
 
-    /** Bundle of (mediaKey, encrypted, upload) for the per-type send helpers below. */
     private record MediaUpload(
         byte[] mediaKey,
         id.jawa.feature.media.MediaCrypto.EncryptedMedia enc,
         id.jawa.feature.media.MediaUploader.Result upload
     ) {}
 
-    /**
-     * Encrypt + upload + bundle. The named send helpers (sendImage/Video/Audio/
-     * Document) build the type-specific {@code Wa.Message} on top of this.
-     */
     private java.util.concurrent.CompletableFuture<MediaUpload> encryptAndUpload(
             byte[] bytes,
             id.jawa.feature.media.MediaCrypto.MediaType type) {
@@ -1587,12 +1253,6 @@ public final class JaWaClient implements AutoCloseable {
             : sendDmMessage(chatJid, msg);
     }
 
-    /**
-     * Upload + send an image. Pipeline: encrypt {@code imageBytes} with a fresh random
-     * media key, refresh the mediaConn auth, HTTPS POST the ciphertext to the media
-     * server, build a {@code Wa.Message.imageMessage}, and ship it through
-     * {@link #sendDmMessage} / {@link #sendGroupMessage} depending on {@code chatJid}.
-     */
     public java.util.concurrent.CompletableFuture<String> sendImage(
             String chatJid,
             byte[] imageBytes,
@@ -1607,11 +1267,6 @@ public final class JaWaClient implements AutoCloseable {
                     imageBytes.length, mimetype, caption)));
     }
 
-    /**
-     * Send an image as view-once — recipient sees it exactly once before WhatsApp
-     * purges the media from their chat. Pipeline identical to {@link #sendImage};
-     * the resulting {@code imageMessage} is wrapped in {@code viewOnceMessageV2}.
-     */
     public java.util.concurrent.CompletableFuture<String> sendImageViewOnce(
             String chatJid, byte[] imageBytes, String mimetype, String caption) {
         return encryptAndUpload(imageBytes, id.jawa.feature.media.MediaCrypto.MediaType.IMAGE)
@@ -1625,7 +1280,6 @@ public final class JaWaClient implements AutoCloseable {
             });
     }
 
-    /** See {@link #sendImageViewOnce} — same wrap, applied to a video. */
     public java.util.concurrent.CompletableFuture<String> sendVideoViewOnce(
             String chatJid, byte[] videoBytes, String mimetype, String caption,
             int seconds, int width, int height) {
@@ -1640,7 +1294,6 @@ public final class JaWaClient implements AutoCloseable {
             });
     }
 
-    /** See {@link #sendImageViewOnce} — same idea but for audio (wrapped via {@code viewOnceMessageV2Extension}). */
     public java.util.concurrent.CompletableFuture<String> sendAudioViewOnce(
             String chatJid, byte[] audioBytes, String mimetype, int seconds, boolean ptt) {
         return encryptAndUpload(audioBytes, id.jawa.feature.media.MediaCrypto.MediaType.AUDIO)
@@ -1654,11 +1307,6 @@ public final class JaWaClient implements AutoCloseable {
             });
     }
 
-    /**
-     * Upload + send a video. Pass {@code 0} for unknown {@code seconds} / {@code width} /
-     * {@code height} — the proto fields stay unset and clients fall back to their own
-     * probing.
-     */
     public java.util.concurrent.CompletableFuture<String> sendVideo(
             String chatJid,
             byte[] videoBytes,
@@ -1677,10 +1325,6 @@ public final class JaWaClient implements AutoCloseable {
                     caption, seconds, width, height)));
     }
 
-    /**
-     * Upload + send an audio file. Set {@code ptt=true} for a voice note (the bubble
-     * with the play/waveform UI), {@code false} for a generic audio attachment.
-     */
     public java.util.concurrent.CompletableFuture<String> sendAudio(
             String chatJid,
             byte[] audioBytes,
@@ -1696,10 +1340,6 @@ public final class JaWaClient implements AutoCloseable {
                     audioBytes.length, mimetype, seconds, ptt)));
     }
 
-    /**
-     * Upload + send a document. {@code fileName} is what the recipient sees as the
-     * document label; {@code title} is an optional richer display title.
-     */
     public java.util.concurrent.CompletableFuture<String> sendDocument(
             String chatJid,
             byte[] documentBytes,
@@ -1728,10 +1368,6 @@ public final class JaWaClient implements AutoCloseable {
         return sendDmMessage(chatJid, msg);
     }
 
-    /**
-     * Revoke (delete-for-everyone) a received or sent message.
-     * Automatically extracts target details from the decoded message.
-     */
     public java.util.concurrent.CompletableFuture<String> sendRevoke(
             id.jawa.feature.messaging.MessageReceiver.Decoded target) {
         String chatJid = target.groupJid() != null ? target.groupJid() : target.senderJid();
@@ -1746,14 +1382,9 @@ public final class JaWaClient implements AutoCloseable {
         return sendRevoke(chatJid, target.msgId(), targetParticipant, fromMe);
     }
 
-
     private volatile id.jawa.feature.media.MediaConn mediaConnCache;
     private final Object mediaConnLock = new Object();
 
-    /**
-     * Get a cached {@link id.jawa.feature.media.MediaConn} or fetch a fresh one if expired.
-     * Required for {@code MediaUploader.upload(...)}.
-     */
     public java.util.concurrent.CompletableFuture<id.jawa.feature.media.MediaConn> refreshMediaConn() {
         synchronized (mediaConnLock) {
             id.jawa.feature.media.MediaConn cached = mediaConnCache;
@@ -1781,12 +1412,6 @@ public final class JaWaClient implements AutoCloseable {
         });
     }
 
-    /**
-     * Create a new group with the given subject and initial participant list. Do not
-     * include our own JID in {@code participantBareJids} — the server adds us implicitly.
-     *
-     * @return future resolving to the new group's JID on success
-     */
     public java.util.concurrent.CompletableFuture<String> createGroup(
             String name, java.util.List<String> participantBareJids) {
         String iqId = newIqId();
@@ -1805,7 +1430,6 @@ public final class JaWaClient implements AutoCloseable {
         });
     }
 
-    /** Leave the given group. */
     public java.util.concurrent.CompletableFuture<Void> leaveGroup(String groupJid) {
         String iqId = newIqId();
         BinaryNode iq = id.jawa.feature.messaging.GroupAction.buildLeave(iqId, groupJid);
@@ -1816,14 +1440,6 @@ public final class JaWaClient implements AutoCloseable {
         });
     }
 
-    /**
-     * Add / remove / promote / demote participants. Requires admin rights on the group
-     * for all four actions.
-     *
-     * @param groupJid             target group {@code @g.us}
-     * @param action               which change to apply
-     * @param participantBareJids  list of bare JIDs to change (no device suffix)
-     */
     public java.util.concurrent.CompletableFuture<Void> updateGroupParticipants(
             String groupJid,
             id.jawa.feature.messaging.GroupAction.ParticipantChange action,
@@ -1838,7 +1454,6 @@ public final class JaWaClient implements AutoCloseable {
         });
     }
 
-    /** Set the group subject (name). 25-char limit server-side. */
     public java.util.concurrent.CompletableFuture<Void> setGroupSubject(String groupJid, String name) {
         String iqId = newIqId();
         BinaryNode iq = id.jawa.feature.messaging.GroupAction.buildSetSubject(iqId, groupJid, name);
@@ -1849,15 +1464,6 @@ public final class JaWaClient implements AutoCloseable {
         });
     }
 
-    /**
-     * Set or clear the group description (topic).
-     *
-     * @param groupJid    target group
-     * @param body        new description; pass {@code null} or empty to delete
-     * @param previousId  the previous description's id (caller fetches via {@link
-     *                    #queryJoinedGroups} or tracks from a prior set call); pass
-     *                    {@code null} if this is the first description on the group
-     */
     public java.util.concurrent.CompletableFuture<Void> setGroupDescription(
             String groupJid, String body, String previousId) {
         String iqId = newIqId();
@@ -1871,11 +1477,6 @@ public final class JaWaClient implements AutoCloseable {
         });
     }
 
-    /**
-     * Query the server for the list of groups this account participates in. Each entry
-     * carries the group JID, subject, creator, timestamps, and the per-member device
-     * list (one entry per participant, device-suffixed).
-     */
     public java.util.concurrent.CompletableFuture<java.util.List<id.jawa.feature.messaging.GroupListQuery.GroupInfo>>
             queryJoinedGroups() {
         return queryJoinedGroups(false);
@@ -1951,12 +1552,6 @@ public final class JaWaClient implements AutoCloseable {
         });
     }
 
-    /**
-     * Tell the server we want real-time message delivery instead of having stanzas queued
-     * for retrieval. Without this, WA holds messages until the client explicitly drains
-     * them — manifests as "5-min idle then disconnect, no inbound &lt;message&gt; ever fires"
-     * during testing. Mirrors {@code Client.sendPassive(false)} in whatsmeow.
-     */
     private void sendActivePassive() {
         String iqId = newIqId();
         BinaryNode iq = new BinaryNode("iq",
@@ -1976,15 +1571,6 @@ public final class JaWaClient implements AutoCloseable {
         });
     }
 
-    /**
-     * Tell the server this device is online and available for routing. Without this,
-     * the server treats the device as background/idle: last-seen freezes at login
-     * time and peers' messages don't get delivered as {@code <message>} stanzas to us.
-     *
-     * <p>Stanza shape: {@code <presence type="available" name="<pushName>"/>}. The
-     * {@code name} attr is what other users see as our display name; we use
-     * {@code creds.pushName} when available, falling back to {@code "JaWa"}.
-     */
     private void sendPresenceAvailable() {
         String name = (creds != null && creds.pushName != null && !creds.pushName.isBlank())
             ? creds.pushName
@@ -2000,16 +1586,13 @@ public final class JaWaClient implements AutoCloseable {
         }
     }
 
-    /** Upload {@code PRE_KEY_UPLOAD_COUNT} one-time pre-keys to the server. */
     private void uploadPreKeys() {
         var preKeys = PreKeyManager.generate(creds, signalStore, PRE_KEY_UPLOAD_COUNT);
         if (preKeys.isEmpty()) {
             LOG.debug("No new pre-keys to upload");
             return;
         }
-        // Mirror each pre-key into the libsignal protocolStore so inbound <enc type=pkmsg>
-        // can resolve the one-time pre-key id the server handed out. signalStore is the
-        // raw KeyPair25519 home; protocolStore is what SessionCipher.decrypt actually reads.
+
         for (var entry : preKeys.entrySet()) {
             try {
                 byte[] prefixedPub = Curve25519.prependType(entry.getValue().publicKey());
@@ -2044,7 +1627,7 @@ public final class JaWaClient implements AutoCloseable {
         if ("stream:error".equals(node.tag())) {
             String code = node.attr("code");
             if ("515".equals(code)) {
-                // Documented post-pair signal — server wants us to reconnect with login creds.
+
                 LOG.info("Server requested restart (code=515) — expected after pairing; reconnect to enter steady state");
             } else {
                 handleStreamError(node);
@@ -2060,7 +1643,7 @@ public final class JaWaClient implements AutoCloseable {
                 node.attr("jid", creds.meJid),
                 node.attr("lid", creds.meLid),
                 node.attr("platform", creds.platform));
-            reconnectAttempts.set(0); // login worked — backoff resets
+            reconnectAttempts.set(0);
             sendActivePassive();
             sendPresenceAvailable();
             listener.onConnected();
@@ -2071,7 +1654,7 @@ public final class JaWaClient implements AutoCloseable {
             handleFailure(node);
             return true;
         }
-        // Pair-code: primary device echoed back its ephemeral via a server-pushed notification
+
         if ("notification".equals(node.tag())
                 && node.child("link_code_companion_reg") != null
                 && pairCodeHandler != null) {
@@ -2082,7 +1665,26 @@ public final class JaWaClient implements AutoCloseable {
             } catch (Throwable t) {
                 LOG.warn("Failed to handle link_code notification", t);
             }
-            // fall through to ack + listener — pair-code notification still needs an ack
+        }
+
+        if ("ack".equals(node.tag())) {
+            String from = node.attr("from");
+            String phash = node.attr("phash");
+            if (from != null && phash != null && !phash.isEmpty()) {
+                String existing = groupPhashMap.get(from);
+                if (existing != null && !existing.equals(phash)) {
+                    LOG.warn("Participant list hash mismatch for {} (local={} server={}) - invalidating group cache",
+                        from, existing, phash);
+                    groupCache.remove(from);
+                    groupPhashMap.remove(from);
+                }
+            }
+            try {
+                listener.onAck(node);
+            } catch (Throwable t) {
+                LOG.warn("Failed to dispatch onAck", t);
+            }
+            return true;
         }
 
         if ("notification".equals(node.tag()) || "receipt".equals(node.tag())) {
@@ -2121,7 +1723,6 @@ public final class JaWaClient implements AutoCloseable {
 
         if (!"iq".equals(node.tag())) return false;
 
-        // Result / error for an IQ we sent — fire the pending callback if any.
         String type = node.attr("type");
         if ("result".equals(type) || "error".equals(type)) {
             String id = node.attr("id");
@@ -2144,12 +1745,11 @@ public final class JaWaClient implements AutoCloseable {
             send(reply);
             store.save(creds);
             listener.onPaired(creds.meJid, creds.pushName, creds.platform);
-            // Server is about to send stream:error 515 and close the socket. Schedule a
-            // login-mode reconnect so we land in steady state before the new creds expire.
+
             reconnectAfterPair.set(true);
             return true;
         }
-        // Auto-reply to keepalive pings so the connection stays up
+
         if ("get".equals(node.attr("type"))
                 && "urn:xmpp:ping".equals(node.attr("xmlns"))) {
             String pid = node.attr("id");
@@ -2167,19 +1767,12 @@ public final class JaWaClient implements AutoCloseable {
         return false;
     }
 
-    /** Send a binary stanza (encrypts + frames). */
     public void send(BinaryNode node) {
         byte[] plain = BinaryEncoder.encode(node);
         byte[] enc = transport.encrypt(plain);
         frame.send(enc);
     }
 
-    /**
-     * Decrypt an inbound {@code <message>}, fire {@code Listener.onMessage}, and emit
-     * the {@code <ack>} + {@code <receipt>} the server expects. On decrypt failure we
-     * still {@code <ack>} (otherwise the server keeps redelivering forever) and emit
-     * a {@code <receipt type="retry">} so the peer knows to re-encrypt with fresh keys.
-     */
     private void handleInboundMessage(BinaryNode message) {
         try {
             id.jawa.feature.messaging.MessageReceiver.Decoded decoded =
@@ -2197,17 +1790,6 @@ public final class JaWaClient implements AutoCloseable {
         }
     }
 
-    /**
-     * Transport-level acknowledgement. Without it the server keeps redelivering the
-     * stanza on every reconnect and eventually throttles new deliveries.
-     *
-     * <p>Attrs mirrored from the source stanza: {@code id}, {@code to} (from
-     * source's {@code from}), {@code class} (source's tag), and — when present —
-     * {@code participant}, {@code recipient}. For non-message stanzas, the source's
-     * {@code type} attribute is also preserved on the ack (e.g. {@code
-     * <receipt type="read">} → ack must carry {@code type="read"}, otherwise the
-     * server raises a stream:error and drops the connection).
-     */
     private void sendAck(BinaryNode original) {
         String id = original.attr("id");
         String from = original.attr("from");
@@ -2220,7 +1802,7 @@ public final class JaWaClient implements AutoCloseable {
         if (participant != null) attrs.put("participant", participant);
         String recipient = original.attr("recipient");
         if (recipient != null) attrs.put("recipient", recipient);
-        // <message> ack never carries type; everything else preserves it.
+
         if (!"message".equals(original.tag())) {
             String type = original.attr("type");
             if (type != null) attrs.put("type", type);
@@ -2228,25 +1810,14 @@ public final class JaWaClient implements AutoCloseable {
         send(new BinaryNode("ack", attrs, null));
     }
 
-    /** Application-level "delivered" receipt — what produces the grey single-tick on the sender. */
     private void sendDeliveryReceipt(BinaryNode message) {
         sendReceipt(message, null);
     }
 
-    /** Retry-receipt counter — each id is incremented per outbound retry so peer/server know. */
     private final java.util.concurrent.ConcurrentMap<String, Integer> messageRetries
         = new java.util.concurrent.ConcurrentHashMap<>();
     private static final int MAX_RETRY_COUNT = 5;
 
-    /**
-     * "We couldn't decrypt — please re-encrypt for me." Sends a retry receipt with a
-     * {@code <retry>} child carrying the count + a {@code <registration>} child with
-     * our registration id, mirroring whatsmeow's {@code sendRetryReceipt}. The peer
-     * uses these to refetch our pre-key bundle and re-encrypt the message as pkmsg.
-     *
-     * <p>Bare {@code <receipt type=retry>} (no children) is not enough — peer needs
-     * the registration id to know which client to encrypt for.
-     */
     private void sendRetryReceipt(BinaryNode message) {
         String id = message.attr("id");
         String from = message.attr("from");
@@ -2286,50 +1857,26 @@ public final class JaWaClient implements AutoCloseable {
         return out;
     }
 
-    /**
-     * Send a read receipt (blue ticks). For DMs, pass {@code senderJid=null}. For groups,
-     * {@code senderJid} is the message sender's device JID (the {@code participant} attr
-     * on the original {@code <message>}).
-     *
-     * @param chatJid   the chat where the message lives (peer's bare JID or group {@code @g.us})
-     * @param msgId     the message id being marked as read
-     * @param senderJid sender's device JID for groups; {@code null} for DMs
-     */
     public void sendReadReceipt(String chatJid, String msgId, String senderJid) {
         sendStateReceipt(chatJid, msgId, senderJid, "read");
     }
 
-    /**
-     * Send a read receipt (blue ticks) for a received message.
-     * Automatically extracts target details from the decoded message.
-     */
     public void sendReadReceipt(id.jawa.feature.messaging.MessageReceiver.Decoded target) {
         String chatJid = target.groupJid() != null ? target.groupJid() : target.senderJid();
         String senderJid = target.groupJid() != null ? target.senderJid() : null;
         sendReadReceipt(chatJid, target.msgId(), senderJid);
     }
 
-    /** Send a played receipt for a voice note. See {@link #sendReadReceipt} for arg semantics. */
     public void sendPlayedReceipt(String chatJid, String msgId, String senderJid) {
         sendStateReceipt(chatJid, msgId, senderJid, "played");
     }
 
-    /**
-     * Send a played receipt for a voice note.
-     * Automatically extracts target details from the decoded message.
-     */
     public void sendPlayedReceipt(id.jawa.feature.messaging.MessageReceiver.Decoded target) {
         String chatJid = target.groupJid() != null ? target.groupJid() : target.senderJid();
         String senderJid = target.groupJid() != null ? target.senderJid() : null;
         sendPlayedReceipt(chatJid, target.msgId(), senderJid);
     }
 
-
-    /**
-     * Send a read/played receipt for multiple messages in one stanza. Useful when
-     * catching up a backlog. The first id rides as the {@code <receipt id=...>} attr,
-     * the rest as {@code <list><item id=.../>...} children.
-     */
     public void sendReadReceiptBatch(String chatJid, java.util.List<String> msgIds, String senderJid) {
         sendStateReceiptBatch(chatJid, msgIds, senderJid, "read");
     }
@@ -2386,10 +1933,6 @@ public final class JaWaClient implements AutoCloseable {
         closeLatch.countDown();
     }
 
-    /**
-     * Check if the given phone numbers are registered on WhatsApp.
-     * Uses USync contact query protocol.
-     */
     public java.util.concurrent.CompletableFuture<java.util.Map<String, id.jawa.domain.model.ContactStatus>> isOnWhatsApp(
             java.util.Collection<String> phones) {
         String iqId = newIqId();
@@ -2399,9 +1942,6 @@ public final class JaWaClient implements AutoCloseable {
         return sendIqAsync(q).thenApply(id.jawa.feature.messaging.UsyncQuery::parseContactResult);
     }
 
-    /**
-     * Send chat presence state (typing composing indicator or recording audio).
-     */
     public void sendChatPresence(String chatJid, ChatPresence state) {
         BinaryNode child;
         if (state == ChatPresence.COMPOSING) {
@@ -2416,10 +1956,6 @@ public final class JaWaClient implements AutoCloseable {
         LOG.debug("Sent chat presence state={} to={}", state, chatJid);
     }
 
-    /**
-     * Set global online/offline presence status.
-     * @param available true for "available" (online), false for "unavailable" (offline)
-     */
     public void sendPresence(boolean available) {
         BinaryNode stanza = new BinaryNode("presence", java.util.Map.of(
             "type", available ? "available" : "unavailable"
@@ -2428,9 +1964,6 @@ public final class JaWaClient implements AutoCloseable {
         LOG.debug("Sent presence type={}", available ? "available" : "unavailable");
     }
 
-    /**
-     * Update/set the about/status text message for the bot account.
-     */
     public java.util.concurrent.CompletableFuture<Void> setStatusMessage(String statusText) {
         String iqId = newIqId();
         BinaryNode statusNode = new BinaryNode("status", java.util.Map.of(), statusText.getBytes());
@@ -2448,9 +1981,6 @@ public final class JaWaClient implements AutoCloseable {
         });
     }
 
-    /**
-     * Fetch the list of JIDs currently blocked by the account.
-     */
     public java.util.concurrent.CompletableFuture<java.util.List<String>> getBlocklist() {
         String iqId = newIqId();
         BinaryNode iq = new BinaryNode("iq", java.util.Map.of(
@@ -2475,9 +2005,6 @@ public final class JaWaClient implements AutoCloseable {
         });
     }
 
-    /**
-     * Block or unblock a contact.
-     */
     public java.util.concurrent.CompletableFuture<Void> updateBlocklist(String contactJid, boolean block) {
         String iqId = newIqId();
         BinaryNode item = new BinaryNode(block ? "block" : "unblock", java.util.Map.of("jid", contactJid), null);
@@ -2496,10 +2023,6 @@ public final class JaWaClient implements AutoCloseable {
         });
     }
 
-    /**
-     * Retrieve the public profile picture URL for the given contact.
-     * Returns null if not set or restricted due to privacy settings.
-     */
     public java.util.concurrent.CompletableFuture<String> getProfilePictureInfo(String contactJid) {
         String iqId = newIqId();
         BinaryNode picture = new BinaryNode("picture", java.util.Map.of("type", "image"), null);

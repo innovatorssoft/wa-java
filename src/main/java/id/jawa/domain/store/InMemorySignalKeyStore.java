@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 package id.jawa.domain.store;
 
 import id.jawa.protocol.connection.*;
@@ -12,7 +11,6 @@ import id.jawa.feature.media.*;
 import id.jawa.feature.appstate.*;
 import id.jawa.feature.signal.*;
 
-
 import id.jawa.protocol.crypto.KeyPair25519;
 
 import java.util.LinkedHashMap;
@@ -20,18 +18,10 @@ import java.util.Map;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 
-/**
- * Thread-safe {@link SignalKeyStore} with optional file-backed persistence.
- *
- * <p>When constructed with a {@link FilePreKeyStorage}, every {@link #putPreKey} /
- * {@link #removePreKey} writes through to disk and {@link #getPreKey} reads from the
- * cache populated at load. When the storage is {@code null}, behavior is pure
- * in-memory and pre-keys are lost on restart.
- */
 public final class InMemorySignalKeyStore implements SignalKeyStore {
 
     private final Map<Integer, KeyPair25519> preKeys = new ConcurrentHashMap<>();
-    private final FilePreKeyStorage storage; // null = in-memory only
+    private final FilePreKeyStorage storage;
 
     public InMemorySignalKeyStore() {
         this(null);
@@ -64,7 +54,7 @@ public final class InMemorySignalKeyStore implements SignalKeyStore {
             KeyPair25519 kp = preKeys.get(id);
             if (kp != null) out.put(id, kp);
         }
-        return new LinkedHashMap<>(out); // stable insertion order from TreeMap iteration
+        return new LinkedHashMap<>(out);
     }
 
     public int size() { return preKeys.size(); }

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 package id.jawa.feature.appstate;
 
 import id.jawa.protocol.connection.*;
@@ -12,7 +11,6 @@ import id.jawa.feature.media.*;
 import id.jawa.feature.appstate.*;
 import id.jawa.feature.signal.*;
 
-
 import id.jawa.proto.Wa;
 import id.jawa.protocol.crypto.AesCbc;
 import org.slf4j.Logger;
@@ -25,17 +23,6 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
-/**
- * Decrypt + verify {@code SyncdMutation}s coming back from {@code w:sync:app:state}.
- * Caller hands us the raw {@code SyncdMutation} (already parsed from the IQ response
- * via protobuf); we look up the key, AES-CBC decrypt the value blob, and unmarshal
- * the inner {@code SyncActionData}.
- *
- * <p>MAC validation is off by default. Turn it on for production via the
- * {@link #decode(Wa.SyncdMutation, boolean)} overload — verifies both the indexMAC
- * (HMAC-SHA256 over the action's JSON index) and the valueMAC (HMAC-SHA512[:32]
- * over operation || keyId || ciphertext || keyIdLen).
- */
 public final class AppStateProcessor {
 
     private static final Logger LOG = LoggerFactory.getLogger(AppStateProcessor.class);
@@ -46,7 +33,6 @@ public final class AppStateProcessor {
         this.keyStorage = keyStorage;
     }
 
-    /** A single decoded mutation — what the bot consumer cares about. */
     public record Mutation(
         Wa.SyncdMutation.SyncdOperation operation,
         Wa.SyncActionData action,
@@ -104,7 +90,6 @@ public final class AppStateProcessor {
         return new Mutation(mutation.getOperation(), action, indexMac, valueMac);
     }
 
-    /** Decode every mutation in a {@code SyncdPatch}, skipping any that fail to decrypt. */
     public List<Mutation> decodePatch(Wa.SyncdPatch patch, boolean validateMacs) {
         List<Mutation> out = new ArrayList<>();
         for (Wa.SyncdMutation m : patch.getMutationsList()) {
@@ -117,7 +102,6 @@ public final class AppStateProcessor {
         return out;
     }
 
-    /** Decode every record in a {@code SyncdSnapshot}, wrapping each as a SET mutation. */
     public List<Mutation> decodeSnapshot(Wa.SyncdSnapshot snapshot, boolean validateMacs) {
         List<Mutation> out = new ArrayList<>();
         for (Wa.SyncdRecord rec : snapshot.getRecordsList()) {

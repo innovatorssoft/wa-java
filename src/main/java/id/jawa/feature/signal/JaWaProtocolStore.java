@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 package id.jawa.feature.signal;
 
 import id.jawa.protocol.connection.*;
@@ -11,7 +10,6 @@ import id.jawa.feature.messaging.*;
 import id.jawa.feature.media.*;
 import id.jawa.feature.appstate.*;
 import id.jawa.feature.signal.*;
-
 
 import id.jawa.domain.model.AuthCreds;
 import id.jawa.domain.model.SignedPreKey;
@@ -29,23 +27,9 @@ import org.whispersystems.libsignal.util.KeyHelper;
 
 import java.util.List;
 
-/**
- * Wrapper around libsignal's {@link InMemorySignalProtocolStore}, seeded with our
- * long-term identity key and registration id from {@link AuthCreds}.
- *
- * <p>When constructed with a {@link FileSessionStorage} the {@link
- * org.whispersystems.libsignal.state.SessionStore} methods are overridden to use the
- * file-backed storage instead of the parent's in-memory map. Sessions then survive
- * process restart, eliminating the {@code NoSessionException} → retry-receipt round
- * trip that otherwise happens on every reconnect.
- *
- * <p>Pre-keys and signed pre-keys still live in the parent's in-memory storage; they
- * are seeded from {@link AuthCreds} on construction and rebuilt on first inbound IQ.
- * Persistent pre-key + sender-key storage are tracked under M12.B / M12.C.
- */
 public final class JaWaProtocolStore extends InMemorySignalProtocolStore {
 
-    private final FileSessionStorage sessionStorage; // null = in-memory sessions (parent default)
+    private final FileSessionStorage sessionStorage;
 
     public JaWaProtocolStore(AuthCreds creds) {
         this(creds, null);
@@ -118,7 +102,6 @@ public final class JaWaProtocolStore extends InMemorySignalProtocolStore {
         }
     }
 
-    /** Unused — silence compiler warning if KeyHelper isn't pulled in elsewhere. */
     @SuppressWarnings("unused")
     private static void touchKeyHelper() { KeyHelper.generateIdentityKeyPair(); }
 }

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 package id.jawa.protocol.crypto;
 
 import id.jawa.protocol.connection.*;
@@ -12,13 +11,11 @@ import id.jawa.feature.media.*;
 import id.jawa.feature.appstate.*;
 import id.jawa.feature.signal.*;
 
-
 import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
 import java.util.Base64;
 import java.util.HexFormat;
 
-/** Small byte-array utilities (concat, slice, random, base64). */
 public final class Bytes {
     private static final SecureRandom RNG = new SecureRandom();
 

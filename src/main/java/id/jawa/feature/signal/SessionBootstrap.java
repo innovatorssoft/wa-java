@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 package id.jawa.feature.signal;
 
 import id.jawa.protocol.connection.*;
@@ -12,7 +11,6 @@ import id.jawa.feature.media.*;
 import id.jawa.feature.appstate.*;
 import id.jawa.feature.signal.*;
 
-
 import id.jawa.domain.model.Jid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -24,25 +22,12 @@ import org.whispersystems.libsignal.UntrustedIdentityException;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * Walks a list of {@link PreKeyBundleFetcher.FetchedBundle}s and installs each one into
- * the given {@link JaWaProtocolStore} via libsignal's {@link SessionBuilder#process(org.whispersystems.libsignal.state.PreKeyBundle)}.
- *
- * <p>After this completes, the store has Signal sessions ready for {@link
- * org.whispersystems.libsignal.SessionCipher} to encrypt outgoing messages addressed
- * to the corresponding {@link SignalProtocolAddress}.
- */
 public final class SessionBootstrap {
 
     private static final Logger LOG = LoggerFactory.getLogger(SessionBootstrap.class);
 
     private SessionBootstrap() {}
 
-    /**
-     * For each fetched bundle, build a {@link SessionBuilder} for the matching
-     * {@link SignalProtocolAddress} and run {@code process(bundle)}. Returns the
-     * addresses for which a session was successfully installed.
-     */
     public static List<SignalProtocolAddress> installAll(JaWaProtocolStore store,
                                                          List<PreKeyBundleFetcher.FetchedBundle> bundles) {
         List<SignalProtocolAddress> ok = new ArrayList<>();
@@ -60,7 +45,6 @@ public final class SessionBootstrap {
         return ok;
     }
 
-    /** Build the libsignal address for a JID. Name is the bare user, deviceId is the device suffix. */
     public static SignalProtocolAddress addressFor(Jid jid) {
         return new SignalProtocolAddress(jid.user(), jid.device());
     }

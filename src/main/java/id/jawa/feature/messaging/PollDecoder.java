@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 package id.jawa.feature.messaging;
 
 import id.jawa.protocol.connection.*;
@@ -12,7 +11,6 @@ import id.jawa.feature.media.*;
 import id.jawa.feature.appstate.*;
 import id.jawa.feature.signal.*;
 
-
 import id.jawa.protocol.crypto.AesGcm;
 import id.jawa.protocol.crypto.Hkdf;
 import id.jawa.protocol.crypto.Sha256;
@@ -24,38 +22,12 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * Decrypt an inbound {@code pollUpdateMessage}. Each voter encrypts their choice
- * locally with a key derived from the poll's per-message {@code messageSecret} so
- * even the WhatsApp server can't see who voted for what. Decryption requires the
- * messageSecret the original poll was sent with.
- *
- * <p>The decrypted plaintext is the concatenation of 32-byte {@code SHA-256(optionName)}
- * digests — one per selected option. We hash every original option once and look up
- * each chunk to map it back to its display string.
- *
- * <p>Mirrors the {@code DecryptPollVote} / {@code generateMsgSecretKey} flow in
- * whatsmeow's {@code msgsecret.go} (case {@code EncSecretPollVote}).
- */
 public final class PollDecoder {
 
     private static final byte[] USE_CASE = "Poll Vote".getBytes(StandardCharsets.UTF_8);
 
     private PollDecoder() {}
 
-    /**
-     * @param encPayload      the {@code pollUpdateMessage.vote.encPayload} bytes
-     * @param encIv           the {@code pollUpdateMessage.vote.encIv} bytes (12 byte GCM nonce)
-     * @param messageSecret   32-byte secret from the original poll's
-     *                        {@code messageContextInfo.messageSecret}
-     * @param pollMsgId       id of the poll message we sent
-     * @param pollSenderJid   bare JID of the poll author (us — without device suffix)
-     * @param voterJid        bare JID of the voter (the user who sent this update)
-     * @param originalOptions every {@code optionName} from the original
-     *                        {@code pollCreationMessage}, used to match hashes back
-     * @return the selected option names; empty if the voter cleared their pick
-     * @throws IllegalStateException on GCM tag mismatch (wrong secret / tampering)
-     */
     public static List<String> decryptVote(byte[] encPayload, byte[] encIv,
                                            byte[] messageSecret,
                                            String pollMsgId,

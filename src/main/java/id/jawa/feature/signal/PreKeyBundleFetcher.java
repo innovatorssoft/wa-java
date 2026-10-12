@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 package id.jawa.feature.signal;
 
 import id.jawa.protocol.connection.*;
@@ -11,7 +10,6 @@ import id.jawa.feature.messaging.*;
 import id.jawa.feature.media.*;
 import id.jawa.feature.appstate.*;
 import id.jawa.feature.signal.*;
-
 
 import id.jawa.protocol.codec.BinaryNode;
 import id.jawa.domain.model.Jid;
@@ -26,49 +24,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
-/**
- * Builds the {@code <iq xmlns=encrypt type=get><key>} pre-key fetch request and parses
- * the per-user, per-device pre-key bundle response.
- *
- * <p>Wire shape of the request:
- * <pre>{@code
- * <iq xmlns="encrypt" type="get" to="s.whatsapp.net" id="...">
- *   <key>
- *     <user jid="628xxx:0@s.whatsapp.net"/>
- *     <user jid="628xxx:56@s.whatsapp.net"/>
- *   </key>
- * </iq>
- * }</pre>
- *
- * <p>Response:
- * <pre>{@code
- * <iq type="result" id="...">
- *   <list>
- *     <user jid="628xxx:0@s.whatsapp.net">
- *       <registration>(regId, 4 bytes BE)</registration>
- *       <type>(KEY_BUNDLE_TYPE = 0x05)</type>
- *       <identity>(32 bytes)</identity>
- *       <key>
- *         <id>(preKeyId, 3 bytes BE)</id>
- *         <value>(pub, 32 bytes)</value>
- *       </key>
- *       <skey>
- *         <id>(signedPreKeyId, 3 bytes BE)</id>
- *         <value>(signed pub, 32 bytes)</value>
- *         <signature>(64 bytes)</signature>
- *       </skey>
- *       <device-identity>(advSignedDeviceIdentity bytes)</device-identity>
- *     </user>
- *     ...
- *   </list>
- * </iq>
- * }</pre>
- */
 public final class PreKeyBundleFetcher {
 
     private PreKeyBundleFetcher() {}
 
-    /** Build the multi-device pre-key fetch IQ. */
     public static BinaryNode buildFetchStanza(String iqId, List<String> deviceJids) {
         List<BinaryNode> userNodes = new ArrayList<>(deviceJids.size());
         for (String j : deviceJids) {
@@ -84,14 +43,8 @@ public final class PreKeyBundleFetcher {
             List.of(new BinaryNode("key", Map.of(), userNodes)));
     }
 
-    /** A parsed bundle bound to a peer's device JID. */
     public record FetchedBundle(Jid address, PreKeyBundle bundle) {}
 
-    /**
-     * Parse the {@code <iq type=result>} response. Users that returned an error or
-     * are missing one-time pre-keys produce {@code null} entries that the caller
-     * should filter / handle as one-time-key exhaustion.
-     */
     public static List<FetchedBundle> parseResponse(BinaryNode resultIq) {
         Objects.requireNonNull(resultIq, "resultIq");
         if (!"result".equals(resultIq.attr("type"))) {
@@ -122,7 +75,6 @@ public final class PreKeyBundleFetcher {
 
         int registrationId = decodeUintBE(regIdBytes);
 
-        // One-time pre-key — may be absent if the server has run out
         int preKeyId = -1;
         byte[] preKeyPub = null;
         if (keyNode != null) {

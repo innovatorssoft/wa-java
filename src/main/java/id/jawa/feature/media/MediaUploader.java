@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 package id.jawa.feature.media;
 
 import id.jawa.protocol.connection.*;
@@ -11,7 +10,6 @@ import id.jawa.feature.messaging.*;
 import id.jawa.feature.media.*;
 import id.jawa.feature.appstate.*;
 import id.jawa.feature.signal.*;
-
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -27,18 +25,6 @@ import java.time.Duration;
 import java.util.Base64;
 import java.util.Map;
 
-/**
- * Upload encrypted media to a WhatsApp media server, returning the {@code url}
- * and {@code directPath} the {@code Wa.Message.imageMessage} (or sibling) needs.
- *
- * <p>The upload URL is
- * {@code https://<host>/mms/<mmsType>/<token>?auth=<auth>&token=<token>}, where
- * {@code token} is {@code base64url(fileEncSha256)} and {@code mmsType} is one of
- * {@code image}, {@code video}, {@code audio}, {@code document}. The body is exactly
- * {@link MediaCrypto.EncryptedMedia#uploadBytes()} (ciphertext + 10-byte MAC).
- *
- * <p>The response is a small JSON object — we hand-parse the two fields we need.
- */
 public final class MediaUploader {
 
     private static final Logger LOG = LoggerFactory.getLogger(MediaUploader.class);
@@ -94,7 +80,7 @@ public final class MediaUploader {
         String body = resp.body();
         String url        = extractJsonString(body, "url");
         String directPath = extractJsonString(body, "direct_path");
-        String handle     = extractJsonString(body, "handle"); // may be null
+        String handle     = extractJsonString(body, "handle");
         if (url == null || directPath == null) {
             throw new IOException("media upload response missing url/direct_path: " + body);
         }
@@ -103,11 +89,6 @@ public final class MediaUploader {
         return new Result(url, directPath, handle);
     }
 
-    /**
-     * Bare-bones JSON string extractor — pulls {@code "key": "value"} where value is a
-     * plain string with no embedded escapes. The mediaConn upload response is
-     * predictable enough that this is sufficient; a heavier dep isn't justified.
-     */
     private static String extractJsonString(String json, String key) {
         String needle = "\"" + key + "\"";
         int k = json.indexOf(needle);

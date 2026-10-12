@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 package id.jawa.protocol.crypto;
 
 import id.jawa.protocol.connection.*;
@@ -12,12 +11,10 @@ import id.jawa.feature.media.*;
 import id.jawa.feature.appstate.*;
 import id.jawa.feature.signal.*;
 
-
 import org.bouncycastle.crypto.digests.SHA256Digest;
 import org.bouncycastle.crypto.generators.HKDFBytesGenerator;
 import org.bouncycastle.crypto.params.HKDFParameters;
 
-/** HKDF-SHA256 (RFC 5869) — extract-and-expand in one shot. */
 public final class Hkdf {
     private Hkdf() {}
 
@@ -29,7 +26,6 @@ public final class Hkdf {
         return out;
     }
 
-    /** Convenience for Noise's HKDF where info is empty. */
     public static byte[] derive(byte[] ikm, byte[] salt, int length) {
         return derive(ikm, salt, new byte[0], length);
     }

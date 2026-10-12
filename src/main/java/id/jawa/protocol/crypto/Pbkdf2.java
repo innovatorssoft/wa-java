@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 package id.jawa.protocol.crypto;
 
 import id.jawa.protocol.connection.*;
@@ -12,13 +11,11 @@ import id.jawa.feature.media.*;
 import id.jawa.feature.appstate.*;
 import id.jawa.feature.signal.*;
 
-
 import javax.crypto.SecretKeyFactory;
 import javax.crypto.spec.PBEKeySpec;
 import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 
-/** PBKDF2-HMAC-SHA256. */
 public final class Pbkdf2 {
     private Pbkdf2() {}
 
@@ -33,7 +30,6 @@ public final class Pbkdf2 {
         }
     }
 
-    /** Convenience: derive from a UTF-8 string password. */
     public static byte[] deriveSha256(byte[] passwordUtf8, byte[] salt, int iterations, int byteLength) {
         return deriveSha256(new String(passwordUtf8, StandardCharsets.UTF_8), salt, iterations, byteLength);
     }

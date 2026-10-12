@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-3.0-or-later */
 package id.jawa.domain.store;
 
 import id.jawa.protocol.connection.*;
@@ -31,10 +30,6 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
-/**
- * Persistent backing for libsignal {@link SessionRecord}s. Supports both file-backed
- * storage under baseDir and pure SQLite database storage via {@link SqliteAuthStore}.
- */
 public final class FileSessionStorage {
 
     private static final Logger LOG = LoggerFactory.getLogger(FileSessionStorage.class);

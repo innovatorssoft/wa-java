@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-3.0-or-later */
 package id.jawa.feature.pairing;
 
 import id.jawa.protocol.connection.*;
@@ -23,12 +22,8 @@ import id.jawa.protocol.crypto.Curve25519;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 
-/**
- * Builds the ClientPayload matching official WhatsApp Web browser client handshake telemetries.
- */
 public final class ClientPayloadBuilder {
 
-    /* Browser identification matching official Chrome desktop environment */
     public static final String[] DEFAULT_BROWSER = { "Linux", "Chrome", "128.0.0.0" };
     public static final String DEFAULT_COUNTRY_CODE = "ID";
     public static final String DEFAULT_LANGUAGE_CODE = "id";

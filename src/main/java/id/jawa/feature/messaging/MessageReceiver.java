@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 package id.jawa.feature.messaging;
 
 import id.jawa.protocol.connection.*;
@@ -11,7 +10,6 @@ import id.jawa.feature.messaging.*;
 import id.jawa.feature.media.*;
 import id.jawa.feature.appstate.*;
 import id.jawa.feature.signal.*;
-
 
 import com.google.protobuf.InvalidProtocolBufferException;
 import id.jawa.protocol.codec.BinaryNode;
@@ -39,69 +37,18 @@ import org.whispersystems.libsignal.protocol.PreKeySignalMessage;
 import org.whispersystems.libsignal.protocol.SenderKeyDistributionMessage;
 import org.whispersystems.libsignal.protocol.SignalMessage;
 
-/**
- * Decrypt an incoming {@code <message>} stanza: pick the {@code <enc>} child, run
- * libsignal's {@link SessionCipher} (DMs) or {@link GroupCipher} (groups), strip the
- * random pad, parse the {@link Wa.Message} protobuf, unwrap a {@code DeviceSentMessage}
- * envelope when present, and process inline {@code senderKeyDistributionMessage}
- * payloads so subsequent group {@code skmsg} traffic decrypts.
- *
- * <p>Mirrors {@code decryptMessageNode} in Baileys ({@code Utils/decode-wa-message.ts})
- * and {@code decryptDM} + {@code decryptGroupMsg} in whatsmeow ({@code message.go}).
- */
 public final class MessageReceiver {
 
     private static final Logger LOG = LoggerFactory.getLogger(MessageReceiver.class);
 
     private MessageReceiver() {}
 
-    /**
-     * Decode result.
-     *
-     * @param senderJid   sender's device-specific JID (from {@code participant} attr
-     *                    when present, else {@code from}). For groups this is the
-     *                    individual sender device; for DMs it's the contact's device.
-     * @param groupJid    group JID ({@code from} attr) when {@code <message>} is a group
-     *                    message; {@code null} for 1-on-1 DMs.
-     * @param msgId       value of the {@code <message id=>} attr.
-     * @param encType     the {@code <enc type=>} value: "pkmsg", "msg", or "skmsg".
-     * @param message     the decrypted, DSM-unwrapped {@link Wa.Message}, or {@code null}
-     *                    if no usable {@code <enc>} child was found.
-     * @param text        the {@code conversation} field if the message is plain text,
-     *                    else {@code null} (e.g. media, reactions, system messages).
-     */
     public record Decoded(String senderJid, String groupJid, String msgId, String encType,
                           Wa.Message message, String text, InteractiveResponse interactive) {}
 
-    /**
-     * Parsed interactive response — what the user tapped on a {@code buttonsMessage},
-     * {@code listMessage}, or {@code interactiveMessage} we previously sent.
-     *
-     * <p>{@link #kind} disambiguates the source:
-     * <ul>
-     *   <li>{@code "buttons"} — {@link #selectedId} = the tapped {@code buttonId}
-     *       (the {@code QuickReplyButton#buttonId} we set); {@link #displayText} = the
-     *       button's visible text echo.</li>
-     *   <li>{@code "list"} — {@link #selectedId} = the chosen {@code rowId}.</li>
-     *   <li>{@code "native_flow"} — {@link #selectedId} = the native-flow button name
-     *       (e.g. {@code "quick_reply"}, {@code "single_select"}); {@link #paramsJson}
-     *       carries the response payload (parse for the actual user-selected id).</li>
-     * </ul>
-     */
     public record InteractiveResponse(String kind, String selectedId,
                                       String paramsJson, String displayText) {}
 
-    /**
-     * Decode {@code messageStanza}. {@code signalStore} holds DM session state;
-     * {@code senderKeyStore} holds group sender-key state. Both are required because
-     * group messages can ride in as either {@code skmsg} (group cipher) or as a
-     * {@code pkmsg}/{@code msg} carrying a {@code SenderKeyDistributionMessage} that
-     * establishes the group sender-key for the next round of {@code skmsg}.
-     *
-     * @throws DecryptException when the {@code <enc>} payload exists but cannot be
-     *                          decrypted. The caller should still {@code <ack>} and
-     *                          may send a {@code <receipt type=retry>}.
-     */
     public static Decoded decode(BinaryNode messageStanza,
                                  JaWaProtocolStore signalStore,
                                  SenderKeyStore senderKeyStore)
@@ -114,12 +61,9 @@ public final class MessageReceiver {
             throw new DecryptException("message has no from/participant attr");
         }
 
-        // For group messages the server addresses the stanza to the group JID via `from`
-        // and identifies the sender via `participant`. For DMs there's no participant.
         boolean isGroup = participant != null && from != null && !from.equals(participant);
         String groupJid = isGroup ? from : null;
 
-        // Track LID to PN mapping if present in stanza attributes
         String senderPn = messageStanza.attr("sender_pn");
         if (senderPn != null && !senderPn.isBlank() && from != null && from.endsWith("@lid")) {
             id.jawa.domain.model.Jid fromJid = id.jawa.domain.model.Jid.parse(from);
@@ -190,15 +134,10 @@ public final class MessageReceiver {
             throw new DecryptException("invalid Wa.Message proto from " + senderAddr, e);
         }
 
-        // Inbound SKDM: a peer is announcing the group sender-key they'll use for
-        // subsequent skmsg traffic in this group. Process now so the next skmsg decrypts.
         if (message.hasSenderKeyDistributionMessage()) {
             processSkdm(message.getSenderKeyDistributionMessage(), senderAddr, senderKeyStore);
         }
 
-        // Unwrap DSM — when the sender is one of our own other devices echoing a
-        // message into the chat with `destinationJid`, the actual user-visible message
-        // is the inner `message` field.
         if (message.hasDeviceSentMessage() && message.getDeviceSentMessage().hasMessage()) {
             message = message.getDeviceSentMessage().getMessage();
         }
@@ -237,7 +176,7 @@ public final class MessageReceiver {
             String name = ir.hasNativeFlowResponseMessage() ? ir.getNativeFlowResponseMessage().getName() : "";
             String params = ir.hasNativeFlowResponseMessage() ? ir.getNativeFlowResponseMessage().getParamsJson() : null;
             String body = ir.hasBody() ? ir.getBody().getText() : null;
-            
+
             String selectedId = null;
             if (params != null) {
                 var matcher = java.util.regex.Pattern.compile("\"id\"\\s*:\\s*\"([^\"]+)\"").matcher(params);
@@ -248,7 +187,7 @@ public final class MessageReceiver {
             if (selectedId == null) {
                 selectedId = name;
             }
-            
+
             return new InteractiveResponse("native_flow", selectedId, params, body);
         }
         if (message.hasTemplateButtonReplyMessage()) {
@@ -287,7 +226,6 @@ public final class MessageReceiver {
         return null;
     }
 
-    /** Thrown when an {@code <enc>} payload cannot be decoded into a {@link Wa.Message}. */
     public static final class DecryptException extends Exception {
         public DecryptException(String message) { super(message); }
         public DecryptException(String message, Throwable cause) { super(message, cause); }

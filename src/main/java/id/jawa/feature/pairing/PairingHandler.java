@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 package id.jawa.feature.pairing;
 
 import id.jawa.protocol.connection.*;
@@ -11,7 +10,6 @@ import id.jawa.feature.messaging.*;
 import id.jawa.feature.media.*;
 import id.jawa.feature.appstate.*;
 import id.jawa.feature.signal.*;
-
 
 import com.google.protobuf.ByteString;
 import com.google.protobuf.InvalidProtocolBufferException;
@@ -30,18 +28,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
-/**
- * Handles the QR-pairing IQ stanzas:
- * <ul>
- *   <li>{@code <iq type="set"><pair-device>...refs...</pair-device></iq>} —
- *       server sends QR refs; client formats and emits each QR string, then acks.
- *   <li>{@code <iq type="set"><pair-success>...</pair-success></iq>} —
- *       server sends the ADV identity chain after user scans; client verifies it,
- *       updates {@link AuthCreds}, and returns the {@code <pair-device-sign>} reply.
- * </ul>
- *
- * <p>Ports {@code configureSuccessfulPairing} from Baileys' {@code Utils/validate-connection.ts}.
- */
 public final class PairingHandler {
 
     private static final Logger LOG = LoggerFactory.getLogger(PairingHandler.class);
@@ -50,7 +36,6 @@ public final class PairingHandler {
 
     public PairingHandler(AuthCreds creds) { this.creds = creds; }
 
-    /** Build the QR strings for the {@code <pair-device>} stanza. Caller renders each. */
     public List<String> qrRefsFrom(BinaryNode pairDevice) {
         List<String> out = new ArrayList<>();
         for (BinaryNode r : pairDevice.children("ref")) {
@@ -66,20 +51,12 @@ public final class PairingHandler {
         return out;
     }
 
-    /** Ack the {@code <iq type=set><pair-device>} stanza. */
     public BinaryNode ackPairDevice(String id) {
         return new BinaryNode("iq",
             Map.of("to", Jid.SERVER_WHATSAPP, "type", "result", "id", id),
             null);
     }
 
-    /**
-     * Handle {@code <iq type=set><pair-success>...</pair-success></iq>}.
-     *
-     * <p>Mutates {@link AuthCreds} (account, meJid, meLid, pushName, platform) and
-     * returns the {@code <pair-device-sign>} IQ to send back. Caller should
-     * {@link id.jawa.domain.store.AuthStore#save save} the creds.
-     */
     public BinaryNode handlePairSuccess(BinaryNode iq) {
         String id = iq.attr("id");
         BinaryNode pairSuccess = iq.child("pair-success");
@@ -98,8 +75,6 @@ public final class PairingHandler {
         String lid = deviceNode.attr("lid");
         String bizName = bizNode == null ? null : bizNode.attr("name");
         String platform = platformNode == null ? null : platformNode.attr("name");
-
-        // --- decode + verify ADV chain ---
 
         byte[] identityHmacBytes = deviceIdentityNode.bytesContent();
         final Wa.ADVSignedDeviceIdentityHMAC identityHmac;
@@ -154,16 +129,12 @@ public final class PairingHandler {
         );
         byte[] deviceSignature = Curve25519.sign(creds.signedIdentityKey.privateKey(), deviceMsg);
 
-        // Re-encode account with deviceSignature, but strip accountSignatureKey
-        // (Baileys' encodeSignedDeviceIdentity with includeSignatureKey=false).
         Wa.ADVSignedDeviceIdentity accountReply = Wa.ADVSignedDeviceIdentity.newBuilder()
                 .setDetails(account.getDetails())
                 .setAccountSignature(account.getAccountSignature())
                 .setDeviceSignature(ByteString.copyFrom(deviceSignature))
-                // intentionally omit accountSignatureKey
-                .build();
 
-        // --- mutate creds + build reply ---
+                .build();
 
         creds.account = Wa.ADVSignedDeviceIdentity.newBuilder()
                 .setDetails(account.getDetails())

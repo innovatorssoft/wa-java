@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 package id.jawa.protocol.codec;
 
 import id.jawa.protocol.connection.*;
@@ -12,24 +11,12 @@ import id.jawa.feature.media.*;
 import id.jawa.feature.appstate.*;
 import id.jawa.feature.signal.*;
 
-
 import id.jawa.domain.model.Jid;
 
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 
-/**
- * Encodes {@link BinaryNode} trees to the WhatsApp binary wire format.
- *
- * <p>Ports {@code WABinary/encode.ts} (Baileys) and {@code binary/encoder.go} (whatsmeow).
- *
- * <p>Output starts with a 1-byte flag (always {@code 0x00 = raw}; the server may
- * respond with {@code 0x02 = zlib-deflated}, decoded by {@link BinaryDecoder}).
- *
- * <p>Thread-safety: instances are NOT thread-safe; each encode call should use
- * its own encoder (or just call {@link #encode(BinaryNode)}).
- */
 public final class BinaryEncoder {
 
     private final ByteArrayOutputStream buf = new ByteArrayOutputStream(256);
@@ -38,14 +25,11 @@ public final class BinaryEncoder {
         buf.write(WaTags.FLAG_RAW);
     }
 
-    /** One-shot encode. */
     public static byte[] encode(BinaryNode node) {
         BinaryEncoder e = new BinaryEncoder();
         e.writeNode(node);
         return e.buf.toByteArray();
     }
-
-    // ---- node ----
 
     private void writeNode(BinaryNode node) {
         if (node == null || node.tag() == null) {
@@ -77,8 +61,6 @@ public final class BinaryEncoder {
                 "invalid content for tag '" + node.tag() + "': " + content.getClass());
         }
     }
-
-    // ---- string ----
 
     private void writeString(String s) {
         if (s == null) { buf.write(WaTags.LIST_EMPTY); return; }
@@ -118,8 +100,6 @@ public final class BinaryEncoder {
         }
     }
 
-    // ---- length ----
-
     private void writeByteLength(int length) {
         if (length < 0) throw new IllegalArgumentException("negative length: " + length);
         if (length < 256) {
@@ -151,8 +131,6 @@ public final class BinaryEncoder {
             buf.write(size & 0xFF);
         }
     }
-
-    // ---- packed nibble/hex ----
 
     private static boolean isNibble(String s) {
         if (s.isEmpty() || s.length() > WaTags.PACKED_MAX) return false;

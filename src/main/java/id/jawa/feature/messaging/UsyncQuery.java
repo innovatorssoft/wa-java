@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 package id.jawa.feature.messaging;
 
 import id.jawa.protocol.connection.*;
@@ -12,7 +11,6 @@ import id.jawa.feature.media.*;
 import id.jawa.feature.appstate.*;
 import id.jawa.feature.signal.*;
 
-
 import id.jawa.protocol.codec.BinaryNode;
 import id.jawa.domain.model.Jid;
 
@@ -22,32 +20,10 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * Builds and parses {@code <iq xmlns=usync>} stanzas — the way the client asks the server
- * to enumerate a user's devices (and many other contact-shape protocols which we'll add later).
- *
- * <p>Ports the device-protocol slice of Baileys' {@code src/WAUSync/}.
- *
- * <p>Wire shape (device-list query):
- * <pre>{@code
- * <iq xmlns="usync" type="get" to="s.whatsapp.net" id="...">
- *   <usync sid="<sid>" mode="query" last="true" context="interactive">
- *     <query>
- *       <devices version="2"/>
- *     </query>
- *     <list>
- *       <user jid="628...@s.whatsapp.net"/>
- *       ... (more users)
- *     </list>
- *   </usync>
- * </iq>
- * }</pre>
- */
 public final class UsyncQuery {
 
     private UsyncQuery() {}
 
-    /** Build a device-list query for one or more target JIDs. */
     public static BinaryNode buildDeviceListQuery(String iqId, String sid, Collection<String> targetJids) {
         List<BinaryNode> userNodes = new ArrayList<>(targetJids.size());
         for (String j : targetJids) {
@@ -80,11 +56,6 @@ public final class UsyncQuery {
             List.of(usync));
     }
 
-    /**
-     * Parse the {@code <iq type=result>} response from a device-list query.
-     * Returns map of {@code targetJid → ordered device list}. Missing users / errored users
-     * map to an empty list.
-     */
     public static Map<String, List<DeviceInfo>> parseDeviceListResult(BinaryNode resultIq) {
         if (!"result".equals(resultIq.attr("type"))) {
             throw new IllegalArgumentException("not a usync result iq: " + resultIq);

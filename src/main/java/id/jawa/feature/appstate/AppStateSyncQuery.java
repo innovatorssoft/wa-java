@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 package id.jawa.feature.appstate;
 
 import id.jawa.protocol.connection.*;
@@ -12,7 +11,6 @@ import id.jawa.feature.media.*;
 import id.jawa.feature.appstate.*;
 import id.jawa.feature.signal.*;
 
-
 import com.google.protobuf.InvalidProtocolBufferException;
 import id.jawa.protocol.codec.BinaryNode;
 import id.jawa.proto.Wa;
@@ -23,25 +21,12 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * Build the {@code <iq xmlns="w:sync:app:state" type="set">} stanza that asks the
- * server for snapshot + patches for a given collection, and parse the response into
- * a {@link PatchList}.
- *
- * <p>Two modes:
- * <ul>
- *   <li>{@link #buildSnapshotRequest(String, PatchName)} — first sync, fetches a
- *       full snapshot (server may inline or hand us an {@code ExternalBlobReference}).</li>
- *   <li>{@link #buildPatchRequest(String, PatchName, long)} — incremental sync from
- *       a known {@code version}; fetches just the patches since then.</li>
- * </ul>
- */
 public final class AppStateSyncQuery {
 
     private AppStateSyncQuery() {}
 
     public static BinaryNode buildSnapshotRequest(String iqId, PatchName name) {
-        return buildIq(iqId, name, /* fromVersion= */ -1L, /* returnSnapshot= */ true);
+        return buildIq(iqId, name,  -1L,  true);
     }
 
     public static BinaryNode buildPatchRequest(String iqId, PatchName name, long fromVersion) {
@@ -66,13 +51,12 @@ public final class AppStateSyncQuery {
             List.of(sync));
     }
 
-    /** Parsed response — what {@link AppStateProcessor} consumes. */
     public record PatchList(
         PatchName name,
         boolean hasMorePatches,
-        Wa.SyncdSnapshot snapshot,          // null when none / external-only
+        Wa.SyncdSnapshot snapshot,
         List<Wa.SyncdPatch> patches,
-        Wa.ExternalBlobReference externalSnapshot  // non-null when the snapshot lives off-IQ
+        Wa.ExternalBlobReference externalSnapshot
     ) {}
 
     public static PatchList parseResponse(BinaryNode iqResult) {
@@ -95,7 +79,7 @@ public final class AppStateSyncQuery {
             } catch (InvalidProtocolBufferException ignored) {
                 try {
                     snapshot = Wa.SyncdSnapshot.parseFrom(snapshotNode.bytesContent());
-                } catch (InvalidProtocolBufferException ignored2) { /* fall through */ }
+                } catch (InvalidProtocolBufferException ignored2) {  }
             }
         }
 
@@ -107,7 +91,7 @@ public final class AppStateSyncQuery {
                 byte[] bytes = patchNode.bytesContent();
                 if (bytes == null) continue;
                 try { patches.add(Wa.SyncdPatch.parseFrom(bytes)); }
-                catch (InvalidProtocolBufferException ignored) { /* skip */ }
+                catch (InvalidProtocolBufferException ignored) {  }
             }
         }
 

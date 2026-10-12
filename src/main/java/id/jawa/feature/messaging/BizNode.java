@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 package id.jawa.feature.messaging;
 
 import id.jawa.protocol.connection.*;
@@ -12,7 +11,6 @@ import id.jawa.feature.media.*;
 import id.jawa.feature.appstate.*;
 import id.jawa.feature.signal.*;
 
-
 import id.jawa.protocol.codec.BinaryNode;
 import id.jawa.proto.Wa;
 import id.jawa.protocol.crypto.Bytes;
@@ -22,29 +20,10 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * Build the {@code <biz>} binary node WhatsApp's server expects alongside a
- * {@code <message>} stanza carrying an interactive payload (buttons / list /
- * native flow / template). Without this node the server accepts the stanza but
- * the receiver app silently drops the interactive surface and the message
- * renders blank.
- *
- * <p>Shape mirrors the {@code getBizBinaryNode} routine in itsliaaa/baileys —
- * see {@code lib/WABinary/generic-utils.js}. The two static children always
- * present are a per-message {@code quality_control} (with a random 20-byte hex
- * {@code decision_id}) and either an {@code interactive native_flow=mixed}
- * marker (for buttons/template) or a {@code list type=product_list} marker
- * (for list messages).
- */
 public final class BizNode {
 
     private BizNode() {}
 
-    /**
-     * Build the {@code <biz>} node for a given outgoing {@link Wa.Message}, or
-     * {@code null} if the message carries no interactive surface and the node
-     * isn't needed.
-     */
     public static BinaryNode buildIfNeeded(Wa.Message message) {
         if (message == null) return null;
         boolean isButtons     = message.hasButtonsMessage();

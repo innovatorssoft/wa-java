@@ -1,6 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
-// Generated from references/baileys/src/WABinary/constants.ts — DO NOT EDIT BY HAND.
-// Regenerate with scripts/gen-tokens.js when WhatsApp updates the dictionary.
 package id.jawa.protocol.codec;
 
 import id.jawa.protocol.connection.*;
@@ -14,16 +11,9 @@ import id.jawa.feature.media.*;
 import id.jawa.feature.appstate.*;
 import id.jawa.feature.signal.*;
 
-
 import java.util.HashMap;
 import java.util.Map;
 
-/**
- * WhatsApp binary-protocol token dictionary.
- * Mirrors the table in Baileys (src/WABinary/constants.ts) and whatsmeow
- * (binary/token/token.go). DICT_VERSION=3 is sent to the server during the
- * connection handshake so it picks the matching table.
- */
 public final class WaTokens {
     public static final int DICT_VERSION = 3;
 
@@ -1301,7 +1291,6 @@ public final class WaTokens {
         },
     };
 
-    /** Reverse lookup: token -> {dict, index}. dict==-1 means single-byte. */
     public static final Map<String, int[]> INDEX = new HashMap<>(SINGLE.length + DOUBLE.length * 256);
     static {
         for (int i = 0; i < SINGLE.length; i++) {

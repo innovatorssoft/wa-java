@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 package id.jawa.feature.messaging;
 
 import id.jawa.protocol.connection.*;
@@ -12,43 +11,16 @@ import id.jawa.feature.media.*;
 import id.jawa.feature.appstate.*;
 import id.jawa.feature.signal.*;
 
-
 import id.jawa.protocol.codec.BinaryNode;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
-/**
- * Builds and parses the {@code <iq xmlns=w:g2><participating>} group-list query.
- *
- * <p>Wire shape (ports whatsmeow {@code GetJoinedGroups} / Baileys
- * {@code groupsParticipating}):
- *
- * <pre>{@code
- * <iq to="@g.us" xmlns="w:g2" type="get" id="...">
- *   <participating>
- *     <participants/>
- *     <description/>
- *   </participating>
- * </iq>
- *
- * <iq type="result" ...>
- *   <groups>
- *     <group jid="120363...@g.us" subject="..." s_t="<unix>" creation="<unix>" ...>
- *       <participant jid="6281...:0@s.whatsapp.net" lid="..." />
- *       ...
- *     </group>
- *     ...
- *   </groups>
- * </iq>
- * }</pre>
- */
 public final class GroupListQuery {
 
     private GroupListQuery() {}
 
-    /** A group the logged-in user belongs to. */
     public record GroupInfo(
         String jid,
         String subject,

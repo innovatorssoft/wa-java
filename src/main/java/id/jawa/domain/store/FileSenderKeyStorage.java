@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-3.0-or-later */
 package id.jawa.domain.store;
 
 import id.jawa.protocol.connection.*;
@@ -28,9 +27,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.stream.Stream;
 
-/**
- * Persistent backing for libsignal SenderKeyRecord instances. Supports both file and SQLite storage.
- */
 public final class FileSenderKeyStorage {
 
     private static final Logger LOG = LoggerFactory.getLogger(FileSenderKeyStorage.class);

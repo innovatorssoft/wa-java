@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 package id.jawa.feature.signal;
 
 import id.jawa.protocol.connection.*;
@@ -12,7 +11,6 @@ import id.jawa.feature.media.*;
 import id.jawa.feature.appstate.*;
 import id.jawa.feature.signal.*;
 
-
 import id.jawa.protocol.codec.BinaryNode;
 import id.jawa.domain.model.WaConstants;
 import id.jawa.domain.model.AuthCreds;
@@ -24,41 +22,10 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * Generates and packages one-time pre-keys for upload to the server.
- *
- * <p>Wire format of the upload IQ (ports {@code getNextPreKeysNode} from Baileys'
- * {@code Utils/signal.ts}):
- *
- * <pre>{@code
- * <iq xmlns="encrypt" type="set" to="s.whatsapp.net" id="...">
- *   <registration>(regId, 4 bytes BE)</registration>
- *   <type>(KEY_BUNDLE_TYPE = 0x05)</type>
- *   <identity>(signedIdentityKey.public, 32 bytes)</identity>
- *   <list>
- *     <key>
- *       <id>(preKeyId, 3 bytes BE)</id>
- *       <value>(pub, 32 bytes)</value>
- *     </key>
- *     ... (N pre-keys)
- *   </list>
- *   <skey>
- *     <id>(signedPreKey.keyId, 3 bytes BE)</id>
- *     <value>(signedPreKey.pub, 32 bytes)</value>
- *     <signature>(signedPreKey.sig, 64 bytes)</signature>
- *   </skey>
- * </iq>
- * }</pre>
- */
 public final class PreKeyManager {
 
     private PreKeyManager() {}
 
-    /**
-     * Ensure {@code count} unuploaded pre-keys exist (generate any missing), store them in the
-     * given {@link SignalKeyStore}, advance {@link AuthCreds#nextPreKeyId} accordingly, and
-     * return the slice ready for upload.
-     */
     public static Map<Integer, KeyPair25519> generate(AuthCreds creds, SignalKeyStore store, int count) {
         int available = creds.nextPreKeyId - creds.firstUnuploadedPreKeyId;
         int remaining = count - available;
@@ -77,10 +44,6 @@ public final class PreKeyManager {
         return out;
     }
 
-    /**
-     * Build the {@code <iq xmlns=encrypt>} upload stanza. {@code id} is the stanza id; the
-     * caller must remember it so the {@code <iq type=result>} response can be correlated.
-     */
     public static BinaryNode buildUploadStanza(String id, AuthCreds creds, Map<Integer, KeyPair25519> preKeys) {
         java.util.List<BinaryNode> keyList = new java.util.ArrayList<>(preKeys.size());
         for (var e : preKeys.entrySet()) {
@@ -114,7 +77,6 @@ public final class PreKeyManager {
             ));
     }
 
-    /** Mark the freshly-uploaded pre-keys as consumed (server will hand them out to peers). */
     public static void markUploaded(AuthCreds creds, Map<Integer, KeyPair25519> uploaded) {
         if (uploaded.isEmpty()) return;
         int maxId = 0;

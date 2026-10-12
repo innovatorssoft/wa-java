@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 package id.jawa.feature.messaging;
 
 import id.jawa.protocol.connection.*;
@@ -11,7 +10,6 @@ import id.jawa.feature.messaging.*;
 import id.jawa.feature.media.*;
 import id.jawa.feature.appstate.*;
 import id.jawa.feature.signal.*;
-
 
 import id.jawa.protocol.codec.BinaryNode;
 import id.jawa.proto.Wa;
@@ -32,36 +30,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
-/**
- * Encrypts a {@link Wa.Message} for one-or-more recipient devices via libsignal's
- * {@link SessionCipher} and packs the result into a {@code <message>} stanza.
- *
- * <p>Stanza shape (ports {@code messages-send.ts:relayMessage}):
- * <pre>{@code
- * <message to="<recipient-bare-jid>" id="<msgId>" type="text" t="<unix-seconds>">
- *   <participants>
- *     <to jid="<recipient-device0-jid>">
- *       <enc v="2" type="pkmsg|msg">{ciphertext}</enc>
- *     </to>
- *     ...
- *   </participants>
- *   <device-identity>{advSignedDeviceIdentity bytes}</device-identity>  (if any pkmsg)
- * </message>
- * }</pre>
- */
 public final class MessageSender {
 
     private static final Logger LOG = LoggerFactory.getLogger(MessageSender.class);
 
     private MessageSender() {}
 
-    /**
-     * Encrypt {@code message} for every device in {@code deviceJids} (skipping our own
-     * device) and produce the full {@code <message>} stanza ready to {@code send()}.
-     *
-     * <p>Returns {@link Result#stanza()} and a {@code Map} of which device produced
-     * which {@code CiphertextMessage} type.
-     */
     public static Result buildStanza(JaWaProtocolStore store,
                                      AuthCreds creds,
                                      String msgId,
@@ -77,13 +51,8 @@ public final class MessageSender {
         SignalProtocolAddress myAddr = new SignalProtocolAddress(myJid.user(), myJid.device());
         String ownUser = myJid.user();
 
-        // Foreign-recipient plaintext: the bare Wa.Message.
-        // Own-companion plaintext: wrap in DeviceSentMessage{destinationJid, message} so the
-        // recipient's phone knows which chat to attribute it to. Without this, the phone
-        // Signal-decrypts but silently drops the payload — server still ACKs (transport
-        // accepted) but no chat insert and no delivery receipt fires.
         byte[] msgPadded = MessageEncoder.encode(message);
-        byte[] dsmPadded = null; // built lazily on first own-companion device
+        byte[] dsmPadded = null;
 
         List<BinaryNode> participants = new ArrayList<>();
         Map<SignalProtocolAddress, Integer> typeMap = new HashMap<>();
@@ -93,7 +62,7 @@ public final class MessageSender {
             Jid jid = Jid.parse(dj);
             if (jid == null) continue;
             SignalProtocolAddress addr = SessionBootstrap.addressFor(jid);
-            if (addr.equals(myAddr)) continue; // skip the exact sender device
+            if (addr.equals(myAddr)) continue;
 
             byte[] plaintext;
             if (jid.user().equals(ownUser)) {
@@ -133,7 +102,7 @@ public final class MessageSender {
         List<BinaryNode> outer = new ArrayList<>();
         outer.add(new BinaryNode("participants", Map.of(), participants));
         if (includeDeviceIdentity && creds.account != null) {
-            // Re-encode without accountSignatureKey (Baileys: encodeSignedDeviceIdentity false)
+
             byte[] deviceIdentity = encodeDeviceIdentityForSend(creds.account);
             outer.add(new BinaryNode("device-identity", Map.of(), deviceIdentity));
         }
@@ -152,14 +121,6 @@ public final class MessageSender {
         return new Result(stanza, typeMap);
     }
 
-    /**
-     * Build a stanza with dual-identity support: route via {@code wireDeviceJids} (PN)
-     * but encrypt using Signal sessions from {@code encryptionDeviceJids} (LID).
-     *
-     * <p>This mirrors whatsmeow's {@code encryptMessageForDeviceAndWrap} pattern where
-     * {@code <to jid="PN-device">} is used for routing but the Signal cipher uses
-     * the LID address.
-     */
     public static Result buildDualIdentityStanza(JaWaProtocolStore store,
                                                   AuthCreds creds,
                                                   String msgId,
@@ -176,7 +137,6 @@ public final class MessageSender {
         SignalProtocolAddress myAddr = new SignalProtocolAddress(myJid.user(), myJid.device());
         String ownUser = myJid.user();
 
-        // Also check own LID to skip own LID device
         String ownLidUser = null;
         if (creds.meLid != null && !creds.meLid.isBlank()) {
             Jid lidJid = Jid.parse(creds.meLid);
@@ -190,8 +150,6 @@ public final class MessageSender {
         Map<SignalProtocolAddress, Integer> typeMap = new HashMap<>();
         boolean includeDeviceIdentity = false;
 
-        // Build a mapping from wire device -> encryption device
-        // They should be parallel lists of the same size
         for (int i = 0; i < wireDeviceJids.size(); i++) {
             String wireJid = wireDeviceJids.get(i);
             String encJid = (i < encryptionDeviceJids.size()) ? encryptionDeviceJids.get(i) : wireJid;
@@ -201,9 +159,8 @@ public final class MessageSender {
             if (wireParsed == null || encParsed == null) continue;
 
             SignalProtocolAddress encAddr = SessionBootstrap.addressFor(encParsed);
-            if (encAddr.equals(myAddr)) continue; // skip the exact sender device
+            if (encAddr.equals(myAddr)) continue;
 
-            // Also skip own LID device
             if (ownLidUser != null && encParsed.user().equals(ownLidUser)
                     && encParsed.device() == myJid.device()) continue;
 
@@ -230,7 +187,7 @@ public final class MessageSender {
                 BinaryNode enc = new BinaryNode("enc",
                     Map.of("v", "2", "type", type),
                     ct.serialize());
-                // Wire identity: use the PN device JID for the <to jid="..."> node
+
                 BinaryNode to = new BinaryNode("to",
                     Map.of("jid", wireJid),
                     List.of(enc));
@@ -266,10 +223,6 @@ public final class MessageSender {
         return new Result(stanza, typeMap);
     }
 
-    /**
-     * Re-serialise {@link Wa.ADVSignedDeviceIdentity} without {@code accountSignatureKey}.
-     * Package-visible so {@link GroupSender} can include it in the group-send stanza.
-     */
     static byte[] encodeDeviceIdentityForSend(byte[] fullAccountBytes) {
         try {
             Wa.ADVSignedDeviceIdentity full = Wa.ADVSignedDeviceIdentity.parseFrom(fullAccountBytes);
@@ -277,7 +230,7 @@ public final class MessageSender {
                 .setDetails(full.getDetails())
                 .setAccountSignature(full.getAccountSignature());
             if (full.hasDeviceSignature()) b.setDeviceSignature(full.getDeviceSignature());
-            // intentionally omit accountSignatureKey
+
             return b.build().toByteArray();
         } catch (com.google.protobuf.InvalidProtocolBufferException e) {
             throw new IllegalStateException("invalid creds.account proto", e);

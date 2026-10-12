@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 package id.jawa.feature.signal;
 
 import id.jawa.protocol.connection.*;
@@ -11,7 +10,6 @@ import id.jawa.feature.messaging.*;
 import id.jawa.feature.media.*;
 import id.jawa.feature.appstate.*;
 import id.jawa.feature.signal.*;
-
 
 import id.jawa.protocol.codec.BinaryEncoder;
 import id.jawa.protocol.codec.BinaryDecoder;
@@ -49,7 +47,6 @@ class PreKeyManagerTest {
         PreKeyManager.generate(creds, store, 10);
         int afterFirst = creds.nextPreKeyId;
 
-        // Second call asks for 10 more — but we already have 10 unuploaded, so 0 new keys generated
         PreKeyManager.generate(creds, store, 10);
         assertThat(creds.nextPreKeyId).isEqualTo(afterFirst);
         assertThat(store.size()).isEqualTo(10);
@@ -81,27 +78,27 @@ class PreKeyManagerTest {
             .containsExactly("registration", "type", "identity", "list", "skey");
 
         BinaryNode reg = kids.get(0);
-        assertThat((byte[]) reg.content()).hasSize(4);                  // uint32 BE
+        assertThat((byte[]) reg.content()).hasSize(4);
 
         BinaryNode type = kids.get(1);
-        assertThat((byte[]) type.content()).containsExactly(0x05);      // KEY_BUNDLE_TYPE
+        assertThat((byte[]) type.content()).containsExactly(0x05);
 
         BinaryNode ident = kids.get(2);
-        assertThat((byte[]) ident.content()).hasSize(32);               // raw Curve25519 pub
+        assertThat((byte[]) ident.content()).hasSize(32);
 
         BinaryNode list = kids.get(3);
-        assertThat(list.childrenList()).hasSize(3);                     // 3 pre-keys requested
+        assertThat(list.childrenList()).hasSize(3);
         BinaryNode firstKey = list.childrenList().get(0);
         assertThat(firstKey.tag()).isEqualTo("key");
         assertThat(firstKey.childrenList().stream().map(BinaryNode::tag).toList())
             .containsExactly("id", "value");
-        assertThat((byte[]) firstKey.childrenList().get(0).content()).hasSize(3); // uint24 BE id
+        assertThat((byte[]) firstKey.childrenList().get(0).content()).hasSize(3);
         assertThat((byte[]) firstKey.childrenList().get(1).content()).hasSize(32);
 
         BinaryNode skey = kids.get(4);
         assertThat(skey.childrenList().stream().map(BinaryNode::tag).toList())
             .containsExactly("id", "value", "signature");
-        assertThat((byte[]) skey.childrenList().get(2).content()).hasSize(64);     // XEdDSA sig
+        assertThat((byte[]) skey.childrenList().get(2).content()).hasSize(64);
     }
 
     @Test

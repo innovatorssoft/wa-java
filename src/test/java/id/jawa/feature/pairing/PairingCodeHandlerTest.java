@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 package id.jawa.feature.pairing;
 
 import id.jawa.protocol.connection.*;
@@ -11,7 +10,6 @@ import id.jawa.feature.messaging.*;
 import id.jawa.feature.media.*;
 import id.jawa.feature.appstate.*;
 import id.jawa.feature.signal.*;
-
 
 import id.jawa.protocol.codec.BinaryNode;
 import id.jawa.domain.model.AuthCreds;
@@ -49,23 +47,17 @@ class PairingCodeHandlerTest {
         assertThat(reg.attr("jid")).isEqualTo("628123456789@s.whatsapp.net");
         assertThat(reg.attr("stage")).isEqualTo("companion_hello");
 
-        // Wrapped ephemeral pub = 32-byte salt + 16-byte iv + 32-byte ct = 80 bytes
         byte[] wrapped = reg.child("link_code_pairing_wrapped_companion_ephemeral_pub").bytesContent();
         assertThat(wrapped).hasSize(80);
 
-        // Server-validated wire values — these were live-discovered after a 400 bad-request
-        // on platform_id=0 and display="Chrome (JaWa)". Lock them in so a future regression
-        // on these exact constants cannot slip through unit tests silently.
         assertThat(reg.child("companion_server_auth_key_pub").bytesContent())
             .containsExactly(creds.noiseKey.publicKey());
         assertThat(reg.child("companion_platform_id").textContent()).isEqualTo("1");
         assertThat(reg.child("companion_platform_display").textContent()).isEqualTo("Chrome (Linux)");
         assertThat(reg.child("link_code_pairing_nonce").textContent()).isEqualTo("0");
 
-        // 8-char Crockford code
         assertThat(h.pairingCode()).hasSize(8);
 
-        // me.jid was set
         assertThat(creds.meJid).isEqualTo("628123456789@s.whatsapp.net");
     }
 
@@ -85,22 +77,15 @@ class PairingCodeHandlerTest {
         assertThat(h.pairingCode()).isEqualTo("ABCD1234");
     }
 
-    /**
-     * End-to-end happy path: simulate the primary device by wrapping its ephemeral
-     * pub with the SAME pairing code derivation, then feed back into
-     * buildCompanionFinish and verify the produced stanza shape + advSecret.
-     */
     @Test
     void companionFinishDerivesAdvSecretAndProducesValidStanza() {
         AuthCreds creds = AuthCreds.generate();
         PairingCodeHandler h = new PairingCodeHandler(creds);
         h.buildCompanionHello("hello", "628000000000", "ABCDEFGH");
 
-        // Simulate primary (the phone): generate its own keypair + identity
         KeyPair25519 primaryEphemeral = Curve25519.generateKeyPair();
         KeyPair25519 primaryIdentity  = Curve25519.generateKeyPair();
 
-        // Wrap primary ephemeral pub the same way the phone would
         byte[] salt = Bytes.random(32);
         byte[] iv   = Bytes.random(16);
         byte[] key  = Pbkdf2.deriveSha256("ABCDEFGH", salt, PairingCodeHandler.PBKDF2_ITERATIONS, 32);
@@ -108,7 +93,6 @@ class PairingCodeHandlerTest {
         byte[] wrappedPrimaryEph = Bytes.concat(salt, iv, ct);
         byte[] pairingRef = Bytes.random(16);
 
-        // Build the simulated notification
         BinaryNode notif = new BinaryNode("notification", Map.of(), List.of(
             new BinaryNode("link_code_companion_reg", Map.of(), List.of(
                 new BinaryNode("link_code_pairing_wrapped_primary_ephemeral_pub",
@@ -120,7 +104,6 @@ class PairingCodeHandlerTest {
 
         BinaryNode finishIq = h.buildCompanionFinish("finish-1", notif);
 
-        // Verify stanza shape
         assertThat(finishIq.tag()).isEqualTo("iq");
         assertThat(finishIq.attrs())
             .containsEntry("xmlns", "md")
@@ -133,31 +116,23 @@ class PairingCodeHandlerTest {
         byte[] companionIdPub   = reg.child("companion_identity_public").bytesContent();
         byte[] refOut           = reg.child("link_code_pairing_ref").bytesContent();
 
-        // Wrapped bundle = 32-byte salt + 12-byte nonce + ciphertext+tag (3*32+16 = 112)
         assertThat(wrappedKeyBundle).hasSize(32 + 12 + 96 + 16);
         assertThat(companionIdPub).containsExactly(creds.signedIdentityKey.publicKey());
         assertThat(refOut).containsExactly(pairingRef);
 
-        // advSecretKey must have been derived
         assertThat(creds.advSecretKey).isNotNull().hasSize(32);
 
-        // Decrypt the key bundle from the phone's POV to prove the construction is consistent
         byte[] bSalt  = Bytes.slice(wrappedKeyBundle, 0, 32);
         byte[] bNonce = Bytes.slice(wrappedKeyBundle, 32, 44);
         byte[] bCt    = Bytes.slice(wrappedKeyBundle, 44, wrappedKeyBundle.length);
         byte[] ephSharedFromPhone = Curve25519.sharedKey(primaryEphemeral.privateKey(),
-            /* the companion ephemeral pub the phone has — we don't have it here, so the
-             * phone-side derive would use the just-decrypted one. Re-derive from the
-             * encrypted public stored in the companion_hello flow is out of scope for this
-             * unit test; what we can verify is the bundle structure layout. */
+
             primaryEphemeral.publicKey());
-        // Just sanity check sizes — full E2E roundtrip needs the companion's ephemeral priv
-        // which is correctly held inside PairingCodeHandler and not exposed.
+
         assertThat(bSalt).hasSize(32);
         assertThat(bNonce).hasSize(12);
         assertThat(bCt).hasSize(96 + 16);
 
-        // silence unused
         assertThat(ephSharedFromPhone).isNotEmpty();
     }
 
@@ -180,8 +155,7 @@ class PairingCodeHandlerTest {
 
     @Test
     void advSecretDerivationMatchesSpec() {
-        // Sanity check that the HKDF construction we use produces 32 bytes
-        // with the documented info string.
+
         byte[] eph = Bytes.random(32);
         byte[] id  = Bytes.random(32);
         byte[] r   = Bytes.random(32);
@@ -192,8 +166,7 @@ class PairingCodeHandlerTest {
 
     @Test
     void aesGcmWrapSizeMatchesWireExpectation() {
-        // Bundle plaintext: 32 (companion id) + 32 (primary id) + 32 (random) = 96 bytes
-        // AES-GCM appends a 16-byte tag → ciphertext+tag = 112 bytes
+
         byte[] key = Bytes.random(32);
         byte[] nonce = Bytes.random(12);
         byte[] pt = Bytes.random(96);

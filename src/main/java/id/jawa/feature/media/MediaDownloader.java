@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-3.0-or-later */
 package id.jawa.feature.media;
 
 import id.jawa.protocol.connection.*;
@@ -23,9 +22,6 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 
-/**
- * Downloads and decrypts WhatsApp media attachments from a Wa.Message or direct URLs.
- */
 public final class MediaDownloader {
 
     private static final Logger LOG = LoggerFactory.getLogger(MediaDownloader.class);
@@ -35,12 +31,6 @@ public final class MediaDownloader {
 
     private MediaDownloader() {}
 
-    /**
-     * Download and decrypt media from a Wa.Message (Image, Video, Audio, Document, Sticker).
-     *
-     * @param msg the inbound Wa.Message protobuf payload
-     * @return raw decrypted file byte array, or null if message has no supported media payload
-     */
     public static byte[] download(Wa.Message msg) {
         if (msg == null) return null;
 
@@ -68,16 +58,10 @@ public final class MediaDownloader {
         return null;
     }
 
-    /**
-     * Download and decrypt media from a direct CDN URL.
-     */
     public static byte[] downloadByUrl(String url, byte[] mediaKey, byte[] fileEncSha256, MediaCrypto.MediaType type) throws IOException, InterruptedException {
         return fetchAndDecrypt(url, mediaKey, type);
     }
 
-    /**
-     * Download and decrypt media using directPath and MediaConn host list.
-     */
     public static byte[] downloadByDirectPath(MediaConn conn, String directPath, byte[] mediaKey, byte[] fileEncSha256, MediaCrypto.MediaType type) throws IOException, InterruptedException {
         if (conn == null || conn.hosts().isEmpty()) {
             throw new IllegalArgumentException("MediaConn has no hosts");
@@ -91,9 +75,6 @@ public final class MediaDownloader {
         throw new IOException("Failed downloading media from all MediaConn hosts");
     }
 
-    /**
-     * Fetch encrypted bytes from media URL and decrypt using mediaKey and mediaType.
-     */
     public static byte[] fetchAndDecrypt(String url, byte[] mediaKey, MediaCrypto.MediaType type) {
         if (url == null || url.isBlank() || mediaKey == null || mediaKey.length == 0) {
             return null;

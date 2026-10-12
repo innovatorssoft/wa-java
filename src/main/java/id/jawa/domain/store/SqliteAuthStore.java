@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-3.0-or-later */
 package id.jawa.domain.store;
 
 import id.jawa.domain.model.AuthCreds;
@@ -19,10 +18,6 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-/**
- * Pure SQLite database persistence implementation for WhatsApp credentials, Signal sessions,
- * pre-keys, sender-keys, and app-state keys in a single SQLite database file.
- */
 public final class SqliteAuthStore implements AuthStore, AutoCloseable {
 
     private final String jdbcUrl;

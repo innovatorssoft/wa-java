@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 package id.jawa.domain.model;
 
 import id.jawa.protocol.connection.*;
@@ -12,14 +11,9 @@ import id.jawa.feature.media.*;
 import id.jawa.feature.appstate.*;
 import id.jawa.feature.signal.*;
 
-
 import id.jawa.protocol.crypto.Curve25519;
 import id.jawa.protocol.crypto.KeyPair25519;
 
-/**
- * A Signal-style signed pre-key: a Curve25519 keypair with a signature over its
- * (KEY_BUNDLE_TYPE-prefixed) public key produced by the long-term identity key.
- */
 public record SignedPreKey(int keyId, KeyPair25519 keyPair, byte[] signature) {
 
     public static SignedPreKey generate(int keyId, KeyPair25519 identityKey) {

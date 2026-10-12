@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 package id.jawa.feature.media;
 
 import id.jawa.protocol.connection.*;
@@ -12,7 +11,6 @@ import id.jawa.feature.media.*;
 import id.jawa.feature.appstate.*;
 import id.jawa.feature.signal.*;
 
-
 import id.jawa.protocol.codec.BinaryNode;
 
 import java.time.Instant;
@@ -20,12 +18,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
-/**
- * Snapshot of WhatsApp's media-server connection info, fetched via
- * {@code <iq xmlns="w:m" type="set"><media_conn/></iq>}.
- *
- * <p>Cache up to {@link #expiry()}; refresh on use after that.
- */
 public record MediaConn(
     String auth,
     int ttlSeconds,
@@ -43,7 +35,6 @@ public record MediaConn(
         return !now.isBefore(expiry());
     }
 
-    /** Build the IQ stanza to ask the server for fresh media-conn info. */
     public static BinaryNode buildQuery(String iqId) {
         return new BinaryNode("iq",
             Map.of(
@@ -55,10 +46,6 @@ public record MediaConn(
             List.of(BinaryNode.of("media_conn")));
     }
 
-    /**
-     * Parse the {@code <iq type="result">} response containing the {@code <media_conn>}
-     * child. Returns {@code null} if the response shape is wrong.
-     */
     public static MediaConn parseResponse(BinaryNode iqResult) {
         BinaryNode mc = iqResult.child("media_conn");
         if (mc == null) return null;
