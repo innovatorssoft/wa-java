@@ -1581,6 +1581,96 @@ public final class JaWaClient implements AutoCloseable {
         });
     }
 
+    public java.util.concurrent.CompletableFuture<String> getGroupInviteLink(String groupJid, boolean reset) {
+        String iqId = newIqId();
+        BinaryNode iq = id.jawa.feature.messaging.GroupAction.buildInviteLink(iqId, groupJid, reset);
+        return sendIqAsync(iq).thenApply(resp -> {
+            if ("error".equals(resp.attr("type"))) {
+                throw new IllegalStateException("getGroupInviteLink rejected: " + resp);
+            }
+            BinaryNode invite = resp.child("invite");
+            if (invite == null || invite.attr("code") == null) {
+                throw new IllegalStateException("No invite code found in response: " + resp);
+            }
+            return "https://chat.whatsapp.com/" + invite.attr("code");
+        });
+    }
+
+    public java.util.concurrent.CompletableFuture<String> getGroupInviteLink(String groupJid) {
+        return getGroupInviteLink(groupJid, false);
+    }
+
+    public java.util.concurrent.CompletableFuture<String> revokeGroupInviteLink(String groupJid) {
+        return getGroupInviteLink(groupJid, true);
+    }
+
+    public java.util.concurrent.CompletableFuture<BinaryNode> getGroupInfoFromLink(String code) {
+        String cleanCode = cleanInviteCode(code);
+        String iqId = newIqId();
+        BinaryNode iq = id.jawa.feature.messaging.GroupAction.buildLinkInfo(iqId, cleanCode);
+        return sendIqAsync(iq).thenApply(resp -> {
+            if ("error".equals(resp.attr("type"))) {
+                throw new IllegalStateException("getGroupInfoFromLink rejected: " + resp);
+            }
+            return resp.child("group");
+        });
+    }
+
+    public java.util.concurrent.CompletableFuture<String> joinGroupWithLink(String code) {
+        String cleanCode = cleanInviteCode(code);
+        String iqId = newIqId();
+        BinaryNode iq = id.jawa.feature.messaging.GroupAction.buildJoinWithLink(iqId, cleanCode);
+        return sendIqAsync(iq).thenApply(resp -> {
+            if ("error".equals(resp.attr("type"))) {
+                throw new IllegalStateException("joinGroupWithLink rejected: " + resp);
+            }
+            BinaryNode req = resp.child("membership_approval_request");
+            if (req != null && req.attr("jid") != null) {
+                return req.attr("jid");
+            }
+            BinaryNode group = resp.child("group");
+            if (group != null && group.attr("jid") != null) {
+                return group.attr("jid");
+            }
+            throw new IllegalStateException("Neither group nor approval request returned in response: " + resp);
+        });
+    }
+
+    public java.util.concurrent.CompletableFuture<Void> setGroupLocked(String groupJid, boolean locked) {
+        String iqId = newIqId();
+        BinaryNode iq = id.jawa.feature.messaging.GroupAction.buildSetLocked(iqId, groupJid, locked);
+        return sendIqAsync(iq).thenAccept(resp -> {
+            if ("error".equals(resp.attr("type"))) {
+                throw new IllegalStateException("setGroupLocked rejected: " + resp);
+            }
+        });
+    }
+
+    public java.util.concurrent.CompletableFuture<Void> setGroupAnnounce(String groupJid, boolean announce) {
+        String iqId = newIqId();
+        BinaryNode iq = id.jawa.feature.messaging.GroupAction.buildSetAnnounce(iqId, groupJid, announce);
+        return sendIqAsync(iq).thenAccept(resp -> {
+            if ("error".equals(resp.attr("type"))) {
+                throw new IllegalStateException("setGroupAnnounce rejected: " + resp);
+            }
+        });
+    }
+
+    private static String cleanInviteCode(String code) {
+        if (code == null) return "";
+        String s = code.trim();
+        if (s.startsWith("https://chat.whatsapp.com/")) {
+            return s.substring("https://chat.whatsapp.com/".length());
+        }
+        if (s.startsWith("http://chat.whatsapp.com/")) {
+            return s.substring("http://chat.whatsapp.com/".length());
+        }
+        if (s.startsWith("chat.whatsapp.com/")) {
+            return s.substring("chat.whatsapp.com/".length());
+        }
+        return s;
+    }
+
     public java.util.concurrent.CompletableFuture<java.util.List<id.jawa.feature.messaging.GroupListQuery.GroupInfo>>
             queryJoinedGroups() {
         return queryJoinedGroups(false);
@@ -2127,6 +2217,16 @@ public final class JaWaClient implements AutoCloseable {
         ), null);
         send(stanza);
         LOG.debug("Sent presence type={}", available ? "available" : "unavailable");
+    }
+
+    public void subscribePresence(String jid) {
+        if (jid == null) return;
+        BinaryNode stanza = new BinaryNode("presence", java.util.Map.of(
+            "type", "subscribe",
+            "to", jid
+        ), null);
+        send(stanza);
+        LOG.debug("Sent presence subscribe to={}", jid);
     }
 
     public java.util.concurrent.CompletableFuture<Void> setStatusMessage(String statusText) {

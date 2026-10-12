@@ -92,4 +92,38 @@ class JaWaClientServicesTest {
         assertThat(client.getChatEphemeralTimer(chatJid)).isEqualTo(0);
         assertThat(client.wrapEphemeralIfNeeded(chatJid, plainMsg)).isSameAs(plainMsg);
     }
+
+    @Test
+    void groupActionBuildersGenerateValidBinaryNodes() {
+        var inviteGet = id.jawa.feature.messaging.GroupAction.buildInviteLink("iq1", "12345@g.us", false);
+        assertThat(inviteGet.tag()).isEqualTo("iq");
+        assertThat(inviteGet.attr("type")).isEqualTo("get");
+        assertThat(inviteGet.attr("xmlns")).isEqualTo("w:g2");
+        assertThat(inviteGet.child("invite")).isNotNull();
+
+        var inviteReset = id.jawa.feature.messaging.GroupAction.buildInviteLink("iq2", "12345@g.us", true);
+        assertThat(inviteReset.attr("type")).isEqualTo("set");
+
+        var linkInfo = id.jawa.feature.messaging.GroupAction.buildLinkInfo("iq3", "ABCDEF12345");
+        assertThat(linkInfo.attr("type")).isEqualTo("get");
+        assertThat(linkInfo.attr("to")).isEqualTo("g.us");
+        assertThat(linkInfo.child("invite").attr("code")).isEqualTo("ABCDEF12345");
+
+        var join = id.jawa.feature.messaging.GroupAction.buildJoinWithLink("iq4", "ABCDEF12345");
+        assertThat(join.attr("type")).isEqualTo("set");
+        assertThat(join.attr("to")).isEqualTo("g.us");
+        assertThat(join.child("invite").attr("code")).isEqualTo("ABCDEF12345");
+
+        var locked = id.jawa.feature.messaging.GroupAction.buildSetLocked("iq5", "12345@g.us", true);
+        assertThat(locked.child("locked")).isNotNull();
+
+        var unlocked = id.jawa.feature.messaging.GroupAction.buildSetLocked("iq6", "12345@g.us", false);
+        assertThat(unlocked.child("unlocked")).isNotNull();
+
+        var announce = id.jawa.feature.messaging.GroupAction.buildSetAnnounce("iq7", "12345@g.us", true);
+        assertThat(announce.child("announcement")).isNotNull();
+
+        var notAnnounce = id.jawa.feature.messaging.GroupAction.buildSetAnnounce("iq8", "12345@g.us", false);
+        assertThat(notAnnounce.child("not_announcement")).isNotNull();
+    }
 }

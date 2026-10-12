@@ -64,4 +64,32 @@ public final class GroupService {
     public int getDisappearingTimer(String groupJid) {
         return client.getChatEphemeralTimer(groupJid);
     }
+
+    public CompletableFuture<String> getGroupInviteLink(String groupJid, boolean reset) {
+        return client.getGroupInviteLink(groupJid, reset);
+    }
+
+    public CompletableFuture<String> getGroupInviteLink(String groupJid) {
+        return client.getGroupInviteLink(groupJid);
+    }
+
+    public CompletableFuture<String> revokeGroupInviteLink(String groupJid) {
+        return client.revokeGroupInviteLink(groupJid);
+    }
+
+    public CompletableFuture<BinaryNode> getGroupInfoFromLink(String code) {
+        return client.getGroupInfoFromLink(code);
+    }
+
+    public CompletableFuture<String> joinGroupWithLink(String code) {
+        return client.joinGroupWithLink(code);
+    }
+
+    public CompletableFuture<Void> setGroupLocked(String groupJid, boolean locked) {
+        return client.setGroupLocked(groupJid, locked);
+    }
+
+    public CompletableFuture<Void> setGroupAnnounce(String groupJid, boolean announce) {
+        return client.setGroupAnnounce(groupJid, announce);
+    }
 }

@@ -243,6 +243,10 @@ client.messages().sendReaction(chatJid, msgId, null, false, "👍");
 String nextId = client.messages().generateMessageId();
 
 client.groups().createGroup("Developers Chat", List.of("628123456789"));
+client.groups().getGroupInviteLink(groupJid);
+client.groups().joinGroupWithLink("https://chat.whatsapp.com/Code123");
+client.groups().setGroupLocked(groupJid, true);
+client.groups().setGroupAnnounce(groupJid, true);
 client.groups().setDisappearingTimer(groupJid, 604800);
 
 client.media().sendImage(chatJid, imageBytes, "image/jpeg", "Check this out!");
@@ -251,6 +255,7 @@ client.newsletters().sendText(newsletterJid, "New update published!");
 
 client.profile().updateStatus("Building with JaWa ☕");
 
+client.chats().subscribePresence(targetJid);
 client.chats().sendChatPresence(chatJid, ChatPresence.COMPOSING);
 client.chats().setDisappearingTimer(chatJid, 86400);
 ```

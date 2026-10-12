@@ -47,4 +47,8 @@ public final class ChatService {
     public int getDisappearingTimer(String chatJid) {
         return client.getChatEphemeralTimer(chatJid);
     }
+
+    public void subscribePresence(String jid) {
+        client.subscribePresence(jid);
+    }
 }

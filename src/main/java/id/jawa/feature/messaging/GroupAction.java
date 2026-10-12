@@ -83,6 +83,49 @@ public final class GroupAction {
         return iq(iqId, groupJid, description);
     }
 
+    public static BinaryNode buildInviteLink(String iqId, String groupJid, boolean reset) {
+        return new BinaryNode("iq",
+            Map.of(
+                "id",    iqId,
+                "type",  reset ? "set" : "get",
+                "xmlns", "w:g2",
+                "to",    groupJid
+            ),
+            List.of(new BinaryNode("invite", Map.of(), null)));
+    }
+
+    public static BinaryNode buildLinkInfo(String iqId, String code) {
+        return new BinaryNode("iq",
+            Map.of(
+                "id",    iqId,
+                "type",  "get",
+                "xmlns", "w:g2",
+                "to",    Jid.SERVER_GROUP
+            ),
+            List.of(new BinaryNode("invite", Map.of("code", code), null)));
+    }
+
+    public static BinaryNode buildJoinWithLink(String iqId, String code) {
+        return new BinaryNode("iq",
+            Map.of(
+                "id",    iqId,
+                "type",  "set",
+                "xmlns", "w:g2",
+                "to",    Jid.SERVER_GROUP
+            ),
+            List.of(new BinaryNode("invite", Map.of("code", code), null)));
+    }
+
+    public static BinaryNode buildSetLocked(String iqId, String groupJid, boolean locked) {
+        BinaryNode node = new BinaryNode(locked ? "locked" : "unlocked", Map.of(), null);
+        return iq(iqId, groupJid, node);
+    }
+
+    public static BinaryNode buildSetAnnounce(String iqId, String groupJid, boolean announce) {
+        BinaryNode node = new BinaryNode(announce ? "announcement" : "not_announcement", Map.of(), null);
+        return iq(iqId, groupJid, node);
+    }
+
     private static BinaryNode iq(String iqId, String toJid, BinaryNode payload) {
         return new BinaryNode("iq",
             Map.of(
