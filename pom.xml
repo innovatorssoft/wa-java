@@ -9,7 +9,7 @@
     <artifactId>JaWa</artifactId>
     <version>0.0.4</version>
     <name>JaWa</name>
-    <description>JaWa: Ultra-lightweight and fast Java WhatsApp Web library</description>
+    <description>Lightweight Java WhatsApp library</description>
     <url>https://github.com/jochris/JaWa</url>
 
     <licenses>

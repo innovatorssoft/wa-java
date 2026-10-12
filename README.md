@@ -1,12 +1,12 @@
-# JaWa — Lightweight Java WhatsApp Library
+# JaWa: Lightweight Java WhatsApp Library
 
 [![build](https://github.com/jochris/JaWa/actions/workflows/build.yml/badge.svg)](https://github.com/jochris/JaWa/actions/workflows/build.yml)
 [![license](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](LICENSE)
 [![java](https://img.shields.io/badge/java-compatible-orange)](https://openjdk.org/)
 [![Maven Central](https://img.shields.io/maven-central/v/io.github.jochris/JaWa)](https://central.sonatype.com/artifact/io.github.jochris/JaWa)
 
-> Ultra-lightweight and fast **Java** library & SDK for the WhatsApp Web Multi-Device protocol.
-> Designed purely as a high-performance bridge connecting backend services, microservices, and applications to WhatsApp Web features (Signal E2EE encryption, binary node codecs, QR & Phone pairing, CTA buttons, carousels, lists, and group management).
+> Lightweight **Java** library for WhatsApp Web Multi-Device protocol.
+> Connects backend services, bots, and applications to WhatsApp Web features (Signal E2EE encryption, binary node codecs, QR & Phone pairing, CTA buttons, carousels, lists, and group management).
 
 ---
 
@@ -38,20 +38,20 @@ implementation 'io.github.jochris:JaWa:0.0.4'
 
 ```text
 id.jawa
-├── client/                     <-- Primary Client Facade & Modular Sub-Services
-├── protocol/                   <-- Wire Protocol, Codecs & Cryptography
-│   ├── connection/             <-- WebSocket, Noise XX Handshake & Transport
-│   ├── codec/                  <-- Binary XML Node Encoder / Decoder
-│   └── crypto/                 <-- Cryptography & Byte Utilities
-├── domain/                     <-- Core Domain Models & Store Interfaces
-│   ├── model/                  <-- JID, Auth Credentials, Receipt & Protocol Models
-│   └── store/                  <-- File & In-Memory Persistence Stores
-└── feature/                    <-- Feature Subsystems
-    ├── pairing/                <-- QR & Phone-Code Pairing Handshake
-    ├── messaging/              <-- E2EE Messaging, Group Actions & USync Query
-    ├── media/                  <-- Media Encrypt/Decrypt & Upload/Download
-    ├── appstate/               <-- Multi-Device AppState Sync & LtHash
-    └── signal/                 <-- E2EE Session Bootstrap & PreKey Management
+├── client/                     Primary Client Facade & Modular Sub-Services
+├── protocol/                   Wire Protocol, Codecs & Cryptography
+│   ├── connection/             WebSocket, Noise XX Handshake & Transport
+│   ├── codec/                  Binary XML Node Encoder / Decoder
+│   └── crypto/                 Cryptography & Byte Utilities
+├── domain/                     Core Domain Models & Store Interfaces
+│   ├── model/                  JID, Auth Credentials, Receipt & Protocol Models
+│   └── store/                  File & In-Memory Persistence Stores
+└── feature/                    Feature Subsystems
+    ├── pairing/                QR & Phone-Code Pairing Handshake
+    ├── messaging/              E2EE Messaging, Group Actions & USync Query
+    ├── media/                  Media Encrypt/Decrypt & Upload/Download
+    ├── appstate/               Multi-Device AppState Sync & LtHash
+    └── signal/                 E2EE Session Bootstrap & PreKey Management
 ```
 
 ---
