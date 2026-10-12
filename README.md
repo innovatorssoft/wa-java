@@ -240,8 +240,10 @@ JaWaClient client = new JaWaClient(store)
 ```java
 client.messages().sendText(chatJid, "Hello from JaWa!");
 client.messages().sendReaction(chatJid, msgId, null, false, "👍");
+String nextId = client.messages().generateMessageId();
 
 client.groups().createGroup("Developers Chat", List.of("628123456789"));
+client.groups().setDisappearingTimer(groupJid, 604800);
 
 client.media().sendImage(chatJid, imageBytes, "image/jpeg", "Check this out!");
 
@@ -250,6 +252,7 @@ client.newsletters().sendText(newsletterJid, "New update published!");
 client.profile().updateStatus("Building with JaWa ☕");
 
 client.chats().sendChatPresence(chatJid, ChatPresence.COMPOSING);
+client.chats().setDisappearingTimer(chatJid, 86400);
 ```
 
 > [!NOTE]
@@ -406,7 +409,7 @@ public class SqliteSessionExample {
 
 ### 7. Automatic Media Downloader Helper
 
-Automatically download and decrypt attachments (Image, Video, Audio PTT, Document, Sticker) from an inbound message:
+Automatically download and decrypt attachments (Image, Video, Audio PTT, Document, Sticker) from an inbound message, with automatic fallback resolution to `directPath` via WhatsApp MMG CDN if direct URLs are blank:
 
 ```java
 package com.example;
@@ -457,9 +460,9 @@ public class ProfilePrivacyExample {
 
 ---
 
-### 9. Chat Management (Pin, Archive, Mute)
+### 9. Chat Management (Pin, Archive, Mute & Disappearing Messages)
 
-Manage chat pin, archive, and mute states:
+Manage chat pin, archive, mute states, and ephemeral disappearing message timers:
 
 ```java
 package com.example;
@@ -468,13 +471,24 @@ import id.jawa.client.JaWaClient;
 
 public class ChatManagementExample {
 
-    public static void manageChat(JaWaClient client, String chatJid) {
-        client.pinChat(chatJid, true);
-        client.archiveChat(chatJid, true);
-        client.muteChat(chatJid, 8 * 3600);
+    public static void manageChat(JaWaClient client, String chatJid, String groupJid) {
+        client.chats().pinChat(chatJid, true);
+        client.chats().archiveChat(chatJid, true);
+        client.chats().muteChat(chatJid, 8 * 3600);
+        client.chats().setDisappearingTimer(chatJid, 86400);
+        client.groups().setDisappearingTimer(groupJid, 604800);
     }
 }
 ```
+
+#### Disappearing Message Presets Reference
+
+| Duration | Seconds | Description |
+| :--- | :--- | :--- |
+| Off | `0` | Disables disappearing messages in chat or group. |
+| 24 Hours | `86400` | Messages disappear after 24 hours. |
+| 7 Days | `604800` | Messages disappear after 7 days. |
+| 90 Days | `7776000` | Messages disappear after 90 days. |
 
 ---
 
