@@ -1,12 +1,12 @@
-# JaWa — Java WhatsApp Web Client Library
+# JaWa — Lightweight Java WhatsApp Library
 
 [![build](https://github.com/jochris/JaWa/actions/workflows/build.yml/badge.svg)](https://github.com/jochris/JaWa/actions/workflows/build.yml)
 [![license](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](LICENSE)
 [![java](https://img.shields.io/badge/java-compatible-orange)](https://openjdk.org/)
 [![Maven Central](https://img.shields.io/maven-central/v/io.github.jochris/JaWa)](https://central.sonatype.com/artifact/io.github.jochris/JaWa)
 
-> Pure **Java** Client Library & SDK Bridge for the WhatsApp Web Multi-Device protocol.
-> Designed purely as a lightweight, pluggable bridge connecting backend services, microservices, and applications to WhatsApp Web features (Signal E2EE encryption, binary node codecs, QR & Phone pairing, CTA buttons, carousels, lists, and group management).
+> Ultra-lightweight and fast **Java** library & SDK for the WhatsApp Web Multi-Device protocol.
+> Designed purely as a high-performance bridge connecting backend services, microservices, and applications to WhatsApp Web features (Signal E2EE encryption, binary node codecs, QR & Phone pairing, CTA buttons, carousels, lists, and group management).
 
 ---
 
