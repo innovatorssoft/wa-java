@@ -805,6 +805,37 @@ public class LogoutExample {
 
 ---
 
+### 19. Order Details (WhatsApp Business & Commerce Orders)
+
+Fetch and parse structured order details from incoming `OrderMessage` containing order ID and base64 security token:
+
+```java
+package com.example;
+
+import id.jawa.client.JaWaClient;
+import id.jawa.domain.model.OrderDetails;
+
+public class OrderExample {
+
+    public static void inspectOrder(JaWaClient client, String orderId, String tokenBase64) throws Exception {
+        OrderDetails order = client.profile().getOrderDetails(orderId, tokenBase64).get();
+        if (order != null) {
+            System.out.println("Order ID    : " + order.id());
+            System.out.println("Created At  : " + order.createdAt());
+            System.out.println("Catalog ID  : " + order.catalogId());
+            if (order.price() != null) {
+                System.out.println("Total Amount: " + order.price().total() + " " + order.price().currency());
+            }
+            for (OrderDetails.OrderProduct item : order.products()) {
+                System.out.println("Item: " + item.name() + " x" + item.quantity() + " (" + item.price() + ")");
+            }
+        }
+    }
+}
+```
+
+---
+
 ## 📄 License
 
 This project is licensed under the terms of the **GNU General Public License v3.0** (GPL-3.0-or-later). See [LICENSE](LICENSE) for details.

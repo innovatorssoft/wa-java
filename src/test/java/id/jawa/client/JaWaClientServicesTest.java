@@ -228,5 +228,12 @@ class JaWaClientServicesTest {
         JaWaClient client = new JaWaClient(store);
         assertThat(client.newsletters()).isNotNull();
         assertThat(client.profile()).isNotNull();
+
+        var price = new id.jawa.domain.model.OrderDetails.OrderPrice(10000L, 10000L, "IDR", "paid");
+        var product = new id.jawa.domain.model.OrderDetails.OrderProduct("p1", "Item", 10000L, "IDR", 1, "img1", "https://img");
+        var order = new id.jawa.domain.model.OrderDetails("ord123", 1700000000L, "cat1", price, java.util.List.of(product));
+        assertThat(order.id()).isEqualTo("ord123");
+        assertThat(order.price().total()).isEqualTo(10000L);
+        assertThat(order.products()).hasSize(1);
     }
 }

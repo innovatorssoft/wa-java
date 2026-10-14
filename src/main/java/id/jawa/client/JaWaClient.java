@@ -2962,5 +2962,89 @@ public final class JaWaClient implements AutoCloseable {
         return extractJsonField(block, childField);
     }
 
+    public java.util.concurrent.CompletableFuture<id.jawa.domain.model.OrderDetails> getOrderDetails(String orderId, String tokenBase64) {
+        String iqId = newIqId();
+        BinaryNode widthNode = new BinaryNode("width", java.util.Map.of(), "100".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        BinaryNode heightNode = new BinaryNode("height", java.util.Map.of(), "100".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        BinaryNode dimsNode = new BinaryNode("image_dimensions", java.util.Map.of(), java.util.List.of(widthNode, heightNode));
+        BinaryNode tokenNode = new BinaryNode("token", java.util.Map.of(), tokenBase64.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        BinaryNode orderNode = new BinaryNode("order",
+            java.util.Map.of("op", "get", "id", orderId),
+            java.util.List.of(dimsNode, tokenNode));
+        BinaryNode iq = new BinaryNode("iq",
+            java.util.Map.of(
+                "to", id.jawa.domain.model.Jid.SERVER_WHATSAPP,
+                "type", "get",
+                "xmlns", "fb:thrift_iq",
+                "smax_id", "5",
+                "id", iqId
+            ),
+            java.util.List.of(orderNode));
+        return sendIqAsync(iq).thenApply(resp -> {
+            BinaryNode ord = resp.child("order");
+            if (ord == null) return null;
+            String id = ord.attr("id");
+            long createdAt = 0L;
+            try {
+                String ts = ord.attr("creation_ts");
+                if (ts != null) createdAt = Long.parseLong(ts);
+            } catch (Exception ignored) {}
+
+            String catalogId = null;
+            BinaryNode catNode = ord.child("catalog");
+            if (catNode != null) {
+                BinaryNode catIdNode = catNode.child("id");
+                if (catIdNode != null) catalogId = catIdNode.textContent();
+            }
+
+            id.jawa.domain.model.OrderDetails.OrderPrice price = null;
+            BinaryNode priceNode = ord.child("price");
+            if (priceNode != null) {
+                long subtotal = 0L;
+                long total = 0L;
+                try {
+                    BinaryNode sub = priceNode.child("subtotal");
+                    if (sub != null && sub.textContent() != null) subtotal = Long.parseLong(sub.textContent());
+                } catch (Exception ignored) {}
+                try {
+                    BinaryNode tot = priceNode.child("total");
+                    if (tot != null && tot.textContent() != null) total = Long.parseLong(tot.textContent());
+                } catch (Exception ignored) {}
+                String currency = priceNode.child("currency") != null ? priceNode.child("currency").textContent() : null;
+                String status = priceNode.child("price_status") != null ? priceNode.child("price_status").textContent() : null;
+                price = new id.jawa.domain.model.OrderDetails.OrderPrice(subtotal, total, currency, status);
+            }
+
+            java.util.List<id.jawa.domain.model.OrderDetails.OrderProduct> products = new java.util.ArrayList<>();
+            for (BinaryNode pNode : ord.children("product")) {
+                String pId = pNode.child("id") != null ? pNode.child("id").textContent() : null;
+                String pName = pNode.child("name") != null ? pNode.child("name").textContent() : null;
+                long pPrice = 0L;
+                try {
+                    BinaryNode pr = pNode.child("price");
+                    if (pr != null && pr.textContent() != null) pPrice = Long.parseLong(pr.textContent());
+                } catch (Exception ignored) {}
+                String pCurrency = pNode.child("currency") != null ? pNode.child("currency").textContent() : null;
+                int pQuantity = 1;
+                try {
+                    BinaryNode qty = pNode.child("quantity");
+                    if (qty != null && qty.textContent() != null) pQuantity = Integer.parseInt(qty.textContent());
+                } catch (Exception ignored) {}
+                String imgId = null;
+                String imgUrl = null;
+                BinaryNode imgNode = pNode.child("image");
+                if (imgNode != null) {
+                    if (imgNode.child("id") != null) imgId = imgNode.child("id").textContent();
+                    if (imgNode.child("url") != null) imgUrl = imgNode.child("url").textContent();
+                }
+                products.add(new id.jawa.domain.model.OrderDetails.OrderProduct(
+                    pId, pName, pPrice, pCurrency, pQuantity, imgId, imgUrl
+                ));
+            }
+
+            return new id.jawa.domain.model.OrderDetails(id, createdAt, catalogId, price, products);
+        });
+    }
+
     public AuthCreds creds() { return creds; }
 }

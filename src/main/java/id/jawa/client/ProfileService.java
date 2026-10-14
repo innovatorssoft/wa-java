@@ -78,4 +78,8 @@ public final class ProfileService {
     public CompletableFuture<Void> updatePushName(String newPushName) {
         return client.updatePushName(newPushName);
     }
+
+    public CompletableFuture<id.jawa.domain.model.OrderDetails> getOrderDetails(String orderId, String tokenBase64) {
+        return client.getOrderDetails(orderId, tokenBase64);
+    }
 }
