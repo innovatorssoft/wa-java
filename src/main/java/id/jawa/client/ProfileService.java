@@ -1,8 +1,10 @@
 package id.jawa.client;
 
+import id.jawa.domain.model.Blocklist;
 import id.jawa.domain.model.BusinessMessageLinkTarget;
 import id.jawa.domain.model.BusinessProfile;
 import id.jawa.domain.model.ContactQrTarget;
+import id.jawa.domain.model.OrderDetails;
 import id.jawa.domain.model.UserInfo;
 import id.jawa.protocol.codec.BinaryNode;
 
@@ -21,6 +23,10 @@ public final class ProfileService {
 
     public CompletableFuture<BinaryNode> updateStatus(String statusText) {
         return client.updateProfileStatus(statusText);
+    }
+
+    public CompletableFuture<String> setStatusMessage(String statusText) {
+        return client.setStatusMessage(statusText);
     }
 
     public CompletableFuture<String> fetchStatus(String targetJid) {
@@ -45,6 +51,26 @@ public final class ProfileService {
 
     public CompletableFuture<List<String>> fetchBlockList() {
         return client.fetchBlockList();
+    }
+
+    public CompletableFuture<Blocklist> getBlocklist() {
+        return client.getBlocklist();
+    }
+
+    public CompletableFuture<Blocklist> getBlocklist(String dhash) {
+        return client.getBlocklist(dhash);
+    }
+
+    public CompletableFuture<Blocklist> updateBlocklist(String jid, boolean block) {
+        return client.updateBlocklist(jid, block);
+    }
+
+    public CompletableFuture<Blocklist> block(String jid) {
+        return client.updateBlocklist(jid, true);
+    }
+
+    public CompletableFuture<Blocklist> unblock(String jid) {
+        return client.updateBlocklist(jid, false);
     }
 
     public CompletableFuture<String> getContactQrLink(boolean revoke) {
@@ -79,7 +105,7 @@ public final class ProfileService {
         return client.updatePushName(newPushName);
     }
 
-    public CompletableFuture<id.jawa.domain.model.OrderDetails> getOrderDetails(String orderId, String tokenBase64) {
+    public CompletableFuture<OrderDetails> getOrderDetails(String orderId, String tokenBase64) {
         return client.getOrderDetails(orderId, tokenBase64);
     }
 }

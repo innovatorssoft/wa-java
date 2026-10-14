@@ -766,6 +766,12 @@ public final class JaWaClient implements AutoCloseable {
         return sendIqAsync(iq);
     }
 
+    public java.util.concurrent.CompletableFuture<String> setStatusMessage(String statusText) {
+        String escaped = statusText != null ? statusText.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r") : "";
+        String vars = "{\"input\":{\"text\":\"" + escaped + "\"}}";
+        return sendMexQuery("9152604461510864", vars);
+    }
+
     public java.util.concurrent.CompletableFuture<String> fetchProfilePictureUrl(String targetJid) {
         String iqId = newIqId();
         BinaryNode iq = new BinaryNode("iq",
@@ -825,20 +831,88 @@ public final class JaWaClient implements AutoCloseable {
     }
 
     public java.util.concurrent.CompletableFuture<java.util.List<String>> fetchBlockList() {
+        return getBlocklist().thenApply(bl -> {
+            java.util.List<String> list = new java.util.ArrayList<>();
+            for (var item : bl.items()) {
+                list.add(item.lid() != null ? item.lid() : item.pn());
+            }
+            return list;
+        });
+    }
+
+    public java.util.concurrent.CompletableFuture<id.jawa.domain.model.Blocklist> getBlocklist(String dhash) {
         String iqId = newIqId();
+        java.util.List<BinaryNode> content = null;
+        if (dhash != null && !dhash.isBlank()) {
+            content = java.util.List.of(new BinaryNode("item", java.util.Map.of("dhash", dhash), null));
+        }
         BinaryNode iq = new BinaryNode("iq",
             java.util.Map.of("to", id.jawa.domain.model.Jid.SERVER_WHATSAPP, "type", "get", "xmlns", "blocklist", "id", iqId),
-            null);
-        return sendIqAsync(iq).thenApply(resp -> {
-            var listNode = resp.child("list");
-            if (listNode == null) return java.util.List.of();
-            java.util.List<String> jids = new java.util.ArrayList<>();
-            for (var item : listNode.childrenList()) {
-                if ("item".equals(item.tag()) && item.attr("jid") != null) {
-                    jids.add(item.attr("jid"));
+            content);
+        return sendIqAsync(iq).thenApply(this::parseBlocklistNode);
+    }
+
+    public java.util.concurrent.CompletableFuture<id.jawa.domain.model.Blocklist> getBlocklist() {
+        return getBlocklist(null);
+    }
+
+    public java.util.concurrent.CompletableFuture<id.jawa.domain.model.Blocklist> updateBlocklist(String jid, boolean block) {
+        String iqId = newIqId();
+        String targetJid = jid.contains("@") ? jid : jid + "@s.whatsapp.net";
+        java.util.Map<String, String> itemAttrs = new java.util.HashMap<>();
+        itemAttrs.put("jid", targetJid);
+        itemAttrs.put("action", block ? "block" : "unblock");
+        BinaryNode item = new BinaryNode("item", itemAttrs, null);
+        BinaryNode iq = new BinaryNode("iq",
+            java.util.Map.of("to", id.jawa.domain.model.Jid.SERVER_WHATSAPP, "type", "set", "xmlns", "blocklist", "id", iqId),
+            java.util.List.of(item));
+        return sendIqAsync(iq).thenApply(this::parseBlocklistNode);
+    }
+
+    private id.jawa.domain.model.Blocklist parseBlocklistNode(BinaryNode resp) {
+        BinaryNode listNode = resp.child("list");
+        if (listNode == null) {
+            return new id.jawa.domain.model.Blocklist(null, null, java.util.List.of());
+        }
+        String dhash = listNode.attr("dhash");
+        String addressingMode = listNode.attr("addressing_mode");
+        java.util.List<id.jawa.domain.model.BlocklistItem> items = new java.util.ArrayList<>();
+        for (var item : listNode.childrenList()) {
+            if ("item".equals(item.tag()) && item.attr("jid") != null) {
+                String itemJid = item.attr("jid");
+                String pnJid = item.attr("pn_jid");
+                boolean active = "true".equalsIgnoreCase(item.attr("active"));
+                if (itemJid != null && itemJid.endsWith("@lid") && pnJid != null && pnJid.endsWith("@s.whatsapp.net")) {
+                    LID_TO_PN_MAP.put(itemJid, pnJid);
                 }
+                items.add(new id.jawa.domain.model.BlocklistItem(itemJid, pnJid, active));
             }
-            return jids;
+        }
+        return new id.jawa.domain.model.Blocklist(dhash, addressingMode, items);
+    }
+
+    public java.util.concurrent.CompletableFuture<java.util.List<id.jawa.domain.model.StatusPrivacy>> getStatusPrivacy() {
+        String iqId = newIqId();
+        BinaryNode iq = new BinaryNode("iq",
+            java.util.Map.of("to", id.jawa.domain.model.Jid.SERVER_WHATSAPP, "type", "get", "xmlns", "status", "id", iqId),
+            java.util.List.of(new BinaryNode("privacy", java.util.Map.of(), null)));
+        return sendIqAsync(iq).thenApply(resp -> {
+            BinaryNode privacyNode = resp.child("privacy");
+            if (privacyNode == null) return java.util.List.of();
+            java.util.List<id.jawa.domain.model.StatusPrivacy> list = new java.util.ArrayList<>();
+            for (BinaryNode child : privacyNode.childrenList()) {
+                if (!"list".equals(child.tag())) continue;
+                String type = child.attr("type");
+                boolean isDefault = "true".equalsIgnoreCase(child.attr("default"));
+                java.util.List<String> users = new java.util.ArrayList<>();
+                for (BinaryNode u : child.childrenList()) {
+                    if ("user".equals(u.tag()) && u.attr("jid") != null) {
+                        users.add(u.attr("jid"));
+                    }
+                }
+                list.add(new id.jawa.domain.model.StatusPrivacy(type, isDefault, users));
+            }
+            return list;
         });
     }
 
@@ -871,6 +945,33 @@ public final class JaWaClient implements AutoCloseable {
             attrs.put("type", "delete");
         }
         BinaryNode item = new BinaryNode("mute", attrs, null);
+        BinaryNode iq = new BinaryNode("iq",
+            java.util.Map.of("to", id.jawa.domain.model.Jid.SERVER_WHATSAPP, "type", "set", "xmlns", "action", "id", iqId),
+            java.util.List.of(item));
+        return sendIqAsync(iq);
+    }
+
+    public java.util.concurrent.CompletableFuture<BinaryNode> starMessage(String chatJid, String msgId, boolean star) {
+        String iqId = newIqId();
+        BinaryNode item = new BinaryNode("star", java.util.Map.of("jid", chatJid, "id", msgId, "action", star ? "star" : "unstar"), null);
+        BinaryNode iq = new BinaryNode("iq",
+            java.util.Map.of("to", id.jawa.domain.model.Jid.SERVER_WHATSAPP, "type", "set", "xmlns", "action", "id", iqId),
+            java.util.List.of(item));
+        return sendIqAsync(iq);
+    }
+
+    public java.util.concurrent.CompletableFuture<BinaryNode> deleteChat(String chatJid) {
+        String iqId = newIqId();
+        BinaryNode item = new BinaryNode("chat", java.util.Map.of("jid", chatJid, "action", "delete"), null);
+        BinaryNode iq = new BinaryNode("iq",
+            java.util.Map.of("to", id.jawa.domain.model.Jid.SERVER_WHATSAPP, "type", "set", "xmlns", "action", "id", iqId),
+            java.util.List.of(item));
+        return sendIqAsync(iq);
+    }
+
+    public java.util.concurrent.CompletableFuture<BinaryNode> clearChat(String chatJid) {
+        String iqId = newIqId();
+        BinaryNode item = new BinaryNode("chat", java.util.Map.of("jid", chatJid, "action", "clear"), null);
         BinaryNode iq = new BinaryNode("iq",
             java.util.Map.of("to", id.jawa.domain.model.Jid.SERVER_WHATSAPP, "type", "set", "xmlns", "action", "id", iqId),
             java.util.List.of(item));
@@ -2290,65 +2391,6 @@ public final class JaWaClient implements AutoCloseable {
         ), null);
         send(stanza);
         LOG.debug("Sent presence subscribe to={}", jid);
-    }
-
-    public java.util.concurrent.CompletableFuture<Void> setStatusMessage(String statusText) {
-        String iqId = newIqId();
-        BinaryNode statusNode = new BinaryNode("status", java.util.Map.of(), statusText.getBytes());
-        BinaryNode iq = new BinaryNode("iq", java.util.Map.of(
-            "to", id.jawa.domain.model.Jid.SERVER_WHATSAPP,
-            "type", "set",
-            "xmlns", "status",
-            "id", iqId
-        ), java.util.List.of(statusNode));
-        return sendIqAsync(iq).thenApply(resp -> {
-            if ("error".equals(resp.attr("type"))) {
-                throw new IllegalStateException("Failed to set status message: " + resp);
-            }
-            return null;
-        });
-    }
-
-    public java.util.concurrent.CompletableFuture<java.util.List<String>> getBlocklist() {
-        String iqId = newIqId();
-        BinaryNode iq = new BinaryNode("iq", java.util.Map.of(
-            "to", id.jawa.domain.model.Jid.SERVER_WHATSAPP,
-            "type", "get",
-            "xmlns", "blocklist",
-            "id", iqId
-        ), null);
-        return sendIqAsync(iq).thenApply(resp -> {
-            if ("error".equals(resp.attr("type"))) {
-                throw new IllegalStateException("Failed to get blocklist: " + resp);
-            }
-            BinaryNode blocklist = resp.child("blocklist");
-            java.util.List<String> jids = new java.util.ArrayList<>();
-            if (blocklist != null) {
-                for (BinaryNode item : blocklist.children("item")) {
-                    String jid = item.attr("jid");
-                    if (jid != null) jids.add(jid);
-                }
-            }
-            return jids;
-        });
-    }
-
-    public java.util.concurrent.CompletableFuture<Void> updateBlocklist(String contactJid, boolean block) {
-        String iqId = newIqId();
-        BinaryNode item = new BinaryNode(block ? "block" : "unblock", java.util.Map.of("jid", contactJid), null);
-        BinaryNode blocklist = new BinaryNode("blocklist", java.util.Map.of(), java.util.List.of(item));
-        BinaryNode iq = new BinaryNode("iq", java.util.Map.of(
-            "to", id.jawa.domain.model.Jid.SERVER_WHATSAPP,
-            "type", "set",
-            "xmlns", "blocklist",
-            "id", iqId
-        ), java.util.List.of(blocklist));
-        return sendIqAsync(iq).thenApply(resp -> {
-            if ("error".equals(resp.attr("type"))) {
-                throw new IllegalStateException("Failed to update blocklist: " + resp);
-            }
-            return null;
-        });
     }
 
     public java.util.concurrent.CompletableFuture<String> getProfilePictureInfo(String contactJid) {

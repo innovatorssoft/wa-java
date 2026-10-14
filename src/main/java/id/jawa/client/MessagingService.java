@@ -136,6 +136,15 @@ public final class MessagingService {
         client.sendReadReceiptBatch(chatJid, msgIds, senderJid);
     }
 
+    public CompletableFuture<id.jawa.protocol.codec.BinaryNode> starMessage(String chatJid, String msgId, boolean star) {
+        return client.starMessage(chatJid, msgId, star);
+    }
+
+    public CompletableFuture<id.jawa.protocol.codec.BinaryNode> starMessage(MessageReceiver.Decoded target, boolean star) {
+        String chatJid = target.groupJid() != null ? target.groupJid() : target.senderJid();
+        return client.starMessage(chatJid, target.msgId(), star);
+    }
+
     public String generateMessageId() {
         return client.generateMessageId();
     }

@@ -236,4 +236,28 @@ class JaWaClientServicesTest {
         assertThat(order.price().total()).isEqualTo(10000L);
         assertThat(order.products()).hasSize(1);
     }
+
+    @Test
+    void testBlocklistAndStatusPrivacyModels(@TempDir Path tempDir) {
+        var item = new id.jawa.domain.model.BlocklistItem("123@lid", "628123@s.whatsapp.net", true);
+        assertThat(item.lid()).isEqualTo("123@lid");
+        assertThat(item.pn()).isEqualTo("628123@s.whatsapp.net");
+        assertThat(item.active()).isTrue();
+
+        var blocklist = new id.jawa.domain.model.Blocklist("hash1", "lid", java.util.List.of(item));
+        assertThat(blocklist.dhash()).isEqualTo("hash1");
+        assertThat(blocklist.addressingMode()).isEqualTo("lid");
+        assertThat(blocklist.items()).hasSize(1);
+
+        var statusPriv = new id.jawa.domain.model.StatusPrivacy("blacklist", true, java.util.List.of("user1@s.whatsapp.net"));
+        assertThat(statusPriv.type()).isEqualTo("blacklist");
+        assertThat(statusPriv.isDefault()).isTrue();
+        assertThat(statusPriv.list()).containsExactly("user1@s.whatsapp.net");
+
+        var store = new FileAuthStore(tempDir.resolve("test-store2.session"));
+        JaWaClient client = new JaWaClient(store);
+        assertThat(client.privacy()).isNotNull();
+        assertThat(client.chats()).isNotNull();
+        assertThat(client.messages()).isNotNull();
+    }
 }

@@ -28,6 +28,18 @@ public final class ChatService {
         return client.muteChat(chatJid, durationSeconds);
     }
 
+    public CompletableFuture<BinaryNode> starMessage(String chatJid, String msgId, boolean star) {
+        return client.starMessage(chatJid, msgId, star);
+    }
+
+    public CompletableFuture<BinaryNode> deleteChat(String chatJid) {
+        return client.deleteChat(chatJid);
+    }
+
+    public CompletableFuture<BinaryNode> clearChat(String chatJid) {
+        return client.clearChat(chatJid);
+    }
+
     public void sendChatPresence(String chatJid, ChatPresence state) {
         client.sendChatPresence(chatJid, state);
     }

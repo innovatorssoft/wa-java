@@ -836,6 +836,102 @@ public class OrderExample {
 
 ---
 
+### 20. Message Starring and Chat Cleanup
+
+Star messages, delete chats, or clear message histories:
+
+```java
+package com.example;
+
+import id.jawa.client.JaWaClient;
+
+public class StarAndChatExample {
+
+    public static void run(JaWaClient client, String chatJid, String messageId) throws Exception {
+        client.chats().starMessage(chatJid, messageId, true).get();
+        client.chats().starMessage(chatJid, messageId, false).get();
+
+        client.chats().clearChat(chatJid).get();
+        client.chats().deleteChat(chatJid).get();
+    }
+}
+```
+
+---
+
+### 21. Blocklist Management
+
+Retrieve full blocklist with companion LID and phone number mappings, or block and unblock contacts:
+
+```java
+package com.example;
+
+import id.jawa.client.JaWaClient;
+import id.jawa.domain.model.Blocklist;
+import id.jawa.domain.model.BlocklistItem;
+
+public class BlocklistExample {
+
+    public static void manageBlocklist(JaWaClient client, String contactJid) throws Exception {
+        Blocklist blocklist = client.privacy().getBlocklist().get();
+        System.out.println("DHash: " + blocklist.dhash());
+        for (BlocklistItem item : blocklist.items()) {
+            System.out.println("Blocked: LID=" + item.lid() + " PN=" + item.pn() + " Active=" + item.active());
+        }
+
+        client.privacy().block(contactJid).get();
+        client.privacy().unblock(contactJid).get();
+    }
+}
+```
+
+---
+
+### 22. Status Privacy Settings
+
+Check status broadcast audience settings (contacts, blacklist, or whitelist modes):
+
+```java
+package com.example;
+
+import id.jawa.client.JaWaClient;
+import id.jawa.domain.model.StatusPrivacy;
+
+import java.util.List;
+
+public class StatusPrivacyExample {
+
+    public static void checkStatusPrivacy(JaWaClient client) throws Exception {
+        List<StatusPrivacy> settings = client.privacy().getStatusPrivacy().get();
+        for (StatusPrivacy sp : settings) {
+            System.out.println("Type: " + sp.type() + " Default: " + sp.isDefault() + " Users: " + sp.list().size());
+        }
+    }
+}
+```
+
+---
+
+### 23. Profile Text Status (About / Bio)
+
+Update the user profile "About" bio text via WhatsApp Web MEX mutation:
+
+```java
+package com.example;
+
+import id.jawa.client.JaWaClient;
+
+public class ProfileStatusExample {
+
+    public static void updateBio(JaWaClient client) throws Exception {
+        client.profile().setStatusMessage("Available on WhatsApp via JaWa!").get();
+        System.out.println("About bio updated successfully");
+    }
+}
+```
+
+---
+
 ## 📄 License
 
 This project is licensed under the terms of the **GNU General Public License v3.0** (GPL-3.0-or-later). See [LICENSE](LICENSE) for details.
