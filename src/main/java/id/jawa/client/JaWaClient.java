@@ -2507,5 +2507,309 @@ public final class JaWaClient implements AutoCloseable {
             .thenApply(map -> map.get(targetJid));
     }
 
+    public java.util.concurrent.CompletableFuture<id.jawa.domain.model.BusinessProfile> getBusinessProfile(String jid) {
+        String iqId = newIqId();
+        String targetJid = jid.contains("@") ? jid : jid + "@s.whatsapp.net";
+        BinaryNode profileNode = new BinaryNode("profile", java.util.Map.of("jid", targetJid), null);
+        BinaryNode bizNode = new BinaryNode("business_profile", java.util.Map.of("v", "244"), java.util.List.of(profileNode));
+        BinaryNode iq = new BinaryNode("iq",
+            java.util.Map.of("to", id.jawa.domain.model.Jid.SERVER_WHATSAPP, "type", "get", "xmlns", "w:biz", "id", iqId),
+            java.util.List.of(bizNode));
+        return sendIqAsync(iq).thenApply(resp -> {
+            BinaryNode bp = resp.child("business_profile");
+            if (bp == null) {
+                return null;
+            }
+            BinaryNode prof = bp.child("profile");
+            if (prof == null) {
+                return null;
+            }
+            String address = prof.child("address") != null ? prof.child("address").textContent() : null;
+            String email = prof.child("email") != null ? prof.child("email").textContent() : null;
+            String description = prof.child("description") != null ? prof.child("description").textContent() : null;
+            java.util.List<String> websites = new java.util.ArrayList<>();
+            for (BinaryNode w : prof.children("website")) {
+                if (w.textContent() != null && !w.textContent().isEmpty()) {
+                    websites.add(w.textContent());
+                }
+            }
+            java.util.List<id.jawa.domain.model.BusinessProfile.Category> categories = new java.util.ArrayList<>();
+            BinaryNode catNode = prof.child("categories");
+            if (catNode != null) {
+                for (BinaryNode c : catNode.children("category")) {
+                    categories.add(new id.jawa.domain.model.BusinessProfile.Category(c.attr("id"), c.textContent()));
+                }
+            }
+            BinaryNode bhNode = prof.child("business_hours");
+            String timezone = bhNode != null ? bhNode.attr("timezone") : null;
+            java.util.List<id.jawa.domain.model.BusinessProfile.BusinessHourConfig> hours = new java.util.ArrayList<>();
+            if (bhNode != null) {
+                for (BinaryNode h : bhNode.children("business_hours_config")) {
+                    hours.add(new id.jawa.domain.model.BusinessProfile.BusinessHourConfig(
+                        h.attr("day_of_week"),
+                        h.attr("mode"),
+                        h.attr("open_time"),
+                        h.attr("close_time")
+                    ));
+                }
+            }
+            java.util.Map<String, String> options = new java.util.HashMap<>();
+            BinaryNode poNode = prof.child("profile_options");
+            if (poNode != null) {
+                for (BinaryNode opt : poNode.childrenList()) {
+                    if (opt.textContent() != null) {
+                        options.put(opt.tag(), opt.textContent());
+                    }
+                }
+            }
+            return new id.jawa.domain.model.BusinessProfile(
+                prof.attr("jid"),
+                address,
+                email,
+                description,
+                websites,
+                categories,
+                timezone,
+                hours,
+                options
+            );
+        });
+    }
+
+    public java.util.concurrent.CompletableFuture<id.jawa.domain.model.BusinessMessageLinkTarget> resolveBusinessMessageLink(String codeOrUrl) {
+        String code = codeOrUrl;
+        if (code.contains("/")) code = code.substring(code.lastIndexOf('/') + 1);
+        if (code.contains("?")) code = code.substring(0, code.indexOf('?'));
+        String iqId = newIqId();
+        BinaryNode qrNode = new BinaryNode("qr", java.util.Map.of("code", code), null);
+        BinaryNode iq = new BinaryNode("iq",
+            java.util.Map.of("type", "get", "xmlns", "w:qr", "id", iqId),
+            java.util.List.of(qrNode));
+        return sendIqAsync(iq).thenApply(resp -> {
+            BinaryNode child = resp.child("qr");
+            if (child == null) {
+                return null;
+            }
+            String jid = child.attr("jid");
+            String pushName = child.attr("notify");
+            String message = child.child("message") != null ? child.child("message").textContent() : null;
+            BinaryNode biz = child.child("business");
+            boolean isSigned = false;
+            String verifiedName = null;
+            String verifiedLevel = null;
+            if (biz != null) {
+                isSigned = "true".equalsIgnoreCase(biz.attr("is_signed"));
+                verifiedName = biz.attr("verified_name");
+                verifiedLevel = biz.attr("verified_level");
+            }
+            return new id.jawa.domain.model.BusinessMessageLinkTarget(
+                jid,
+                pushName,
+                message,
+                isSigned,
+                verifiedName,
+                verifiedLevel
+            );
+        });
+    }
+
+    public java.util.concurrent.CompletableFuture<String> getStatus(String targetJid) {
+        String iqId = newIqId();
+        java.util.Map<String, String> attrs = new java.util.HashMap<>();
+        if (targetJid != null && !targetJid.isBlank()) {
+            attrs.put("jid", targetJid.contains("@") ? targetJid : targetJid + "@s.whatsapp.net");
+        }
+        BinaryNode statusNode = new BinaryNode("status", attrs, null);
+        BinaryNode iq = new BinaryNode("iq",
+            java.util.Map.of("to", id.jawa.domain.model.Jid.SERVER_WHATSAPP, "type", "get", "xmlns", "status", "id", iqId),
+            java.util.List.of(statusNode));
+        return sendIqAsync(iq).thenApply(resp -> {
+            BinaryNode s = resp.child("status");
+            return s != null ? s.textContent() : null;
+        });
+    }
+
+    public java.util.concurrent.CompletableFuture<Void> setGroupJoinApprovalMode(String groupJid, boolean approvalRequired) {
+        String iqId = newIqId();
+        BinaryNode groupJoin = new BinaryNode("group_join", java.util.Map.of("state", approvalRequired ? "on" : "off"), null);
+        BinaryNode approvalNode = new BinaryNode("membership_approval_mode", java.util.Map.of(), java.util.List.of(groupJoin));
+        BinaryNode iq = new BinaryNode("iq",
+            java.util.Map.of("to", groupJid, "type", "set", "xmlns", "w:g2", "id", iqId),
+            java.util.List.of(approvalNode));
+        return sendIqAsync(iq).thenApply(resp -> null);
+    }
+
+    public java.util.concurrent.CompletableFuture<Void> setGroupMemberAddMode(String groupJid, boolean adminOnly) {
+        String iqId = newIqId();
+        String modeStr = adminOnly ? "admin_add" : "all_member_add";
+        BinaryNode modeNode = new BinaryNode("member_add_mode", java.util.Map.of(), modeStr.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        BinaryNode iq = new BinaryNode("iq",
+            java.util.Map.of("to", groupJid, "type", "set", "xmlns", "w:g2", "id", iqId),
+            java.util.List.of(modeNode));
+        return sendIqAsync(iq).thenApply(resp -> null);
+    }
+
+    public java.util.concurrent.CompletableFuture<java.util.List<id.jawa.domain.model.GroupJoinRequest>> getGroupRequestParticipants(String groupJid) {
+        String iqId = newIqId();
+        BinaryNode reqNode = new BinaryNode("membership_approval_requests", java.util.Map.of(), null);
+        BinaryNode iq = new BinaryNode("iq",
+            java.util.Map.of("to", groupJid, "type", "get", "xmlns", "w:g2", "id", iqId),
+            java.util.List.of(reqNode));
+        return sendIqAsync(iq).thenApply(resp -> {
+            BinaryNode reqs = resp.child("membership_approval_requests");
+            java.util.List<id.jawa.domain.model.GroupJoinRequest> list = new java.util.ArrayList<>();
+            if (reqs != null) {
+                for (BinaryNode item : reqs.children("membership_approval_request")) {
+                    String jid = item.attr("jid");
+                    long time = 0L;
+                    try {
+                        String tStr = item.attr("request_time");
+                        if (tStr != null && !tStr.isEmpty()) {
+                            time = Long.parseLong(tStr);
+                        }
+                    } catch (Exception ignored) {}
+                    if (jid != null) {
+                        list.add(new id.jawa.domain.model.GroupJoinRequest(jid, time));
+                    }
+                }
+            }
+            return list;
+        });
+    }
+
+    public java.util.concurrent.CompletableFuture<Void> updateGroupRequestParticipants(
+            String groupJid, java.util.List<String> userJids, boolean approve) {
+        String iqId = newIqId();
+        String action = approve ? "approve" : "reject";
+        java.util.List<BinaryNode> participants = new java.util.ArrayList<>();
+        for (String jid : userJids) {
+            participants.add(new BinaryNode("participant", java.util.Map.of("jid", jid), null));
+        }
+        BinaryNode actionNode = new BinaryNode(action, java.util.Map.of(), participants);
+        BinaryNode reqAction = new BinaryNode("membership_requests_action", java.util.Map.of(), java.util.List.of(actionNode));
+        BinaryNode iq = new BinaryNode("iq",
+            java.util.Map.of("to", groupJid, "type", "set", "xmlns", "w:g2", "id", iqId),
+            java.util.List.of(reqAction));
+        return sendIqAsync(iq).thenApply(resp -> null);
+    }
+
+    public java.util.concurrent.CompletableFuture<Void> rejectCall(String callFrom, String callId) {
+        if (creds == null || creds.meJid == null) {
+            return java.util.concurrent.CompletableFuture.failedFuture(new IllegalStateException("Not logged in"));
+        }
+        String ownJid = id.jawa.domain.model.Jid.bare(creds.meJid);
+        String cleanFrom = id.jawa.domain.model.Jid.bare(callFrom);
+        BinaryNode rejectNode = new BinaryNode("reject",
+            java.util.Map.of("call-id", callId, "call-creator", cleanFrom, "count", "0"),
+            null);
+        BinaryNode callNode = new BinaryNode("call",
+            java.util.Map.of("id", generateMessageId(), "from", ownJid, "to", cleanFrom),
+            java.util.List.of(rejectNode));
+        send(callNode);
+        return java.util.concurrent.CompletableFuture.completedFuture(null);
+    }
+
+    public java.util.concurrent.CompletableFuture<Long> subscribeNewsletterLiveUpdates(String newsletterJid) {
+        String iqId = newIqId();
+        BinaryNode liveNode = new BinaryNode("live_updates", java.util.Map.of(), null);
+        BinaryNode iq = new BinaryNode("iq",
+            java.util.Map.of("to", newsletterJid, "type", "set", "xmlns", "newsletter", "id", iqId),
+            java.util.List.of(liveNode));
+        return sendIqAsync(iq).thenApply(resp -> {
+            BinaryNode child = resp.child("live_updates");
+            if (child != null) {
+                String dStr = child.attr("duration");
+                if (dStr != null) {
+                    try {
+                        return Long.parseLong(dStr);
+                    } catch (Exception ignored) {}
+                }
+            }
+            return 0L;
+        });
+    }
+
+    public java.util.concurrent.CompletableFuture<Void> markNewsletterViewed(String newsletterJid, java.util.List<Long> serverIds) {
+        java.util.List<BinaryNode> items = new java.util.ArrayList<>();
+        for (Long id : serverIds) {
+            items.add(new BinaryNode("item", java.util.Map.of("server_id", String.valueOf(id)), null));
+        }
+        BinaryNode listNode = new BinaryNode("list", java.util.Map.of(), items);
+        BinaryNode receiptNode = new BinaryNode("receipt",
+            java.util.Map.of("to", newsletterJid, "type", "view", "id", generateMessageId()),
+            java.util.List.of(listNode));
+        send(receiptNode);
+        return java.util.concurrent.CompletableFuture.completedFuture(null);
+    }
+
+    public java.util.concurrent.CompletableFuture<java.util.List<id.jawa.domain.model.NewsletterMessage>>
+            getNewsletterMessages(String newsletterJid, int count, Long beforeServerId) {
+        String iqId = newIqId();
+        java.util.Map<String, String> attrs = new java.util.HashMap<>();
+        attrs.put("type", "jid");
+        attrs.put("jid", newsletterJid);
+        if (count > 0) {
+            attrs.put("count", String.valueOf(count));
+        }
+        if (beforeServerId != null && beforeServerId > 0) {
+            attrs.put("before", String.valueOf(beforeServerId));
+        }
+        BinaryNode q = new BinaryNode("messages", attrs, null);
+        BinaryNode iq = new BinaryNode("iq",
+            java.util.Map.of("to", id.jawa.domain.model.Jid.SERVER_WHATSAPP, "type", "get", "xmlns", "newsletter", "id", iqId),
+            java.util.List.of(q));
+        return sendIqAsync(iq).thenApply(resp -> {
+            java.util.List<id.jawa.domain.model.NewsletterMessage> list = new java.util.ArrayList<>();
+            BinaryNode msgsNode = resp.child("messages");
+            if (msgsNode == null) return list;
+            for (BinaryNode msgNode : msgsNode.children("message")) {
+                long serverId = 0L;
+                try {
+                    String s = msgNode.attr("server_id");
+                    if (s != null) serverId = Long.parseLong(s);
+                } catch (Exception ignored) {}
+                String msgId = msgNode.attr("id");
+                String type = msgNode.attr("type");
+                long timestamp = 0L;
+                try {
+                    String t = msgNode.attr("t");
+                    if (t != null) timestamp = Long.parseLong(t);
+                } catch (Exception ignored) {}
+                int viewsCount = 0;
+                BinaryNode viewsNode = msgNode.child("views_count");
+                if (viewsNode != null) {
+                    try {
+                        String c = viewsNode.attr("count");
+                        if (c != null) viewsCount = Integer.parseInt(c);
+                    } catch (Exception ignored) {}
+                }
+                java.util.Map<String, Integer> reactions = new java.util.HashMap<>();
+                BinaryNode reactsNode = msgNode.child("reactions");
+                if (reactsNode != null) {
+                    for (BinaryNode r : reactsNode.children("reaction")) {
+                        String code = r.attr("code");
+                        int rCount = 0;
+                        try {
+                            String c = r.attr("count");
+                            if (c != null) rCount = Integer.parseInt(c);
+                        } catch (Exception ignored) {}
+                        if (code != null) reactions.put(code, rCount);
+                    }
+                }
+                id.jawa.proto.Wa.Message protoMsg = null;
+                BinaryNode pt = msgNode.child("plaintext");
+                if (pt != null && pt.bytesContent() != null) {
+                    try {
+                        protoMsg = id.jawa.proto.Wa.Message.parseFrom(pt.bytesContent());
+                    } catch (Exception ignored) {}
+                }
+                list.add(new id.jawa.domain.model.NewsletterMessage(
+                    serverId, msgId, type, timestamp, viewsCount, reactions, protoMsg
+                ));
+            }
+            return list;
+        });
+    }
+
     public AuthCreds creds() { return creds; }
 }

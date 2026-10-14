@@ -1,8 +1,10 @@
 package id.jawa.client;
 
+import id.jawa.domain.model.NewsletterMessage;
 import id.jawa.proto.Wa;
 import id.jawa.protocol.codec.BinaryNode;
 
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
 public final class NewsletterService {
@@ -27,5 +29,21 @@ public final class NewsletterService {
 
     public CompletableFuture<BinaryNode> fetchMessages(String newsletterJid, int count) {
         return client.fetchNewsletterMessages(newsletterJid, count);
+    }
+
+    public CompletableFuture<Long> subscribeLiveUpdates(String newsletterJid) {
+        return client.subscribeNewsletterLiveUpdates(newsletterJid);
+    }
+
+    public CompletableFuture<Void> markViewed(String newsletterJid, List<Long> serverIds) {
+        return client.markNewsletterViewed(newsletterJid, serverIds);
+    }
+
+    public CompletableFuture<List<NewsletterMessage>> getMessages(String newsletterJid, int count, Long beforeServerId) {
+        return client.getNewsletterMessages(newsletterJid, count, beforeServerId);
+    }
+
+    public CompletableFuture<List<NewsletterMessage>> getMessages(String newsletterJid, int count) {
+        return client.getNewsletterMessages(newsletterJid, count, null);
     }
 }

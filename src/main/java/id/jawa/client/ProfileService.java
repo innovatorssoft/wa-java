@@ -1,5 +1,7 @@
 package id.jawa.client;
 
+import id.jawa.domain.model.BusinessMessageLinkTarget;
+import id.jawa.domain.model.BusinessProfile;
 import id.jawa.domain.model.ContactQrTarget;
 import id.jawa.domain.model.UserInfo;
 import id.jawa.protocol.codec.BinaryNode;
@@ -19,6 +21,10 @@ public final class ProfileService {
 
     public CompletableFuture<BinaryNode> updateStatus(String statusText) {
         return client.updateProfileStatus(statusText);
+    }
+
+    public CompletableFuture<String> fetchStatus(String targetJid) {
+        return client.getStatus(targetJid);
     }
 
     public CompletableFuture<String> fetchProfilePictureUrl(String targetJid) {
@@ -51,6 +57,14 @@ public final class ProfileService {
 
     public CompletableFuture<ContactQrTarget> resolveContactQrLink(String codeOrUrl) {
         return client.resolveContactQrLink(codeOrUrl);
+    }
+
+    public CompletableFuture<BusinessProfile> getBusinessProfile(String jid) {
+        return client.getBusinessProfile(jid);
+    }
+
+    public CompletableFuture<BusinessMessageLinkTarget> resolveBusinessMessageLink(String codeOrUrl) {
+        return client.resolveBusinessMessageLink(codeOrUrl);
     }
 
     public CompletableFuture<Map<String, UserInfo>> getUserInfo(Collection<String> targetJids) {

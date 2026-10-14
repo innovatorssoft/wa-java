@@ -159,4 +159,46 @@ class JaWaClientServicesTest {
         assertThat(groupIq.attr("to")).isEqualTo("12345@g.us");
         assertThat(groupIq.child("query").attr("request")).isEqualTo("interactive");
     }
+
+    @Test
+    void testNewFeatureAdditionsAndJidBare(@TempDir Path tempDir) {
+        FileAuthStore store = new FileAuthStore(tempDir.resolve("test.session"));
+        JaWaClient client = new JaWaClient(store);
+
+        assertThat(id.jawa.domain.model.Jid.bare("628123456789:2@s.whatsapp.net"))
+            .isEqualTo("628123456789@s.whatsapp.net");
+        assertThat(id.jawa.domain.model.Jid.bare("120363123456@g.us"))
+            .isEqualTo("120363123456@g.us");
+        assertThat(id.jawa.domain.model.Jid.parse("628123456789:2@s.whatsapp.net").toBareString())
+            .isEqualTo("628123456789@s.whatsapp.net");
+
+        var req = new id.jawa.domain.model.GroupJoinRequest("628123456789@s.whatsapp.net", 1700000000L);
+        assertThat(req.jid()).isEqualTo("628123456789@s.whatsapp.net");
+        assertThat(req.requestedAt()).isEqualTo(1700000000L);
+
+        var bizTarget = new id.jawa.domain.model.BusinessMessageLinkTarget(
+            "628123456789@s.whatsapp.net", "Test Store", "Hello", true, "Verified Store", "HIGH"
+        );
+        assertThat(bizTarget.isSigned()).isTrue();
+        assertThat(bizTarget.message()).isEqualTo("Hello");
+
+        var bizProf = new id.jawa.domain.model.BusinessProfile(
+            "628123456789@s.whatsapp.net", "Jakarta", "store@example.com", "Official Store",
+            java.util.List.of("https://example.com"),
+            java.util.List.of(new id.jawa.domain.model.BusinessProfile.Category("cat1", "Shopping")),
+            "Asia/Jakarta",
+            java.util.List.of(new id.jawa.domain.model.BusinessProfile.BusinessHourConfig("mon", "open", "09:00", "17:00")),
+            java.util.Map.of("opt1", "val1")
+        );
+        assertThat(bizProf.email()).isEqualTo("store@example.com");
+        assertThat(bizProf.websites()).hasSize(1);
+        assertThat(bizProf.categories()).hasSize(1);
+
+        var newsMsg = new id.jawa.domain.model.NewsletterMessage(
+            12345L, "3EB0ABC", "text", 1700000000L, 50, java.util.Map.of("👍", 5), null
+        );
+        assertThat(newsMsg.serverId()).isEqualTo(12345L);
+        assertThat(newsMsg.viewsCount()).isEqualTo(50);
+        assertThat(newsMsg.reactionCounts().get("👍")).isEqualTo(5);
+    }
 }

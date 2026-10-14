@@ -106,6 +106,20 @@ public record Jid(String user, String server, int device, int agent, int domainT
         return sb.toString();
     }
 
+    public static String bare(String s) {
+        if (s == null) return null;
+        int at = s.indexOf('@');
+        if (at < 0) return s;
+        String userCombined = s.substring(0, at);
+        int colon = userCombined.indexOf(':');
+        String user = colon >= 0 ? userCombined.substring(0, colon) : userCombined;
+        return user + "@" + s.substring(at + 1);
+    }
+
+    public String toBareString() {
+        return user + "@" + server;
+    }
+
     @Override
     public String toString() { return asString(); }
 }

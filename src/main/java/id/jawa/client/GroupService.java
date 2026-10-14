@@ -1,5 +1,6 @@
 package id.jawa.client;
 
+import id.jawa.domain.model.GroupJoinRequest;
 import id.jawa.feature.messaging.GroupAction;
 import id.jawa.feature.messaging.GroupListQuery;
 import id.jawa.protocol.codec.BinaryNode;
@@ -95,5 +96,21 @@ public final class GroupService {
 
     public CompletableFuture<Void> setGroupAnnounce(String groupJid, boolean announce) {
         return client.setGroupAnnounce(groupJid, announce);
+    }
+
+    public CompletableFuture<Void> setGroupJoinApprovalMode(String groupJid, boolean approvalRequired) {
+        return client.setGroupJoinApprovalMode(groupJid, approvalRequired);
+    }
+
+    public CompletableFuture<Void> setGroupMemberAddMode(String groupJid, boolean adminOnly) {
+        return client.setGroupMemberAddMode(groupJid, adminOnly);
+    }
+
+    public CompletableFuture<List<GroupJoinRequest>> getGroupRequestParticipants(String groupJid) {
+        return client.getGroupRequestParticipants(groupJid);
+    }
+
+    public CompletableFuture<Void> updateGroupRequestParticipants(String groupJid, List<String> userJids, boolean approve) {
+        return client.updateGroupRequestParticipants(groupJid, userJids, approve);
     }
 }
