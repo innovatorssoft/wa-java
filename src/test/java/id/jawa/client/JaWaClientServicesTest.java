@@ -126,4 +126,20 @@ class JaWaClientServicesTest {
         var notAnnounce = id.jawa.feature.messaging.GroupAction.buildSetAnnounce("iq8", "12345@g.us", false);
         assertThat(notAnnounce.child("not_announcement")).isNotNull();
     }
+
+    @Test
+    void autoIgnoreOfflineMessagesConfiguration(@TempDir Path tempDir) {
+        FileAuthStore store = new FileAuthStore(tempDir.resolve("test.session"));
+        JaWaClient client = new JaWaClient(store);
+
+        assertThat(client.isAutoIgnoreOfflineMessages()).isTrue();
+        assertThat(client.autoIgnoreOfflineMessages()).isTrue();
+        assertThat(client.offlineMessageGracePeriodSec()).isEqualTo(2);
+
+        client.autoIgnoreOfflineMessages(false);
+        assertThat(client.autoIgnoreOfflineMessages()).isFalse();
+
+        client.offlineMessageGracePeriodSec(5);
+        assertThat(client.offlineMessageGracePeriodSec()).isEqualTo(5);
+    }
 }

@@ -44,7 +44,13 @@ public final class MessageReceiver {
     private MessageReceiver() {}
 
     public record Decoded(String senderJid, String groupJid, String msgId, String encType,
-                          Wa.Message message, String text, InteractiveResponse interactive) {}
+                          Wa.Message message, String text, InteractiveResponse interactive,
+                          long timestamp) {
+        public Decoded(String senderJid, String groupJid, String msgId, String encType,
+                       Wa.Message message, String text, InteractiveResponse interactive) {
+            this(senderJid, groupJid, msgId, encType, message, text, interactive, 0L);
+        }
+    }
 
     public record InteractiveResponse(String kind, String selectedId,
                                       String paramsJson, String displayText) {}
@@ -56,6 +62,13 @@ public final class MessageReceiver {
         String msgId = messageStanza.attr("id");
         String from = messageStanza.attr("from");
         String participant = messageStanza.attr("participant");
+        long timestamp = 0L;
+        String tAttr = messageStanza.attr("t");
+        if (tAttr != null && !tAttr.isEmpty()) {
+            try {
+                timestamp = Long.parseLong(tAttr);
+            } catch (NumberFormatException ignored) {}
+        }
         String senderJidStr = participant != null ? participant : from;
         if (senderJidStr == null) {
             throw new DecryptException("message has no from/participant attr");
@@ -89,7 +102,7 @@ public final class MessageReceiver {
 
         BinaryNode enc = findEnc(messageStanza);
         if (enc == null) {
-            return new Decoded(senderJidStr, groupJid, msgId, null, null, null, null);
+            return new Decoded(senderJidStr, groupJid, msgId, null, null, null, null, timestamp);
         }
 
         String encType = enc.attr("type");
@@ -166,15 +179,12 @@ public final class MessageReceiver {
         }
 
         InteractiveResponse interactive = parseInteractive(message);
-
-        System.out.println(">>> Decoded Wa.Message: " + message);
-
         LOG.debug("Decoded {} from {}{} (encType={}, text={}, interactive={})",
             msgId, senderJidStr,
             groupJid != null ? " in group " + groupJid : "",
             encType, text != null ? "yes" : "no",
             interactive != null ? interactive.kind() + "/" + interactive.selectedId() : "no");
-        return new Decoded(senderJidStr, groupJid, msgId, encType, message, text, interactive);
+        return new Decoded(senderJidStr, groupJid, msgId, encType, message, text, interactive, timestamp);
     }
 
     private static InteractiveResponse parseInteractive(Wa.Message message) {

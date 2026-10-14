@@ -117,6 +117,9 @@ public final class JaWaClient implements AutoCloseable {
     private boolean autoComposingPresence = false;
     private boolean autoPreKeyUpload = true;
     private boolean autoEphemeral = true;
+    private boolean autoIgnoreOfflineMessages = true;
+    private int offlineMessageGracePeriodSec = 2;
+    private volatile long connectedAtEpochSec = 0;
     private final java.util.concurrent.ConcurrentHashMap<String, Integer>
         chatEphemeralTimers = new java.util.concurrent.ConcurrentHashMap<>();
     private String wsUrl = WaConstants.WS_URL;
@@ -184,6 +187,23 @@ public final class JaWaClient implements AutoCloseable {
         this.autoEphemeral = enabled;
         return this;
     }
+
+    public boolean autoIgnoreOfflineMessages() { return autoIgnoreOfflineMessages; }
+    public boolean isAutoIgnoreOfflineMessages() { return autoIgnoreOfflineMessages; }
+
+    public JaWaClient autoIgnoreOfflineMessages(boolean enabled) {
+        this.autoIgnoreOfflineMessages = enabled;
+        return this;
+    }
+
+    public int offlineMessageGracePeriodSec() { return offlineMessageGracePeriodSec; }
+
+    public JaWaClient offlineMessageGracePeriodSec(int seconds) {
+        this.offlineMessageGracePeriodSec = Math.max(0, seconds);
+        return this;
+    }
+
+    public long getConnectedAtEpochSec() { return connectedAtEpochSec; }
 
     public java.util.Map<String, Integer> getChatEphemeralTimers() {
         return chatEphemeralTimers;
@@ -1837,7 +1857,20 @@ public final class JaWaClient implements AutoCloseable {
             LOG.debug("Server sent stream end");
             return true;
         }
+        if ("ib".equals(node.tag())) {
+            BinaryNode offlinePreview = node.child("offline_preview");
+            if (offlinePreview != null) {
+                LOG.info("Server offline sync preview: count={} message={}",
+                    offlinePreview.attr("count"), offlinePreview.attr("message"));
+            }
+            BinaryNode offline = node.child("offline");
+            if (offline != null) {
+                LOG.info("Server offline sync completed: count={}", offline.attr("count"));
+            }
+            return true;
+        }
         if ("success".equals(node.tag())) {
+            connectedAtEpochSec = System.currentTimeMillis() / 1000L;
             LOG.info("Login successful — meJid={} lid={} platform={}",
                 node.attr("jid", creds.meJid),
                 node.attr("lid", creds.meLid),
@@ -2010,10 +2043,18 @@ public final class JaWaClient implements AutoCloseable {
                 }
             }
             captureAppStateKeysFrom(decoded);
-            try { listener.onMessage(decoded); }
-            catch (Throwable t) { LOG.warn("listener.onMessage threw", t); }
             sendAck(message);
             sendDeliveryReceipt(message);
+
+            if (autoIgnoreOfflineMessages && decoded.timestamp() > 0 && connectedAtEpochSec > 0
+                    && decoded.timestamp() < (connectedAtEpochSec - offlineMessageGracePeriodSec)) {
+                LOG.info("Ignored offline message id={} (sent at {}, connected at {})",
+                    decoded.msgId(), decoded.timestamp(), connectedAtEpochSec);
+                return;
+            }
+
+            try { listener.onMessage(decoded); }
+            catch (Throwable t) { LOG.warn("listener.onMessage threw", t); }
         } catch (id.jawa.feature.messaging.MessageReceiver.DecryptException de) {
             LOG.warn("Decrypt failed for message id={} from={}: {}",
                 message.attr("id"), message.attr("from"), de.getMessage());
@@ -2183,6 +2224,7 @@ public final class JaWaClient implements AutoCloseable {
     @Override
     public void close() {
         if (!closing.compareAndSet(false, true)) return;
+        connectedAtEpochSec = 0;
         if (keepalive != null) { keepalive.shutdownNow(); keepalive = null; }
         if (frame != null) frame.close();
         closeLatch.countDown();
