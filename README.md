@@ -932,6 +932,116 @@ public class ProfileStatusExample {
 
 ---
 
+### 24. Community Management
+
+Manage WhatsApp Communities, inspect child subgroups, query linked participants across all community groups, or link and unlink child groups:
+
+```java
+package com.example;
+
+import id.jawa.client.JaWaClient;
+import id.jawa.domain.model.CommunitySubGroup;
+
+import java.util.List;
+
+public class CommunityExample {
+
+    public static void inspectCommunity(JaWaClient client, String communityJid, String childGroupJid) throws Exception {
+        List<CommunitySubGroup> subGroups = client.groups().getSubGroups(communityJid).get();
+        for (CommunitySubGroup group : subGroups) {
+            System.out.println("Subgroup: " + group.subject() + " (" + group.jid() + ") Default: " + group.defaultSubGroup());
+        }
+
+        List<String> participants = client.groups().getLinkedGroupsParticipants(communityJid).get();
+        System.out.println("Total community participants: " + participants.size());
+
+        client.groups().linkGroup(communityJid, childGroupJid).get();
+        client.groups().unlinkGroup(communityJid, childGroupJid).get();
+    }
+}
+```
+
+---
+
+### 25. Group Invite Message Acceptance
+
+Accept private group invitations sent as invite messages (containing group JID, inviter JID, code, and expiration timestamp):
+
+```java
+package com.example;
+
+import id.jawa.client.JaWaClient;
+import id.jawa.protocol.codec.BinaryNode;
+
+public class GroupInviteMessageExample {
+
+    public static void acceptInvite(JaWaClient client, String groupJid, String inviterJid, String code, long expiration) throws Exception {
+        BinaryNode info = client.groups().getGroupInfoFromInvite(groupJid, inviterJid, code, expiration).get();
+        System.out.println("Group info from invite: " + info);
+
+        client.groups().joinGroupWithInvite(groupJid, inviterJid, code, expiration).get();
+        System.out.println("Joined group successfully via invite message");
+    }
+}
+```
+
+---
+
+### 26. High-Resolution Profile Pictures
+
+Fetch structured profile picture metadata including direct path, image ID, and URLs for full-resolution HD photos or preview thumbnails:
+
+```java
+package com.example;
+
+import id.jawa.client.JaWaClient;
+import id.jawa.domain.model.ProfilePictureInfo;
+
+public class ProfilePictureExample {
+
+    public static void fetchPictures(JaWaClient client, String targetJid) throws Exception {
+        ProfilePictureInfo hdPic = client.profile().getProfilePictureInfo(targetJid).get();
+        if (hdPic != null) {
+            System.out.println("HD Picture URL : " + hdPic.url());
+            System.out.println("Picture ID     : " + hdPic.id());
+            System.out.println("Direct Path    : " + hdPic.directPath());
+        }
+
+        ProfilePictureInfo thumbnail = client.profile().getProfilePictureInfo(targetJid, true).get();
+        if (thumbnail != null) {
+            System.out.println("Thumbnail URL  : " + thumbnail.url());
+        }
+    }
+}
+```
+
+---
+
+### 27. Meta AI Bot Discovery
+
+Discover WhatsApp AI personas and bot accounts registered on the server:
+
+```java
+package com.example;
+
+import id.jawa.client.JaWaClient;
+import id.jawa.domain.model.BotListInfo;
+
+import java.util.List;
+
+public class BotDiscoveryExample {
+
+    public static void listBots(JaWaClient client) throws Exception {
+        List<BotListInfo> bots = client.profile().getBotList().get();
+        for (BotListInfo bot : bots) {
+            System.out.println("Bot Persona ID: " + bot.personaId() + " JID: " + bot.botJid());
+        }
+    }
+}
+```
+
+---
+
 ## 📄 License
 
 This project is licensed under the terms of the **GNU General Public License v3.0** (GPL-3.0-or-later). See [LICENSE](LICENSE) for details.

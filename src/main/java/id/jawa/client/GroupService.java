@@ -1,5 +1,6 @@
 package id.jawa.client;
 
+import id.jawa.domain.model.CommunitySubGroup;
 import id.jawa.domain.model.GroupJoinRequest;
 import id.jawa.feature.messaging.GroupAction;
 import id.jawa.feature.messaging.GroupListQuery;
@@ -112,5 +113,29 @@ public final class GroupService {
 
     public CompletableFuture<Void> updateGroupRequestParticipants(String groupJid, List<String> userJids, boolean approve) {
         return client.updateGroupRequestParticipants(groupJid, userJids, approve);
+    }
+
+    public CompletableFuture<List<CommunitySubGroup>> getSubGroups(String communityJid) {
+        return client.getSubGroups(communityJid);
+    }
+
+    public CompletableFuture<List<String>> getLinkedGroupsParticipants(String communityJid) {
+        return client.getLinkedGroupsParticipants(communityJid);
+    }
+
+    public CompletableFuture<Void> linkGroup(String communityJid, String childGroupJid) {
+        return client.linkGroup(communityJid, childGroupJid);
+    }
+
+    public CompletableFuture<Void> unlinkGroup(String communityJid, String childGroupJid) {
+        return client.unlinkGroup(communityJid, childGroupJid);
+    }
+
+    public CompletableFuture<BinaryNode> getGroupInfoFromInvite(String groupJid, String inviterJid, String code, long expiration) {
+        return client.getGroupInfoFromInvite(groupJid, inviterJid, code, expiration);
+    }
+
+    public CompletableFuture<Void> joinGroupWithInvite(String groupJid, String inviterJid, String code, long expiration) {
+        return client.joinGroupWithInvite(groupJid, inviterJid, code, expiration);
     }
 }

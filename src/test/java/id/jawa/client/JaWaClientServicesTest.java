@@ -260,4 +260,28 @@ class JaWaClientServicesTest {
         assertThat(client.chats()).isNotNull();
         assertThat(client.messages()).isNotNull();
     }
+
+    @Test
+    void testCommunitySubGroupAndProfilePictureModels(@TempDir Path tempDir) {
+        var subGroup = new id.jawa.domain.model.CommunitySubGroup("120363@g.us", "General", 1700000000L, true);
+        assertThat(subGroup.jid()).isEqualTo("120363@g.us");
+        assertThat(subGroup.subject()).isEqualTo("General");
+        assertThat(subGroup.nameSetAt()).isEqualTo(1700000000L);
+        assertThat(subGroup.defaultSubGroup()).isTrue();
+
+        var picInfo = new id.jawa.domain.model.ProfilePictureInfo("pic123", "https://img.whatsapp.net/p.jpg", "image", "/mms/image/123");
+        assertThat(picInfo.id()).isEqualTo("pic123");
+        assertThat(picInfo.url()).isEqualTo("https://img.whatsapp.net/p.jpg");
+        assertThat(picInfo.type()).isEqualTo("image");
+        assertThat(picInfo.directPath()).isEqualTo("/mms/image/123");
+
+        var botInfo = new id.jawa.domain.model.BotListInfo("p_bot_1", "13135550001@s.whatsapp.net");
+        assertThat(botInfo.personaId()).isEqualTo("p_bot_1");
+        assertThat(botInfo.botJid()).isEqualTo("13135550001@s.whatsapp.net");
+
+        var store = new FileAuthStore(tempDir.resolve("test-store3.session"));
+        JaWaClient client = new JaWaClient(store);
+        assertThat(client.groups()).isNotNull();
+        assertThat(client.profile()).isNotNull();
+    }
 }

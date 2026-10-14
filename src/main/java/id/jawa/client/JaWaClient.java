@@ -2393,21 +2393,49 @@ public final class JaWaClient implements AutoCloseable {
         LOG.debug("Sent presence subscribe to={}", jid);
     }
 
-    public java.util.concurrent.CompletableFuture<String> getProfilePictureInfo(String contactJid) {
+    public java.util.concurrent.CompletableFuture<id.jawa.domain.model.ProfilePictureInfo> getProfilePictureInfo(String targetJid, boolean preview) {
         String iqId = newIqId();
-        BinaryNode picture = new BinaryNode("picture", java.util.Map.of("type", "image"), null);
-        BinaryNode iq = new BinaryNode("iq", java.util.Map.of(
-            "to", contactJid,
-            "type", "get",
-            "xmlns", "w:profile:picture",
-            "id", iqId
-        ), java.util.List.of(picture));
+        String type = preview ? "preview" : "image";
+        BinaryNode iq = new BinaryNode("iq",
+            java.util.Map.of("to", targetJid, "type", "get", "xmlns", "w:profile:picture", "id", iqId),
+            java.util.List.of(new BinaryNode("picture", java.util.Map.of("type", type, "query", "url"), null)));
         return sendIqAsync(iq).thenApply(resp -> {
-            if ("error".equals(resp.attr("type"))) {
-                return null;
-            }
             BinaryNode pic = resp.child("picture");
-            return pic != null ? pic.attr("url") : null;
+            if (pic == null) return null;
+            String id = pic.attr("id");
+            String url = pic.attr("url");
+            String picType = pic.attr("type");
+            String directPath = pic.attr("direct_path");
+            return new id.jawa.domain.model.ProfilePictureInfo(id, url, picType, directPath);
+        });
+    }
+
+    public java.util.concurrent.CompletableFuture<id.jawa.domain.model.ProfilePictureInfo> getProfilePictureInfo(String targetJid) {
+        return getProfilePictureInfo(targetJid, false);
+    }
+
+    public java.util.concurrent.CompletableFuture<java.util.List<id.jawa.domain.model.BotListInfo>> getBotList() {
+        String iqId = newIqId();
+        BinaryNode iq = new BinaryNode("iq",
+            java.util.Map.of("to", id.jawa.domain.model.Jid.SERVER_WHATSAPP, "type", "get", "xmlns", "bot", "id", iqId),
+            java.util.List.of(new BinaryNode("bot", java.util.Map.of("v", "2"), null)));
+        return sendIqAsync(iq).thenApply(resp -> {
+            BinaryNode bot = resp.child("bot");
+            if (bot == null) return java.util.List.of();
+            java.util.List<id.jawa.domain.model.BotListInfo> list = new java.util.ArrayList<>();
+            for (BinaryNode section : bot.childrenList()) {
+                if (!"section".equals(section.tag())) continue;
+                for (BinaryNode b : section.childrenList()) {
+                    if ("bot".equals(b.tag())) {
+                        String personaId = b.attr("persona_id");
+                        String jid = b.attr("jid");
+                        if (personaId != null || jid != null) {
+                            list.add(new id.jawa.domain.model.BotListInfo(personaId, jid));
+                        }
+                    }
+                }
+            }
+            return list;
         });
     }
 
@@ -2732,6 +2760,93 @@ public final class JaWaClient implements AutoCloseable {
         BinaryNode iq = new BinaryNode("iq",
             java.util.Map.of("to", groupJid, "type", "set", "xmlns", "w:g2", "id", iqId),
             java.util.List.of(reqAction));
+        return sendIqAsync(iq).thenApply(resp -> null);
+    }
+
+    public java.util.concurrent.CompletableFuture<java.util.List<id.jawa.domain.model.CommunitySubGroup>> getSubGroups(String communityJid) {
+        String iqId = newIqId();
+        BinaryNode iq = new BinaryNode("iq",
+            java.util.Map.of("to", communityJid, "type", "get", "xmlns", "w:g2", "id", iqId),
+            java.util.List.of(new BinaryNode("sub_groups", java.util.Map.of(), null)));
+        return sendIqAsync(iq).thenApply(resp -> {
+            BinaryNode subGroupsNode = resp.child("sub_groups");
+            if (subGroupsNode == null) return java.util.List.of();
+            java.util.List<id.jawa.domain.model.CommunitySubGroup> result = new java.util.ArrayList<>();
+            for (BinaryNode child : subGroupsNode.childrenList()) {
+                if (!"group".equals(child.tag())) continue;
+                String jid = child.attr("jid");
+                if (jid == null) {
+                    String gId = child.attr("id");
+                    if (gId != null) jid = gId + "@" + id.jawa.domain.model.Jid.SERVER_GROUP;
+                }
+                String subject = child.attr("subject");
+                long nameSetAt = 0L;
+                String st = child.attr("s_t");
+                if (st != null) {
+                    try { nameSetAt = Long.parseLong(st); } catch (NumberFormatException ignored) {}
+                }
+                boolean defaultSub = child.child("default_sub_group") != null;
+                result.add(new id.jawa.domain.model.CommunitySubGroup(jid, subject, nameSetAt, defaultSub));
+            }
+            return result;
+        });
+    }
+
+    public java.util.concurrent.CompletableFuture<java.util.List<String>> getLinkedGroupsParticipants(String communityJid) {
+        String iqId = newIqId();
+        BinaryNode iq = new BinaryNode("iq",
+            java.util.Map.of("to", communityJid, "type", "get", "xmlns", "w:g2", "id", iqId),
+            java.util.List.of(new BinaryNode("linked_groups_participants", java.util.Map.of(), null)));
+        return sendIqAsync(iq).thenApply(resp -> {
+            BinaryNode node = resp.child("linked_groups_participants");
+            if (node == null) return java.util.List.of();
+            java.util.List<String> list = new java.util.ArrayList<>();
+            for (BinaryNode child : node.childrenList()) {
+                if ("participant".equals(child.tag()) && child.attr("jid") != null) {
+                    list.add(child.attr("jid"));
+                }
+            }
+            return list;
+        });
+    }
+
+    public java.util.concurrent.CompletableFuture<Void> linkGroup(String communityJid, String childGroupJid) {
+        String iqId = newIqId();
+        BinaryNode groupNode = new BinaryNode("group", java.util.Map.of("jid", childGroupJid), null);
+        BinaryNode linkNode = new BinaryNode("link", java.util.Map.of("link_type", "sub_group"), java.util.List.of(groupNode));
+        BinaryNode linksNode = new BinaryNode("links", java.util.Map.of(), java.util.List.of(linkNode));
+        BinaryNode iq = new BinaryNode("iq",
+            java.util.Map.of("to", communityJid, "type", "set", "xmlns", "w:g2", "id", iqId),
+            java.util.List.of(linksNode));
+        return sendIqAsync(iq).thenApply(resp -> null);
+    }
+
+    public java.util.concurrent.CompletableFuture<Void> unlinkGroup(String communityJid, String childGroupJid) {
+        String iqId = newIqId();
+        BinaryNode groupNode = new BinaryNode("group", java.util.Map.of("jid", childGroupJid), null);
+        BinaryNode unlinkNode = new BinaryNode("unlink", java.util.Map.of("unlink_type", "sub_group"), java.util.List.of(groupNode));
+        BinaryNode iq = new BinaryNode("iq",
+            java.util.Map.of("to", communityJid, "type", "set", "xmlns", "w:g2", "id", iqId),
+            java.util.List.of(unlinkNode));
+        return sendIqAsync(iq).thenApply(resp -> null);
+    }
+
+    public java.util.concurrent.CompletableFuture<BinaryNode> getGroupInfoFromInvite(String groupJid, String inviterJid, String code, long expiration) {
+        String iqId = newIqId();
+        BinaryNode addReq = new BinaryNode("add_request", java.util.Map.of("code", code, "expiration", String.valueOf(expiration), "admin", inviterJid), null);
+        BinaryNode query = new BinaryNode("query", java.util.Map.of(), java.util.List.of(addReq));
+        BinaryNode iq = new BinaryNode("iq",
+            java.util.Map.of("to", groupJid, "type", "get", "xmlns", "w:g2", "id", iqId),
+            java.util.List.of(query));
+        return sendIqAsync(iq);
+    }
+
+    public java.util.concurrent.CompletableFuture<Void> joinGroupWithInvite(String groupJid, String inviterJid, String code, long expiration) {
+        String iqId = newIqId();
+        BinaryNode acceptNode = new BinaryNode("accept", java.util.Map.of("code", code, "expiration", String.valueOf(expiration), "admin", inviterJid), null);
+        BinaryNode iq = new BinaryNode("iq",
+            java.util.Map.of("to", groupJid, "type", "set", "xmlns", "w:g2", "id", iqId),
+            java.util.List.of(acceptNode));
         return sendIqAsync(iq).thenApply(resp -> null);
     }
 

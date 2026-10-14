@@ -1,10 +1,12 @@
 package id.jawa.client;
 
 import id.jawa.domain.model.Blocklist;
+import id.jawa.domain.model.BotListInfo;
 import id.jawa.domain.model.BusinessMessageLinkTarget;
 import id.jawa.domain.model.BusinessProfile;
 import id.jawa.domain.model.ContactQrTarget;
 import id.jawa.domain.model.OrderDetails;
+import id.jawa.domain.model.ProfilePictureInfo;
 import id.jawa.domain.model.UserInfo;
 import id.jawa.protocol.codec.BinaryNode;
 
@@ -35,6 +37,14 @@ public final class ProfileService {
 
     public CompletableFuture<String> fetchProfilePictureUrl(String targetJid) {
         return client.fetchProfilePictureUrl(targetJid);
+    }
+
+    public CompletableFuture<ProfilePictureInfo> getProfilePictureInfo(String targetJid, boolean preview) {
+        return client.getProfilePictureInfo(targetJid, preview);
+    }
+
+    public CompletableFuture<ProfilePictureInfo> getProfilePictureInfo(String targetJid) {
+        return client.getProfilePictureInfo(targetJid, false);
     }
 
     public CompletableFuture<BinaryNode> updateProfilePicture(byte[] imageBytes) {
@@ -107,5 +117,9 @@ public final class ProfileService {
 
     public CompletableFuture<OrderDetails> getOrderDetails(String orderId, String tokenBase64) {
         return client.getOrderDetails(orderId, tokenBase64);
+    }
+
+    public CompletableFuture<List<BotListInfo>> getBotList() {
+        return client.getBotList();
     }
 }
