@@ -46,4 +46,28 @@ public final class NewsletterService {
     public CompletableFuture<List<NewsletterMessage>> getMessages(String newsletterJid, int count) {
         return client.getNewsletterMessages(newsletterJid, count, null);
     }
+
+    public CompletableFuture<Void> follow(String newsletterJid) {
+        return client.followNewsletter(newsletterJid);
+    }
+
+    public CompletableFuture<Void> unfollow(String newsletterJid) {
+        return client.unfollowNewsletter(newsletterJid);
+    }
+
+    public CompletableFuture<Void> toggleMute(String newsletterJid, boolean mute) {
+        return client.toggleMuteNewsletter(newsletterJid, mute);
+    }
+
+    public CompletableFuture<id.jawa.domain.model.NewsletterMetadata> getInfo(String newsletterJid) {
+        return client.getNewsletterInfo(newsletterJid);
+    }
+
+    public CompletableFuture<id.jawa.domain.model.NewsletterMetadata> getInfoWithInvite(String inviteCodeOrUrl) {
+        return client.getNewsletterInfoWithInvite(inviteCodeOrUrl);
+    }
+
+    public CompletableFuture<String> sendMexQuery(String queryId, String jsonVariables) {
+        return client.sendMexQuery(queryId, jsonVariables);
+    }
 }

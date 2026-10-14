@@ -20,4 +20,6 @@ public interface AuthStore {
     void save(AuthCreds c) throws IOException;
 
     boolean isPaired() throws IOException;
+
+    default void clear() throws IOException {}
 }

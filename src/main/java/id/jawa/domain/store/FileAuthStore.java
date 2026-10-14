@@ -109,4 +109,9 @@ public final class FileAuthStore implements AuthStore {
     private static int parseIntOrDefault(String s, int d) {
         return s == null ? d : Integer.parseInt(s);
     }
+
+    @Override
+    public void clear() throws IOException {
+        Files.deleteIfExists(file);
+    }
 }

@@ -74,4 +74,8 @@ public final class ProfileService {
     public CompletableFuture<UserInfo> getUserInfo(String targetJid) {
         return client.getUserInfo(targetJid);
     }
+
+    public CompletableFuture<Void> updatePushName(String newPushName) {
+        return client.updatePushName(newPushName);
+    }
 }

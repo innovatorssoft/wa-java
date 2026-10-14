@@ -2811,5 +2811,156 @@ public final class JaWaClient implements AutoCloseable {
         });
     }
 
+    public void disconnect() {
+        close();
+    }
+
+    public java.util.concurrent.CompletableFuture<Void> logout() {
+        if (creds == null || creds.meJid == null) {
+            return java.util.concurrent.CompletableFuture.failedFuture(new IllegalStateException("Not logged in"));
+        }
+        String iqId = newIqId();
+        BinaryNode rmDevice = new BinaryNode("remove-companion-device", java.util.Map.of(
+            "jid", creds.meJid,
+            "reason", "user_initiated"
+        ), null);
+        BinaryNode iq = new BinaryNode("iq", java.util.Map.of(
+            "to", id.jawa.domain.model.Jid.SERVER_WHATSAPP,
+            "type", "set",
+            "xmlns", "md",
+            "id", iqId
+        ), java.util.List.of(rmDevice));
+        return sendIqAsync(iq).handle((resp, err) -> {
+            try {
+                store.clear();
+            } catch (Exception ignored) {}
+            close();
+            return null;
+        });
+    }
+
+    public java.util.concurrent.CompletableFuture<Void> updatePushName(String newPushName) {
+        if (creds == null) {
+            return java.util.concurrent.CompletableFuture.failedFuture(new IllegalStateException("Not logged in"));
+        }
+        creds.pushName = newPushName;
+        try {
+            store.save(creds);
+        } catch (Exception e) {
+            return java.util.concurrent.CompletableFuture.failedFuture(e);
+        }
+        send(new BinaryNode("presence", java.util.Map.of(
+            "type", "available",
+            "name", newPushName
+        ), null));
+        return java.util.concurrent.CompletableFuture.completedFuture(null);
+    }
+
+    public java.util.concurrent.CompletableFuture<String> sendMexQuery(String queryId, String jsonVariables) {
+        String iqId = newIqId();
+        String payload = "{\"variables\":" + (jsonVariables != null && !jsonVariables.isBlank() ? jsonVariables : "{}") + "}";
+        BinaryNode queryNode = new BinaryNode("query",
+            java.util.Map.of("query_id", queryId),
+            payload.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        BinaryNode iq = new BinaryNode("iq",
+            java.util.Map.of("to", id.jawa.domain.model.Jid.SERVER_WHATSAPP, "type", "get", "xmlns", "w:mex", "id", iqId),
+            java.util.List.of(queryNode));
+        return sendIqAsync(iq).thenApply(resp -> {
+            BinaryNode res = resp.child("result");
+            return res != null ? res.textContent() : null;
+        });
+    }
+
+    public java.util.concurrent.CompletableFuture<Void> followNewsletter(String newsletterJid) {
+        String vars = "{\"newsletter_id\":\"" + newsletterJid + "\"}";
+        return sendMexQuery("9926858900719341", vars).thenApply(resp -> null);
+    }
+
+    public java.util.concurrent.CompletableFuture<Void> unfollowNewsletter(String newsletterJid) {
+        String vars = "{\"newsletter_id\":\"" + newsletterJid + "\"}";
+        return sendMexQuery("6392786840836363", vars).thenApply(resp -> null);
+    }
+
+    public java.util.concurrent.CompletableFuture<Void> toggleMuteNewsletter(String newsletterJid, boolean mute) {
+        String queryId = mute ? "6274038279359549" : "6068417879924485";
+        String vars = "{\"newsletter_id\":\"" + newsletterJid + "\"}";
+        return sendMexQuery(queryId, vars).thenApply(resp -> null);
+    }
+
+    public java.util.concurrent.CompletableFuture<id.jawa.domain.model.NewsletterMetadata> getNewsletterInfo(String newsletterJid) {
+        String vars = "{\"fetch_creation_time\":true,\"fetch_full_image\":true,\"fetch_viewer_metadata\":true,\"input\":{\"key\":\"" + newsletterJid + "\",\"type\":\"JID\"}}";
+        return sendMexQuery("6563316087068696", vars).thenApply(json -> parseNewsletterJson(json, newsletterJid));
+    }
+
+    public java.util.concurrent.CompletableFuture<id.jawa.domain.model.NewsletterMetadata> getNewsletterInfoWithInvite(String inviteCodeOrUrl) {
+        String code = inviteCodeOrUrl;
+        if (code.contains("/")) code = code.substring(code.lastIndexOf('/') + 1);
+        if (code.contains("?")) code = code.substring(0, code.indexOf('?'));
+        String vars = "{\"fetch_creation_time\":true,\"fetch_full_image\":true,\"fetch_viewer_metadata\":false,\"input\":{\"key\":\"" + code + "\",\"type\":\"INVITE\"}}";
+        return sendMexQuery("6563316087068696", vars).thenApply(json -> parseNewsletterJson(json, null));
+    }
+
+    private static id.jawa.domain.model.NewsletterMetadata parseNewsletterJson(String json, String fallbackJid) {
+        if (json == null || json.isBlank()) return null;
+        String id = extractJsonField(json, "id");
+        if (id == null) id = fallbackJid;
+        String name = extractNestedJsonField(json, "name", "text");
+        String desc = extractNestedJsonField(json, "description", "text");
+        String invite = extractJsonField(json, "invite");
+        String picUrl = extractNestedJsonField(json, "picture", "direct_path");
+        if (picUrl == null) picUrl = extractNestedJsonField(json, "preview", "direct_path");
+        String role = extractJsonField(json, "role");
+        String muteState = extractJsonField(json, "mute");
+        boolean muted = "ON".equalsIgnoreCase(muteState);
+
+        long creationTime = 0L;
+        String ct = extractJsonField(json, "creation_time");
+        if (ct != null) {
+            try { creationTime = Long.parseLong(ct.replaceAll("[^0-9]", "")); } catch (Exception ignored) {}
+        }
+
+        int subCount = 0;
+        String sc = extractJsonField(json, "subscribers_count");
+        if (sc != null) {
+            try { subCount = Integer.parseInt(sc.replaceAll("[^0-9]", "")); } catch (Exception ignored) {}
+        }
+
+        return new id.jawa.domain.model.NewsletterMetadata(
+            id, name, desc, invite, creationTime, subCount, role, muted, picUrl
+        );
+    }
+
+    private static String extractJsonField(String json, String fieldName) {
+        if (json == null) return null;
+        String needle = "\"" + fieldName + "\"";
+        int idx = json.indexOf(needle);
+        if (idx < 0) return null;
+        int colon = json.indexOf(':', idx + needle.length());
+        if (colon < 0) return null;
+        int start = colon + 1;
+        while (start < json.length() && Character.isWhitespace(json.charAt(start))) start++;
+        if (start >= json.length()) return null;
+        if (json.charAt(start) == '"') {
+            int end = json.indexOf('"', start + 1);
+            return end > start ? json.substring(start + 1, end) : null;
+        }
+        int end = start;
+        while (end < json.length() && json.charAt(end) != ',' && json.charAt(end) != '}' && json.charAt(end) != ']') end++;
+        return json.substring(start, end).trim();
+    }
+
+    private static String extractNestedJsonField(String json, String parentField, String childField) {
+        if (json == null) return null;
+        String needle = "\"" + parentField + "\"";
+        int idx = json.indexOf(needle);
+        if (idx < 0) return null;
+        int brace = json.indexOf('{', idx + needle.length());
+        if (brace < 0 || brace > idx + needle.length() + 10) return null;
+        int closeBrace = json.indexOf('}', brace);
+        if (closeBrace < 0) return null;
+        String block = json.substring(brace, closeBrace + 1);
+        return extractJsonField(block, childField);
+    }
+
     public AuthCreds creds() { return creds; }
 }

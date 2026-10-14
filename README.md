@@ -673,19 +673,39 @@ public class AdvancedGroupAdminExample {
 
 ### 14. Newsletter & Channel Management
 
-Interact with WhatsApp Channels / Newsletters by subscribing to live updates, sending reactions, marking messages as viewed, and reading typed newsletter history:
+Interact with WhatsApp Channels / Newsletters by subscribing to live updates, following, muting, fetching metadata, sending reactions, marking messages as viewed, and reading typed newsletter history:
 
 ```java
 package com.example;
 
 import id.jawa.client.JaWaClient;
 import id.jawa.domain.model.NewsletterMessage;
+import id.jawa.domain.model.NewsletterMetadata;
 
 import java.util.List;
 
 public class NewsletterExample {
 
     public static void channelActions(JaWaClient client, String channelJid) throws Exception {
+        client.newsletters().follow(channelJid).get();
+        System.out.println("Followed channel: " + channelJid);
+
+        client.newsletters().toggleMute(channelJid, true).get();
+        System.out.println("Muted channel notifications");
+
+        NewsletterMetadata meta = client.newsletters().getInfo(channelJid).get();
+        if (meta != null) {
+            System.out.println("Channel Name: " + meta.name());
+            System.out.println("Subscribers : " + meta.subscriberCount());
+            System.out.println("My Role     : " + meta.role());
+            System.out.println("Invite Code : " + meta.inviteCode());
+        }
+
+        NewsletterMetadata inviteMeta = client.newsletters().getInfoWithInvite("https://whatsapp.com/channel/ABC123XYZ").get();
+        if (inviteMeta != null) {
+            System.out.println("Preview Channel: " + inviteMeta.name());
+        }
+
         long durationSec = client.newsletters().subscribeLiveUpdates(channelJid).get();
         System.out.println("Subscribed to live channel updates for: " + durationSec + "s");
 
@@ -697,6 +717,8 @@ public class NewsletterExample {
         for (NewsletterMessage msg : messages) {
             System.out.println("Message ID: " + msg.messageId() + " Views: " + msg.viewsCount());
         }
+
+        client.newsletters().unfollow(channelJid).get();
     }
 }
 ```
@@ -740,6 +762,46 @@ JaWaClient client = new JaWaClient(store)
 | :--- | :--- | :--- |
 | `.autoIgnoreOfflineMessages(boolean)` | `true` | When true, ignores historical offline messages delivered during initial connection. |
 | `.offlineMessageGracePeriodSec(int)` | `2` | Number of seconds grace period around login timestamp for message evaluation. |
+
+---
+
+### 17. Updating Push Name (Companion Display Name)
+
+Change the companion device display name sent in presence broadcasts:
+
+```java
+package com.example;
+
+import id.jawa.client.JaWaClient;
+
+public class PushNameExample {
+
+    public static void changeName(JaWaClient client) throws Exception {
+        client.profile().updatePushName("JaWa Bot Official").get();
+        System.out.println("Display name updated successfully");
+    }
+}
+```
+
+---
+
+### 18. Logout & Session Unlinking
+
+Safely unlink the companion device from WhatsApp Web, purge credentials from storage, and close socket connection:
+
+```java
+package com.example;
+
+import id.jawa.client.JaWaClient;
+
+public class LogoutExample {
+
+    public static void exitSession(JaWaClient client) throws Exception {
+        client.logout().get();
+        System.out.println("Session unlinked and logged out cleanly");
+    }
+}
+```
 
 ---
 

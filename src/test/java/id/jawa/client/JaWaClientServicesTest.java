@@ -201,4 +201,32 @@ class JaWaClientServicesTest {
         assertThat(newsMsg.viewsCount()).isEqualTo(50);
         assertThat(newsMsg.reactionCounts().get("👍")).isEqualTo(5);
     }
+
+    @Test
+    void testNewsletterMetadataAndStoreClear(@TempDir Path tempDir) throws Exception {
+        var storeFile = tempDir.resolve("test-store.session");
+        var store = new FileAuthStore(storeFile);
+        var creds = id.jawa.domain.model.AuthCreds.generate();
+        creds.meJid = "628123456789:1@s.whatsapp.net";
+        creds.pushName = "TestBot";
+        store.save(creds);
+
+        assertThat(java.nio.file.Files.exists(storeFile)).isTrue();
+        store.clear();
+        assertThat(java.nio.file.Files.exists(storeFile)).isFalse();
+
+        var meta = new id.jawa.domain.model.NewsletterMetadata(
+            "120363123456@newsletter", "Tech News", "Latest Updates", "Invite123",
+            1700000000L, 1000, "ADMIN", false, "https://example.com/pic.jpg"
+        );
+        assertThat(meta.id()).isEqualTo("120363123456@newsletter");
+        assertThat(meta.name()).isEqualTo("Tech News");
+        assertThat(meta.subscriberCount()).isEqualTo(1000);
+        assertThat(meta.role()).isEqualTo("ADMIN");
+        assertThat(meta.muted()).isFalse();
+
+        JaWaClient client = new JaWaClient(store);
+        assertThat(client.newsletters()).isNotNull();
+        assertThat(client.profile()).isNotNull();
+    }
 }

@@ -386,6 +386,11 @@ public final class SqliteAuthStore implements AuthStore, AutoCloseable {
     }
 
     @Override
+    public void clear() {
+        clearAll();
+    }
+
+    @Override
     public void close() {
     }
 }
