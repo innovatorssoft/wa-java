@@ -1,16 +1,5 @@
 package id.jawa.feature.messaging;
 
-import id.jawa.protocol.connection.*;
-import id.jawa.protocol.codec.*;
-import id.jawa.protocol.crypto.*;
-import id.jawa.domain.model.*;
-import id.jawa.domain.store.*;
-import id.jawa.feature.pairing.*;
-import id.jawa.feature.messaging.*;
-import id.jawa.feature.media.*;
-import id.jawa.feature.appstate.*;
-import id.jawa.feature.signal.*;
-
 import id.jawa.protocol.codec.BinaryNode;
 
 import java.util.ArrayList;
@@ -40,12 +29,11 @@ public final class GroupListQuery {
         BinaryNode participating = new BinaryNode("participating", Map.of(),
             List.of(
                 new BinaryNode("participants", Map.of(), null),
-                new BinaryNode("description",  Map.of(), null),
-                new BinaryNode("ephemeral",    Map.of(), null)
+                new BinaryNode("description",  Map.of(), null)
             ));
         return new BinaryNode("iq",
             Map.of(
-                "to",    "@" + id.jawa.domain.model.Jid.SERVER_GROUP,
+                "to",    id.jawa.domain.model.Jid.SERVER_GROUP,
                 "xmlns", "w:g2",
                 "type",  "get",
                 "id",    iqId
@@ -53,32 +41,60 @@ public final class GroupListQuery {
             List.of(participating));
     }
 
+    public static BinaryNode buildGroupInfoQuery(String iqId, String groupJid) {
+        BinaryNode query = new BinaryNode("query", Map.of("request", "interactive"), null);
+        return new BinaryNode("iq",
+            Map.of(
+                "to",    groupJid,
+                "xmlns", "w:g2",
+                "type",  "get",
+                "id",    iqId
+            ),
+            List.of(query));
+    }
+
+    public static GroupInfo parseSingleGroup(BinaryNode g) {
+        if (g == null) return null;
+        String groupId = g.attr("id");
+        String creator = g.attr("creator");
+        String subject = g.attr("subject", "");
+        long creation = parseLong(g.attr("creation"), 0);
+        long subjectTs = parseLong(g.attr("s_t"), 0);
+        String groupJid = g.attr("jid");
+        if (groupJid == null || groupJid.isEmpty()) {
+            groupJid = (groupId != null ? groupId : "") + "@" + id.jawa.domain.model.Jid.SERVER_GROUP;
+        }
+        List<String> participants = new ArrayList<>();
+        for (BinaryNode p : g.childrenList()) {
+            if (!"participant".equals(p.tag())) continue;
+            String pj = p.attr("jid");
+            if (pj != null) participants.add(pj);
+        }
+        boolean isEphemeral = false;
+        int ephemeralExpiration = 0;
+        BinaryNode ephNode = g.child("ephemeral");
+        if (ephNode != null) {
+            isEphemeral = true;
+            ephemeralExpiration = (int) parseLong(ephNode.attr("expiration"), 0);
+        }
+        return new GroupInfo(groupJid, subject, creation, subjectTs, creator, participants, isEphemeral, ephemeralExpiration);
+    }
+
     public static List<GroupInfo> parseResponse(BinaryNode iqResponse) {
         List<GroupInfo> out = new ArrayList<>();
         BinaryNode groups = iqResponse.child("groups");
-        if (groups == null) return out;
+        if (groups == null) {
+            BinaryNode single = iqResponse.child("group");
+            if (single != null) {
+                GroupInfo info = parseSingleGroup(single);
+                if (info != null) out.add(info);
+            }
+            return out;
+        }
         for (BinaryNode g : groups.childrenList()) {
             if (!"group".equals(g.tag())) continue;
-            String groupId = g.attr("id");
-            String creator = g.attr("creator");
-            String subject = g.attr("subject", "");
-            long creation = parseLong(g.attr("creation"), 0);
-            long subjectTs = parseLong(g.attr("s_t"), 0);
-            String groupJid = (groupId != null ? groupId : "") + "@" + id.jawa.domain.model.Jid.SERVER_GROUP;
-            List<String> participants = new ArrayList<>();
-            for (BinaryNode p : g.childrenList()) {
-                if (!"participant".equals(p.tag())) continue;
-                String pj = p.attr("jid");
-                if (pj != null) participants.add(pj);
-            }
-            boolean isEphemeral = false;
-            int ephemeralExpiration = 0;
-            BinaryNode ephNode = g.child("ephemeral");
-            if (ephNode != null) {
-                isEphemeral = true;
-                ephemeralExpiration = (int) parseLong(ephNode.attr("expiration"), 0);
-            }
-            out.add(new GroupInfo(groupJid, subject, creation, subjectTs, creator, participants, isEphemeral, ephemeralExpiration));
+            GroupInfo info = parseSingleGroup(g);
+            if (info != null) out.add(info);
         }
         return out;
     }

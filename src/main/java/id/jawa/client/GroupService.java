@@ -49,6 +49,10 @@ public final class GroupService {
         return client.queryJoinedGroups(forceRefresh);
     }
 
+    public CompletableFuture<GroupListQuery.GroupInfo> queryGroupInfo(String groupJid) {
+        return client.queryGroupInfo(groupJid);
+    }
+
     public CompletableFuture<BinaryNode> updateGroupPicture(String groupJid, byte[] imageBytes) {
         return client.updateGroupPicture(groupJid, imageBytes);
     }

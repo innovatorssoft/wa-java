@@ -1055,12 +1055,7 @@ public final class JaWaClient implements AutoCloseable {
         java.util.concurrent.CompletableFuture<id.jawa.feature.messaging.GroupListQuery.GroupInfo> targetFuture =
             cached != null
                 ? java.util.concurrent.CompletableFuture.completedFuture(cached)
-                : queryJoinedGroups(true).thenApply(groups -> {
-                    for (var g : groups) {
-                        if (g.jid().equals(groupJid)) return g;
-                    }
-                    return null;
-                });
+                : queryGroupInfo(groupJid);
 
         return targetFuture.thenCompose(target -> {
             if (target == null) {
@@ -1720,6 +1715,30 @@ public final class JaWaClient implements AutoCloseable {
                 }
             }
             return list;
+        });
+    }
+
+    public java.util.concurrent.CompletableFuture<id.jawa.feature.messaging.GroupListQuery.GroupInfo>
+            queryGroupInfo(String groupJid) {
+        String iqId = newIqId();
+        BinaryNode iq = id.jawa.feature.messaging.GroupListQuery.buildGroupInfoQuery(iqId, groupJid);
+        LOG.debug("Sent group info query id={} to={}", iqId, groupJid);
+        return sendIqAsync(iq).thenApply(resp -> {
+            if ("error".equals(resp.attr("type"))) {
+                LOG.warn("Group info query rejected for {}: {}", groupJid, resp);
+                return null;
+            }
+            BinaryNode groupNode = resp.child("group");
+            if (groupNode == null) return null;
+            id.jawa.feature.messaging.GroupListQuery.GroupInfo info =
+                id.jawa.feature.messaging.GroupListQuery.parseSingleGroup(groupNode);
+            if (info != null) {
+                groupCache.put(info.jid(), info);
+                if (info.isEphemeral() && info.ephemeralExpiration() > 0) {
+                    chatEphemeralTimers.put(info.jid(), info.ephemeralExpiration());
+                }
+            }
+            return info;
         });
     }
 
