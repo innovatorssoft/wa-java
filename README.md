@@ -517,6 +517,232 @@ client.autoEphemeral(false);
 
 ---
 
+### 10. Privacy Settings & Default Ephemeral Timer
+
+Inspect and configure account privacy visibility across categories (last seen, profile photo, status, online status, read receipts) and set the default disappearing message timer for all new chats:
+
+```java
+package com.example;
+
+import id.jawa.client.JaWaClient;
+import id.jawa.domain.model.PrivacySettings;
+
+public class PrivacyExample {
+
+    public static void configurePrivacy(JaWaClient client) throws Exception {
+        PrivacySettings settings = client.privacy().getPrivacySettings().get();
+        System.out.println("Last Seen: " + settings.lastSeen());
+        System.out.println("Profile Pic: " + settings.profilePhoto());
+        System.out.println("Status: " + settings.status());
+        System.out.println("Read Receipts: " + settings.readReceipts());
+        System.out.println("Default Disappearing Timer: " + settings.defaultDisappearingDuration() + "s");
+
+        client.privacy().setPrivacySetting("last", "all").get();
+        client.privacy().setPrivacySetting("status", "contacts").get();
+        client.privacy().setPrivacySetting("readreceipts", "all").get();
+
+        client.privacy().setDefaultDisappearingTimer(86400).get();
+    }
+}
+```
+
+#### Privacy Categories & Allowed Values Reference
+
+| Category | Description | Allowed Values |
+| :--- | :--- | :--- |
+| `last` | Last Seen visibility | `all`, `contacts`, `contact_blacklist`, `none` |
+| `online` | Online status visibility | `all`, `match_last_seen` |
+| `profile` | Profile photo visibility | `all`, `contacts`, `contact_blacklist`, `none` |
+| `status` | About status text visibility | `all`, `contacts`, `contact_blacklist`, `none` |
+| `readreceipts` | Read receipts (blue ticks) | `all`, `none` |
+| `calladd` | Who can call this account | `all`, `known` |
+
+---
+
+### 11. Personal Contact QR & Business Short Links
+
+Generate personal contact QR links (`https://wa.me/qr/<code>`), revoke them, or resolve contact and business message short links (`https://wa.me/message/<code>`):
+
+```java
+package com.example;
+
+import id.jawa.client.JaWaClient;
+import id.jawa.domain.model.BusinessMessageLinkTarget;
+import id.jawa.domain.model.ContactQrTarget;
+
+public class QrAndShortLinkExample {
+
+    public static void handleLinks(JaWaClient client) throws Exception {
+        String myQrUrl = client.profile().getContactQrLink().get();
+        System.out.println("My Contact QR URL: " + myQrUrl);
+
+        String refreshedQrUrl = client.profile().getContactQrLink(true).get();
+        System.out.println("Refreshed QR URL: " + refreshedQrUrl);
+
+        ContactQrTarget contact = client.profile().resolveContactQrLink("https://wa.me/qr/ABCDEF12345").get();
+        System.out.println("Resolved Contact JID: " + contact.jid());
+        System.out.println("Push Name: " + contact.pushName());
+
+        BusinessMessageLinkTarget biz = client.profile().resolveBusinessMessageLink("https://wa.me/message/XYZ987").get();
+        System.out.println("Business JID: " + biz.jid());
+        System.out.println("Business Name: " + biz.verifiedName());
+        System.out.println("Prefilled Message: " + biz.message());
+    }
+}
+```
+
+---
+
+### 12. Business Profiles & USync User Info
+
+Fetch full WhatsApp business profiles (address, email, description, website list, categories, operating hours) and query multi-field user info via USync in a single network round trip:
+
+```java
+package com.example;
+
+import id.jawa.client.JaWaClient;
+import id.jawa.domain.model.BusinessProfile;
+import id.jawa.domain.model.UserInfo;
+
+import java.util.List;
+import java.util.Map;
+
+public class BusinessAndUserInfoExample {
+
+    public static void inspectUsers(JaWaClient client, String targetJid) throws Exception {
+        BusinessProfile profile = client.profile().getBusinessProfile(targetJid).get();
+        if (profile != null) {
+            System.out.println("Address: " + profile.address());
+            System.out.println("Email: " + profile.email());
+            System.out.println("Description: " + profile.description());
+            System.out.println("Websites: " + profile.websites());
+            for (BusinessProfile.Category cat : profile.categories()) {
+                System.out.println("Category: " + cat.name());
+            }
+        }
+
+        UserInfo info = client.profile().getUserInfo(targetJid).get();
+        if (info != null) {
+            System.out.println("About bio: " + info.status());
+            System.out.println("Profile picture ID: " + info.pictureId());
+            System.out.println("Associated LID: " + info.lid());
+            System.out.println("Active Devices: " + info.devices().size());
+        }
+
+        Map<String, UserInfo> batch = client.profile().getUserInfo(List.of(targetJid, "628987654321@s.whatsapp.net")).get();
+        System.out.println("Batch size: " + batch.size());
+    }
+}
+```
+
+---
+
+### 13. Advanced Group Administration
+
+Control group join approval requirements, member add mode (admin only versus all members), and manage pending membership approval requests:
+
+```java
+package com.example;
+
+import id.jawa.client.JaWaClient;
+import id.jawa.domain.model.GroupJoinRequest;
+
+import java.util.List;
+
+public class AdvancedGroupAdminExample {
+
+    public static void manageGroupSettings(JaWaClient client, String groupJid) throws Exception {
+        client.groups().setGroupJoinApprovalMode(groupJid, true).get();
+
+        client.groups().setGroupMemberAddMode(groupJid, true).get();
+
+        List<GroupJoinRequest> pending = client.groups().getGroupRequestParticipants(groupJid).get();
+        for (GroupJoinRequest req : pending) {
+            System.out.println("User waiting for approval: " + req.jid() + " at " + req.requestedAt());
+        }
+
+        if (!pending.isEmpty()) {
+            List<String> toApprove = List.of(pending.get(0).jid());
+            client.groups().updateGroupRequestParticipants(groupJid, toApprove, true).get();
+        }
+    }
+}
+```
+
+---
+
+### 14. Newsletter & Channel Management
+
+Interact with WhatsApp Channels / Newsletters by subscribing to live updates, sending reactions, marking messages as viewed, and reading typed newsletter history:
+
+```java
+package com.example;
+
+import id.jawa.client.JaWaClient;
+import id.jawa.domain.model.NewsletterMessage;
+
+import java.util.List;
+
+public class NewsletterExample {
+
+    public static void channelActions(JaWaClient client, String channelJid) throws Exception {
+        long durationSec = client.newsletters().subscribeLiveUpdates(channelJid).get();
+        System.out.println("Subscribed to live channel updates for: " + durationSec + "s");
+
+        client.newsletters().sendReaction(channelJid, "12345", "🔥");
+
+        client.newsletters().markViewed(channelJid, List.of(12345L, 12346L)).get();
+
+        List<NewsletterMessage> messages = client.newsletters().getMessages(channelJid, 20).get();
+        for (NewsletterMessage msg : messages) {
+            System.out.println("Message ID: " + msg.messageId() + " Views: " + msg.viewsCount());
+        }
+    }
+}
+```
+
+---
+
+### 15. Call Management
+
+Reject incoming WhatsApp voice and video calls programmatically:
+
+```java
+package com.example;
+
+import id.jawa.client.JaWaClient;
+
+public class CallManagementExample {
+
+    public static void handleIncomingCall(JaWaClient client, String callerJid, String callId) {
+        client.rejectCall(callerJid, callId).whenComplete((v, err) -> {
+            if (err == null) {
+                System.out.println("Call " + callId + " rejected successfully");
+            }
+        });
+    }
+}
+```
+
+---
+
+### 16. Offline Sync Message Filtering
+
+When connecting after being offline, WhatsApp sends backlogged offline messages. JaWa includes automatic offline message filtering to avoid responding to outdated commands while saving sender LID mappings:
+
+```java
+JaWaClient client = new JaWaClient(store)
+    .autoIgnoreOfflineMessages(true)
+    .offlineMessageGracePeriodSec(2);
+```
+
+| Method | Default | Description |
+| :--- | :--- | :--- |
+| `.autoIgnoreOfflineMessages(boolean)` | `true` | When true, ignores historical offline messages delivered during initial connection. |
+| `.offlineMessageGracePeriodSec(int)` | `2` | Number of seconds grace period around login timestamp for message evaluation. |
+
+---
+
 ## 📄 License
 
 This project is licensed under the terms of the **GNU General Public License v3.0** (GPL-3.0-or-later). See [LICENSE](LICENSE) for details.
