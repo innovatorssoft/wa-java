@@ -142,4 +142,21 @@ class JaWaClientServicesTest {
         client.offlineMessageGracePeriodSec(5);
         assertThat(client.offlineMessageGracePeriodSec()).isEqualTo(5);
     }
+
+    @Test
+    void privacyServiceAndProfileAdditionsInitialized(@TempDir Path tempDir) {
+        FileAuthStore store = new FileAuthStore(tempDir.resolve("test.session"));
+        JaWaClient client = new JaWaClient(store);
+
+        assertThat(client.privacy()).isNotNull();
+        assertThat(client.privacy()).isSameAs(client.privacy());
+
+        var q = id.jawa.feature.messaging.UsyncQuery.buildUserInfoQuery("iq1", "sid1", java.util.List.of("628123456789@s.whatsapp.net"));
+        assertThat(q.attr("xmlns")).isEqualTo("usync");
+        assertThat(q.child("usync")).isNotNull();
+
+        var groupIq = id.jawa.feature.messaging.GroupListQuery.buildGroupInfoQuery("iq2", "12345@g.us");
+        assertThat(groupIq.attr("to")).isEqualTo("12345@g.us");
+        assertThat(groupIq.child("query").attr("request")).isEqualTo("interactive");
+    }
 }

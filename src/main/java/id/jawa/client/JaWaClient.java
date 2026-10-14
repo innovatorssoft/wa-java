@@ -135,6 +135,7 @@ public final class JaWaClient implements AutoCloseable {
     private final NewsletterService newsletterService = new NewsletterService(this);
     private final ProfileService profileService = new ProfileService(this);
     private final ChatService chatService = new ChatService(this);
+    private final PrivacyService privacyService = new PrivacyService(this);
 
     private final java.util.concurrent.ConcurrentHashMap<String, id.jawa.feature.messaging.GroupListQuery.GroupInfo>
         groupCache = new java.util.concurrent.ConcurrentHashMap<>();
@@ -260,6 +261,7 @@ public final class JaWaClient implements AutoCloseable {
     public NewsletterService newsletters() { return newsletterService; }
     public ProfileService profile() { return profileService; }
     public ChatService chats() { return chatService; }
+    public PrivacyService privacy() { return privacyService; }
 
     public synchronized void connect() throws Exception {
         if (frame != null) throw new IllegalStateException("already connected");
@@ -2365,6 +2367,144 @@ public final class JaWaClient implements AutoCloseable {
             BinaryNode pic = resp.child("picture");
             return pic != null ? pic.attr("url") : null;
         });
+    }
+
+    public java.util.concurrent.CompletableFuture<id.jawa.domain.model.PrivacySettings> getPrivacySettings() {
+        String iqId = newIqId();
+        BinaryNode iq = new BinaryNode("iq", java.util.Map.of(
+            "id", iqId,
+            "to", id.jawa.domain.model.Jid.SERVER_WHATSAPP,
+            "type", "get",
+            "xmlns", "privacy"
+        ), java.util.List.of(new BinaryNode("privacy", java.util.Map.of(), null)));
+        return sendIqAsync(iq).thenApply(resp -> {
+            BinaryNode privacy = resp.child("privacy");
+            java.util.Map<String, String> map = new java.util.LinkedHashMap<>();
+            if (privacy != null) {
+                for (BinaryNode child : privacy.childrenList()) {
+                    if ("category".equals(child.tag())) {
+                        String name = child.attr("name");
+                        String val = child.attr("value");
+                        if (name != null && val != null) map.put(name, val);
+                    }
+                }
+            }
+            return new id.jawa.domain.model.PrivacySettings(
+                map.getOrDefault("groupadd", ""),
+                map.getOrDefault("last", ""),
+                map.getOrDefault("status", ""),
+                map.getOrDefault("profile", ""),
+                map.getOrDefault("readreceipts", ""),
+                map.getOrDefault("online", ""),
+                map.getOrDefault("calladd", ""),
+                map
+            );
+        });
+    }
+
+    public java.util.concurrent.CompletableFuture<Void> setPrivacySetting(String category, String value) {
+        String iqId = newIqId();
+        BinaryNode catNode = new BinaryNode("category", java.util.Map.of(
+            "name", category,
+            "value", value
+        ), null);
+        BinaryNode privacyNode = new BinaryNode("privacy", java.util.Map.of(), java.util.List.of(catNode));
+        BinaryNode iq = new BinaryNode("iq", java.util.Map.of(
+            "id", iqId,
+            "to", id.jawa.domain.model.Jid.SERVER_WHATSAPP,
+            "type", "set",
+            "xmlns", "privacy"
+        ), java.util.List.of(privacyNode));
+        return sendIqAsync(iq).thenAccept(resp -> {
+            if ("error".equals(resp.attr("type"))) {
+                throw new IllegalStateException("Failed to set privacy setting: " + resp);
+            }
+        });
+    }
+
+    public java.util.concurrent.CompletableFuture<Void> setDefaultDisappearingTimer(int seconds) {
+        String iqId = newIqId();
+        BinaryNode node = new BinaryNode("disappearing_mode", java.util.Map.of(
+            "duration", String.valueOf(seconds)
+        ), null);
+        BinaryNode iq = new BinaryNode("iq", java.util.Map.of(
+            "id", iqId,
+            "to", id.jawa.domain.model.Jid.SERVER_WHATSAPP,
+            "type", "set",
+            "xmlns", "disappearing_mode"
+        ), java.util.List.of(node));
+        return sendIqAsync(iq).thenAccept(resp -> {
+            if ("error".equals(resp.attr("type"))) {
+                throw new IllegalStateException("Failed to set default disappearing timer: " + resp);
+            }
+        });
+    }
+
+    public java.util.concurrent.CompletableFuture<String> getContactQrLink(boolean revoke) {
+        String iqId = newIqId();
+        BinaryNode qrNode = new BinaryNode("qr", java.util.Map.of(
+            "type", "contact",
+            "action", revoke ? "revoke" : "get"
+        ), null);
+        BinaryNode iq = new BinaryNode("iq", java.util.Map.of(
+            "id", iqId,
+            "type", "set",
+            "xmlns", "w:qr"
+        ), java.util.List.of(qrNode));
+        return sendIqAsync(iq).thenApply(resp -> {
+            BinaryNode qr = resp.child("qr");
+            if (qr == null) throw new IllegalStateException("no qr node in response: " + resp);
+            String code = qr.attr("code");
+            if (code == null) throw new IllegalStateException("no code in qr response");
+            return "https://wa.me/qr/" + code;
+        });
+    }
+
+    public java.util.concurrent.CompletableFuture<id.jawa.domain.model.ContactQrTarget> resolveContactQrLink(String codeOrUrl) {
+        String code = codeOrUrl;
+        if (code.contains("/")) code = code.substring(code.lastIndexOf('/') + 1);
+        if (code.contains("?")) code = code.substring(0, code.indexOf('?'));
+        String iqId = newIqId();
+        BinaryNode qrNode = new BinaryNode("qr", java.util.Map.of(
+            "code", code
+        ), null);
+        BinaryNode iq = new BinaryNode("iq", java.util.Map.of(
+            "id", iqId,
+            "type", "get",
+            "xmlns", "w:qr"
+        ), java.util.List.of(qrNode));
+        return sendIqAsync(iq).thenApply(resp -> {
+            BinaryNode qr = resp.child("qr");
+            if (qr == null) throw new IllegalStateException("contact qr link not found: " + resp);
+            return new id.jawa.domain.model.ContactQrTarget(
+                qr.attr("jid"),
+                qr.attr("notify"),
+                qr.attr("type")
+            );
+        });
+    }
+
+    public java.util.concurrent.CompletableFuture<java.util.Map<String, id.jawa.domain.model.UserInfo>>
+            getUserInfo(java.util.Collection<String> targetJids) {
+        String iqId = newIqId();
+        String sid = newIqId();
+        BinaryNode q = id.jawa.feature.messaging.UsyncQuery.buildUserInfoQuery(iqId, sid, targetJids);
+        LOG.debug("Sent user-info query id={} for {} jids", iqId, targetJids.size());
+        return sendIqAsync(q).thenApply(resp -> {
+            var map = id.jawa.feature.messaging.UsyncQuery.parseUserInfoResult(resp);
+            for (var entry : map.entrySet()) {
+                if (entry.getValue().lid() != null && !entry.getValue().lid().isEmpty()) {
+                    LID_TO_PN_MAP.put(entry.getValue().lid(), entry.getKey());
+                }
+            }
+            return map;
+        });
+    }
+
+    public java.util.concurrent.CompletableFuture<id.jawa.domain.model.UserInfo>
+            getUserInfo(String targetJid) {
+        return getUserInfo(java.util.List.of(targetJid))
+            .thenApply(map -> map.get(targetJid));
     }
 
     public AuthCreds creds() { return creds; }

@@ -1,8 +1,12 @@
 package id.jawa.client;
 
+import id.jawa.domain.model.ContactQrTarget;
+import id.jawa.domain.model.UserInfo;
 import id.jawa.protocol.codec.BinaryNode;
 
+import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
 public final class ProfileService {
@@ -35,5 +39,25 @@ public final class ProfileService {
 
     public CompletableFuture<List<String>> fetchBlockList() {
         return client.fetchBlockList();
+    }
+
+    public CompletableFuture<String> getContactQrLink(boolean revoke) {
+        return client.getContactQrLink(revoke);
+    }
+
+    public CompletableFuture<String> getContactQrLink() {
+        return client.getContactQrLink(false);
+    }
+
+    public CompletableFuture<ContactQrTarget> resolveContactQrLink(String codeOrUrl) {
+        return client.resolveContactQrLink(codeOrUrl);
+    }
+
+    public CompletableFuture<Map<String, UserInfo>> getUserInfo(Collection<String> targetJids) {
+        return client.getUserInfo(targetJids);
+    }
+
+    public CompletableFuture<UserInfo> getUserInfo(String targetJid) {
+        return client.getUserInfo(targetJid);
     }
 }

@@ -15,6 +15,10 @@ import id.jawa.domain.model.Jid;
 
 public record DeviceInfo(int id, int keyIndex, boolean hosted) {
 
+    public DeviceInfo(int id, int keyIndex) {
+        this(id, keyIndex, false);
+    }
+
     public Jid asJid(String user, String server) {
         int domain = switch (server) {
             case Jid.SERVER_LID         -> Jid.DOMAIN_LID;
