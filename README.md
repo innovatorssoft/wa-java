@@ -56,8 +56,146 @@ id.jawa
 
 ---
 
-## 🚀 Code Examples
+## 🧩 Modular Sub-Services
 
+`JaWaClient` organizes functionality into clean, domain-scoped sub-services for clearer and more discoverable API access:
+
+```java
+client.messages().sendText(chatJid, "Hello from JaWa!");
+client.messages().sendReaction(chatJid, msgId, null, false, "👍");
+String nextId = client.messages().generateMessageId();
+
+client.groups().createGroup("Developers Chat", List.of("628123456789"));
+client.groups().getGroupInviteLink(groupJid);
+client.groups().joinGroupWithLink("https://chat.whatsapp.com/Code123");
+client.groups().setGroupLocked(groupJid, true);
+client.groups().setGroupAnnounce(groupJid, true);
+client.groups().setDisappearingTimer(groupJid, 604800);
+
+client.media().sendImage(chatJid, imageBytes, "image/jpeg", "Check this out!");
+
+client.newsletters().sendText(newsletterJid, "New update published!");
+
+client.profile().updateStatus("Building with JaWa ☕");
+
+client.chats().subscribePresence(targetJid);
+client.chats().sendChatPresence(chatJid, ChatPresence.COMPOSING);
+client.chats().setDisappearingTimer(chatJid, 86400);
+```
+
+> [!NOTE]
+> All legacy top-level methods on `JaWaClient` (e.g. `client.sendText(...)`, `client.createGroup(...)`) remain fully supported for 100% backward compatibility.
+
+---
+
+## 🎛️ Client Configuration
+
+`JaWaClient` provides fluent, chainable configuration options to customize bot and connection behavior:
+
+```java
+JaWaClient client = new JaWaClient(store)
+    .autoReconnect(true)
+    .autoReadReceipt(true)
+    .autoComposingPresence(true)
+    .autoPreKeyUpload(true);
+```
+
+### Configuration Options Reference
+
+| Method | Default | Description |
+| :--- | :--- | :--- |
+| `.autoReconnect(boolean)` | `true` | Automatically reconnects with exponential backoff on transient socket disconnects. |
+| `.autoReadReceipt(boolean)` | `false` | Sends an automatic `receipt type=read` (blue ticks) to the sender upon receiving inbound messages. |
+| `.autoComposingPresence(boolean)` | `false` | Sends a `composing` presence status (typing...) prior to dispatching outgoing messages. |
+| `.autoPreKeyUpload(boolean)` | `true` | Automatically uploads 30 fresh Signal One-Time PreKeys when server inventory falls below 5. |
+
+---
+
+<a id="daftar-panduan"></a>
+## 📖 Panduan Cepat & Indeks Fitur
+
+Gunakan navigasi interaktif di bawah ini untuk mempelajari alur kerja dasar dan langsung melompat ke contoh kode serta penjelasan teknis setiap fitur:
+
+### 🔄 Alur Kerja Dasar (Lifecycle Guide)
+
+1. **Auth & Signal Storage**: Siapkan penyimpanan kredensial menggunakan `FileAuthStore` (file `.session`) atau `SqliteAuthStore` (database SQLite).
+2. **Inisialisasi Client**: Buat objek `JaWaClient` dengan meneruskan auth store dan path signal store, lalu atur konfigurasi yang diinginkan.
+3. **Pemasangan Sesi (Pairing)**: Hubungkan bot ke WhatsApp pada ponsel utama via kode pairing 8 karakter (`requestPairingCode`) atau pemindaian QR Terminal.
+4. **Listener Event**: Daftarkan listener menggunakan `client.listener(...)` untuk menangani pesan masuk (`onMessage`), pembaruan QR (`onQr`), koneksi (`onConnected`), dan event lainnya.
+5. **Akses Sub-Service**: Kirim pesan teks, tombol interaktif, stiker, media, serta kelola grup dan privasi menggunakan sub-services terstruktur (`client.messages()`, `client.groups()`, `client.media()`, `client.privacy()`, `client.chats()`, `client.newsletters()`, `client.profile()`).
+
+---
+
+### 📑 Daftar Indeks Fitur (Klik untuk Menuju Kode)
+
+#### 🔐 1. Autentikasi & Penyimpanan Sesi
+| No | Fitur & Topik | Deskripsi Singkat | Navigasi Langsung |
+| :--- | :--- | :--- | :--- |
+| 1 | **Phone Pairing Code** | Pasangkan bot menggunakan kode 8 digit ke nomor ponsel | [Buka Panduan & Kode](#phone-pairing) |
+| 2 | **Terminal QR Code Pairing** | Pindai kode QR ASCII langsung pada terminal console | [Buka Panduan & Kode](#qr-pairing) |
+| 3 | **SQLite Database Session Storage** | Simpan sesi, keys, dan kredensial di database SQLite | [Buka Panduan & Kode](#sqlite-store) |
+| 4 | **Logout & Session Unlinking** | Putus tautan sesi companion secara aman dan bersihkan data | [Buka Panduan & Kode](#logout-session) |
+
+#### 💬 2. Pesan & Fitur Interaktif
+| No | Fitur & Topik | Deskripsi Singkat | Navigasi Langsung |
+| :--- | :--- | :--- | :--- |
+| 5 | **LID to Phone Number Resolver** | Resolusi sender JID format LID ke nomor telepon asli penerima | [Buka Panduan & Kode](#lid-pn) |
+| 6 | **Interactive CTA Buttons & Lists** | Kirim tombol Call To Action (URL, Copy, Quick Reply) & Dropdown | [Buka Panduan & Kode](#buttons-list) |
+| 7 | **Carousel Cards Slider** | Slider kartu horizontal interaktif dengan gambar dan tombol aksi | [Buka Panduan & Kode](#carousel) |
+| 8 | **Message Starring & Chat Cleanup** | Bintang pesan penting, hapus perorangan, atau bersihkan riwayat chat | [Buka Panduan & Kode](#star-cleanup) |
+| 9 | **Offline Sync Message Filtering** | Abaikan pesan kedaluwarsa saat bot baru online kembali | [Buka Panduan & Kode](#offline-sync) |
+| 10 | **Companion Privacy Receipts** | Tandai dibaca secara lokal (read-self) tanpa memicu centang biru | [Buka Panduan & Kode](#privacy-receipts) |
+
+#### 📸 3. Media, Dokumen & Stiker
+| No | Fitur & Topik | Deskripsi Singkat | Navigasi Langsung |
+| :--- | :--- | :--- | :--- |
+| 11 | **Automatic Media Downloader** | Unduh dan dekripsi foto, video, audio PTT, dokumen, dan view-once | [Buka Panduan & Kode](#media-downloader) |
+| 12 | **WebP Stickers (Statis & Animasi)** | Kirim stiker WebP statis maupun animasi stiker bergerak | [Buka Panduan & Kode](#stickers) |
+| 13 | **Media Deletion from WhatsApp CDN** | Hapus file media yang telah terunggah dari server MMS CDN | [Buka Panduan & Kode](#media-delete) |
+| 14 | **Media Retry Requests (404/410)** | Minta ponsel utama mengunggah ulang media expired dan dekripsi hasilnya | [Buka Panduan & Kode](#media-retry) |
+
+#### 👥 4. Grup & Komunitas
+| No | Fitur & Topik | Deskripsi Singkat | Navigasi Langsung |
+| :--- | :--- | :--- | :--- |
+| 15 | **Advanced Group Administration** | Buat grup, kelola peserta/admin, kunci grup, dan link invite | [Buka Panduan & Kode](#group-admin) |
+| 16 | **Group Invite Message Acceptance** | Terima dan masuki grup dari pesan undangan privat | [Buka Panduan & Kode](#group-invite) |
+| 17 | **Community Management** | Kelola Komunitas WhatsApp, inspeksi subgroup, link/unlink grup | [Buka Panduan & Kode](#community) |
+
+#### 📢 5. Saluran / Channel (Newsletter)
+| No | Fitur & Topik | Deskripsi Singkat | Navigasi Langsung |
+| :--- | :--- | :--- | :--- |
+| 18 | **Newsletter & Channel Management** | Follow, mute, reaksi emoji, live updates, ToS notice, dan riwayat pesan | [Buka Panduan & Kode](#newsletter-channel) |
+
+#### 🔒 6. Pengaturan Privasi & Keamanan Akun
+| No | Fitur & Topik | Deskripsi Singkat | Navigasi Langsung |
+| :--- | :--- | :--- | :--- |
+| 19 | **Privacy Settings & Ephemeral** | Atur privasi last seen, online, foto, centang biru, disappearing timer | [Buka Panduan & Kode](#privacy-settings) |
+| 20 | **Blocklist Management** | Kueri daftar blokir, blokir dan buka blokir nomor kontak | [Buka Panduan & Kode](#blocklist) |
+| 21 | **Status Privacy Settings** | Atur siapa saja kontak yang diizinkan melihat status cerita akun | [Buka Panduan & Kode](#status-privacy) |
+| 22 | **Profile, Privacy & Blocklist API** | Operasi cepat bio status, foto avatar, dan pemblokiran kontak | [Buka Panduan & Kode](#profile-privacy-api) |
+
+#### 👤 7. Profil, Kontak & WhatsApp Bisnis
+| No | Fitur & Topik | Deskripsi Singkat | Navigasi Langsung |
+| :--- | :--- | :--- | :--- |
+| 23 | **Profile Text Status (About / Bio)** | Ubah status info bio About profil akun via WhatsApp MEX GraphQL | [Buka Panduan & Kode](#about-bio) |
+| 24 | **High-Resolution Profile Pictures** | Dapatkan URL foto profil resolusi tinggi (HD) dan thumbnail | [Buka Panduan & Kode](#profile-picture) |
+| 25 | **Contact QR & Business Short Links** | Buat tautan QR kontak dan resolusi tautan pesan pendek bisnis | [Buka Panduan & Kode](#qr-shortlinks) |
+| 26 | **Business Profiles & USync Info** | Kueri jam operasional, alamat, email, kategori, dan query USync | [Buka Panduan & Kode](#biz-usync) |
+| 27 | **Order Details (Business Commerce)** | Parsing detail checkout transaksi pesanan barang dan total harga | [Buka Panduan & Kode](#order-details) |
+| 28 | **Updating Push Name** | Perbarui nama tampilan perangkat bot yang terlihat di WhatsApp | [Buka Panduan & Kode](#push-name) |
+| 29 | **Meta AI Bot Discovery** | Temukan daftar bot dan persona AI Meta yang tersedia di server | [Buka Panduan & Kode](#bot-discovery) |
+
+#### ⚙️ 8. Manajemen Chat & Panggilan
+| No | Fitur & Topik | Deskripsi Singkat | Navigasi Langsung |
+| :--- | :--- | :--- | :--- |
+| 30 | **Chat Management (Pin, Mute, Archive)** | Sematkan chat, arsipkan, bisukan obrolan, dan timer disappearing | [Buka Panduan & Kode](#chat-management) |
+| 31 | **Call Management (Tolak Panggilan)** | Tolak panggilan suara atau video yang masuk secara otomatis | [Buka Panduan & Kode](#call-management) |
+
+---
+
+## 🚀 Contoh Kode & Panduan Implementasi
+
+<a id="sec-1"></a><a id="lid-pn"></a>
 ### 1. Extract & Resolve Phone Number (PN)
 
 Extract clean phone number digits from incoming sender JID, with automatic LID-to-PN resolution via `JaWaClient.LID_TO_PN_MAP`:
@@ -112,8 +250,11 @@ public class PhoneNumberResolverExample {
 }
 ```
 
+[↑ Kembali ke Indeks Fitur](#daftar-panduan)
+
 ---
 
+<a id="sec-2"></a><a id="phone-pairing"></a>
 ### 2. Phone Pairing Code Connection
 
 Connect and pair using an 8-character pairing code sent directly to your phone number:
@@ -165,8 +306,11 @@ public class PhonePairingExample {
 }
 ```
 
+[↑ Kembali ke Indeks Fitur](#daftar-panduan)
+
 ---
 
+<a id="sec-3"></a><a id="qr-pairing"></a>
 ### 3. Terminal QR Code Pairing
 
 Connect and pair by scanning an ASCII QR matrix in the terminal:
@@ -208,63 +352,11 @@ public class QrPairingExample {
 }
 ```
 
----
-
-## 🎛️ Client Configuration
-
-`JaWaClient` provides fluent, chainable configuration options to customize bot and connection behavior:
-
-```java
-JaWaClient client = new JaWaClient(store)
-    .autoReconnect(true)
-    .autoReadReceipt(true)
-    .autoComposingPresence(true)
-    .autoPreKeyUpload(true);
-```
-
-### Configuration Options Reference
-
-| Method | Default | Description |
-| :--- | :--- | :--- |
-| `.autoReconnect(boolean)` | `true` | Automatically reconnects with exponential backoff on transient socket disconnects. |
-| `.autoReadReceipt(boolean)` | `false` | Sends an automatic `receipt type=read` (blue ticks) to the sender upon receiving inbound messages. |
-| `.autoComposingPresence(boolean)` | `false` | Sends a `composing` presence status (typing...) prior to dispatching outgoing messages. |
-| `.autoPreKeyUpload(boolean)` | `true` | Automatically uploads 30 fresh Signal One-Time PreKeys when server inventory falls below 5. |
+[↑ Kembali ke Indeks Fitur](#daftar-panduan)
 
 ---
 
-## 🧩 Modular Sub-Services
-
-`JaWaClient` organizes functionality into clean, domain-scoped sub-services for clearer and more discoverable API access:
-
-```java
-client.messages().sendText(chatJid, "Hello from JaWa!");
-client.messages().sendReaction(chatJid, msgId, null, false, "👍");
-String nextId = client.messages().generateMessageId();
-
-client.groups().createGroup("Developers Chat", List.of("628123456789"));
-client.groups().getGroupInviteLink(groupJid);
-client.groups().joinGroupWithLink("https://chat.whatsapp.com/Code123");
-client.groups().setGroupLocked(groupJid, true);
-client.groups().setGroupAnnounce(groupJid, true);
-client.groups().setDisappearingTimer(groupJid, 604800);
-
-client.media().sendImage(chatJid, imageBytes, "image/jpeg", "Check this out!");
-
-client.newsletters().sendText(newsletterJid, "New update published!");
-
-client.profile().updateStatus("Building with JaWa ☕");
-
-client.chats().subscribePresence(targetJid);
-client.chats().sendChatPresence(chatJid, ChatPresence.COMPOSING);
-client.chats().setDisappearingTimer(chatJid, 86400);
-```
-
-> [!NOTE]
-> All legacy top-level methods on `JaWaClient` (e.g. `client.sendText(...)`, `client.createGroup(...)`) remain fully supported for 100% backward compatibility.
-
----
-
+<a id="sec-4"></a><a id="buttons-list"></a>
 ### 4. Interactive CTA Buttons & Selection Lists
 
 Send rich interactive call-to-action buttons (URL link, copy promo code, quick reply) and single-selection dropdown lists:
@@ -321,8 +413,11 @@ public class ButtonsAndListExample {
 }
 ```
 
+[↑ Kembali ke Indeks Fitur](#daftar-panduan)
+
 ---
 
+<a id="sec-5"></a><a id="carousel"></a>
 ### 5. Carousel Cards Slider
 
 Send horizontal scrolling carousel cards featuring images, descriptions, and action buttons:
@@ -362,8 +457,11 @@ public class CarouselExample {
 }
 ```
 
+[↑ Kembali ke Indeks Fitur](#daftar-panduan)
+
 ---
 
+<a id="sec-6"></a><a id="sqlite-store"></a>
 ### 6. SQLite Database Session Storage & Maintenance
 
 Save and restore WhatsApp credentials & session state using an SQLite database (`SqliteAuthStore`):
@@ -410,8 +508,11 @@ public class SqliteSessionExample {
 | `store.getStats()` | Returns active row counts across `credentials`, `sessions`, `prekeys`, `sender_keys`, and `appstate_keys`. |
 | `store.clearAll()` | Clears all stored records and keys for clean session unpairing and reset. |
 
+[↑ Kembali ke Indeks Fitur](#daftar-panduan)
+
 ---
 
+<a id="sec-7"></a><a id="media-downloader"></a>
 ### 7. Automatic Media Downloader Helper
 
 Automatically download and decrypt attachments (Image, Video, Audio PTT, Document, Sticker) from an inbound message, with automatic fallback resolution to `directPath` via WhatsApp MMG CDN if direct URLs are blank:
@@ -435,8 +536,11 @@ public class MediaDownloadExample {
 }
 ```
 
+[↑ Kembali ke Indeks Fitur](#daftar-panduan)
+
 ---
 
+<a id="sec-8"></a><a id="profile-privacy-api"></a>
 ### 8. Profile, Privacy & Blocklist API
 
 Manage account bio status, fetch profile picture URLs, and manage contact blocklists:
@@ -463,8 +567,11 @@ public class ProfilePrivacyExample {
 }
 ```
 
+[↑ Kembali ke Indeks Fitur](#daftar-panduan)
+
 ---
 
+<a id="sec-9"></a><a id="chat-management"></a>
 ### 9. Chat Management (Pin, Archive, Mute & Disappearing Messages)
 
 Manage chat pin, archive, mute states, and ephemeral disappearing message timers:
@@ -515,8 +622,11 @@ To configure or disable automatic wrapping:
 client.autoEphemeral(false);
 ```
 
+[↑ Kembali ke Indeks Fitur](#daftar-panduan)
+
 ---
 
+<a id="sec-10"></a><a id="privacy-settings"></a>
 ### 10. Privacy Settings & Default Ephemeral Timer
 
 Inspect and configure account privacy visibility across categories (last seen, profile photo, status, online status, read receipts) and set the default disappearing message timer for all new chats:
@@ -557,8 +667,11 @@ public class PrivacyExample {
 | `readreceipts` | Read receipts (blue ticks) | `all`, `none` |
 | `calladd` | Who can call this account | `all`, `known` |
 
+[↑ Kembali ke Indeks Fitur](#daftar-panduan)
+
 ---
 
+<a id="sec-11"></a><a id="qr-shortlinks"></a>
 ### 11. Personal Contact QR & Business Short Links
 
 Generate personal contact QR links (`https://wa.me/qr/<code>`), revoke them, or resolve contact and business message short links (`https://wa.me/message/<code>`):
@@ -591,8 +704,11 @@ public class QrAndShortLinkExample {
 }
 ```
 
+[↑ Kembali ke Indeks Fitur](#daftar-panduan)
+
 ---
 
+<a id="sec-12"></a><a id="biz-usync"></a>
 ### 12. Business Profiles & USync User Info
 
 Fetch full WhatsApp business profiles (address, email, description, website list, categories, operating hours) and query multi-field user info via USync in a single network round trip:
@@ -635,8 +751,11 @@ public class BusinessAndUserInfoExample {
 }
 ```
 
+[↑ Kembali ke Indeks Fitur](#daftar-panduan)
+
 ---
 
+<a id="sec-13"></a><a id="group-admin"></a>
 ### 13. Advanced Group Administration
 
 Control group join approval requirements, member add mode (admin only versus all members), and manage pending membership approval requests:
@@ -669,8 +788,11 @@ public class AdvancedGroupAdminExample {
 }
 ```
 
+[↑ Kembali ke Indeks Fitur](#daftar-panduan)
+
 ---
 
+<a id="sec-14"></a><a id="newsletter-channel"></a>
 ### 14. Newsletter & Channel Management
 
 Interact with WhatsApp Channels / Newsletters by subscribing to live updates, following, muting, fetching metadata, sending reactions, marking messages as viewed, and reading typed newsletter history:
@@ -726,8 +848,11 @@ public class NewsletterExample {
 }
 ```
 
+[↑ Kembali ke Indeks Fitur](#daftar-panduan)
+
 ---
 
+<a id="sec-15"></a><a id="call-management"></a>
 ### 15. Call Management
 
 Reject incoming WhatsApp voice and video calls programmatically:
@@ -749,8 +874,11 @@ public class CallManagementExample {
 }
 ```
 
+[↑ Kembali ke Indeks Fitur](#daftar-panduan)
+
 ---
 
+<a id="sec-16"></a><a id="offline-sync"></a>
 ### 16. Offline Sync Message Filtering
 
 When connecting after being offline, WhatsApp sends backlogged offline messages. JaWa includes automatic offline message filtering to avoid responding to outdated commands while saving sender LID mappings:
@@ -766,8 +894,11 @@ JaWaClient client = new JaWaClient(store)
 | `.autoIgnoreOfflineMessages(boolean)` | `true` | When true, ignores historical offline messages delivered during initial connection. |
 | `.offlineMessageGracePeriodSec(int)` | `2` | Number of seconds grace period around login timestamp for message evaluation. |
 
+[↑ Kembali ke Indeks Fitur](#daftar-panduan)
+
 ---
 
+<a id="sec-17"></a><a id="push-name"></a>
 ### 17. Updating Push Name (Companion Display Name)
 
 Change the companion device display name sent in presence broadcasts:
@@ -786,8 +917,11 @@ public class PushNameExample {
 }
 ```
 
+[↑ Kembali ke Indeks Fitur](#daftar-panduan)
+
 ---
 
+<a id="sec-18"></a><a id="logout-session"></a>
 ### 18. Logout & Session Unlinking
 
 Safely unlink the companion device from WhatsApp Web, purge credentials from storage, and close socket connection:
@@ -806,8 +940,11 @@ public class LogoutExample {
 }
 ```
 
+[↑ Kembali ke Indeks Fitur](#daftar-panduan)
+
 ---
 
+<a id="sec-19"></a><a id="order-details"></a>
 ### 19. Order Details (WhatsApp Business & Commerce Orders)
 
 Fetch and parse structured order details from incoming `OrderMessage` containing order ID and base64 security token:
@@ -837,8 +974,11 @@ public class OrderExample {
 }
 ```
 
+[↑ Kembali ke Indeks Fitur](#daftar-panduan)
+
 ---
 
+<a id="sec-20"></a><a id="star-cleanup"></a>
 ### 20. Message Starring and Chat Cleanup
 
 Star messages, delete chats, or clear message histories:
@@ -860,8 +1000,11 @@ public class StarAndChatExample {
 }
 ```
 
+[↑ Kembali ke Indeks Fitur](#daftar-panduan)
+
 ---
 
+<a id="sec-21"></a><a id="blocklist"></a>
 ### 21. Blocklist Management
 
 Retrieve full blocklist with companion LID and phone number mappings, or block and unblock contacts:
@@ -888,8 +1031,11 @@ public class BlocklistExample {
 }
 ```
 
+[↑ Kembali ke Indeks Fitur](#daftar-panduan)
+
 ---
 
+<a id="sec-22"></a><a id="status-privacy"></a>
 ### 22. Status Privacy Settings
 
 Check status broadcast audience settings (contacts, blacklist, or whitelist modes):
@@ -913,8 +1059,11 @@ public class StatusPrivacyExample {
 }
 ```
 
+[↑ Kembali ke Indeks Fitur](#daftar-panduan)
+
 ---
 
+<a id="sec-23"></a><a id="about-bio"></a>
 ### 23. Profile Text Status (About / Bio)
 
 Update the user profile "About" bio text via WhatsApp Web MEX mutation:
@@ -933,8 +1082,11 @@ public class ProfileStatusExample {
 }
 ```
 
+[↑ Kembali ke Indeks Fitur](#daftar-panduan)
+
 ---
 
+<a id="sec-24"></a><a id="community"></a>
 ### 24. Community Management
 
 Manage WhatsApp Communities, inspect child subgroups, query linked participants across all community groups, or link and unlink child groups:
@@ -964,8 +1116,11 @@ public class CommunityExample {
 }
 ```
 
+[↑ Kembali ke Indeks Fitur](#daftar-panduan)
+
 ---
 
+<a id="sec-25"></a><a id="group-invite"></a>
 ### 25. Group Invite Message Acceptance
 
 Accept private group invitations sent as invite messages (containing group JID, inviter JID, code, and expiration timestamp):
@@ -988,8 +1143,11 @@ public class GroupInviteMessageExample {
 }
 ```
 
+[↑ Kembali ke Indeks Fitur](#daftar-panduan)
+
 ---
 
+<a id="sec-26"></a><a id="profile-picture"></a>
 ### 26. High-Resolution Profile Pictures
 
 Fetch structured profile picture metadata including direct path, image ID, and URLs for full-resolution HD photos or preview thumbnails:
@@ -1018,8 +1176,11 @@ public class ProfilePictureExample {
 }
 ```
 
+[↑ Kembali ke Indeks Fitur](#daftar-panduan)
+
 ---
 
+<a id="sec-27"></a><a id="bot-discovery"></a>
 ### 27. Meta AI Bot Discovery
 
 Discover WhatsApp AI personas and bot accounts registered on the server:
@@ -1043,8 +1204,11 @@ public class BotDiscoveryExample {
 }
 ```
 
+[↑ Kembali ke Indeks Fitur](#daftar-panduan)
+
 ---
 
+<a id="sec-28"></a><a id="stickers"></a>
 ### 28. WebP Stickers (Static & Animated)
 
 Send static or animated WebP stickers to private chats or groups:
@@ -1070,8 +1234,11 @@ public class StickerExample {
 }
 ```
 
+[↑ Kembali ke Indeks Fitur](#daftar-panduan)
+
 ---
 
+<a id="sec-29"></a><a id="media-delete"></a>
 ### 29. Media Deletion from WhatsApp CDN
 
 Explicitly delete uploaded media files from WhatsApp CDN servers using direct path and encrypted file hash:
@@ -1091,8 +1258,11 @@ public class MediaDeleteExample {
 }
 ```
 
+[↑ Kembali ke Indeks Fitur](#daftar-panduan)
+
 ---
 
+<a id="sec-30"></a><a id="media-retry"></a>
 ### 30. Media Retry Requests (404/410 Handling)
 
 Request phone re-upload when media files expire or return 404/410, and decrypt incoming retry responses:
@@ -1119,8 +1289,11 @@ public class MediaRetryExample {
 }
 ```
 
+[↑ Kembali ke Indeks Fitur](#daftar-panduan)
+
 ---
 
+<a id="sec-31"></a><a id="privacy-receipts"></a>
 ### 31. Companion Privacy Receipts (Read-Self & Played-Self)
 
 Mark messages or view-once media as read locally on companion devices without sending blue ticks to the counterparty:
@@ -1139,6 +1312,8 @@ public class PrivacyReceiptsExample {
     }
 }
 ```
+
+[↑ Kembali ke Indeks Fitur](#daftar-panduan)
 
 ---
 
