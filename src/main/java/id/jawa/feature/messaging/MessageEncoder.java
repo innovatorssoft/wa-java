@@ -396,6 +396,27 @@ public final class MessageEncoder {
         return Wa.Message.newBuilder().setImageMessage(b.build()).build();
     }
 
+    public static Wa.Message stickerMessage(
+            String uploadedUrl,
+            String directPath,
+            byte[] mediaKey,
+            byte[] fileSha256,
+            byte[] fileEncSha256,
+            long fileLength,
+            boolean isAnimated) {
+        Wa.Message.StickerMessage.Builder b = Wa.Message.StickerMessage.newBuilder()
+            .setUrl(uploadedUrl != null ? uploadedUrl : "")
+            .setDirectPath(directPath != null ? directPath : "")
+            .setMediaKey(bs(mediaKey))
+            .setFileSha256(bs(fileSha256))
+            .setFileEncSha256(bs(fileEncSha256))
+            .setFileLength(fileLength)
+            .setMimetype("image/webp")
+            .setIsAnimated(isAnimated)
+            .setMediaKeyTimestamp(System.currentTimeMillis() / 1000);
+        return Wa.Message.newBuilder().setStickerMessage(b.build()).build();
+    }
+
     public static Wa.Message reply(String text,
                                    String quotedMsgId,
                                    String quotedSender,

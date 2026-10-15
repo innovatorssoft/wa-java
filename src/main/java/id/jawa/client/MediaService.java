@@ -2,6 +2,7 @@ package id.jawa.client;
 
 import id.jawa.feature.media.MediaConn;
 import id.jawa.feature.media.MediaCrypto;
+import id.jawa.feature.messaging.MessageReceiver;
 import id.jawa.proto.Wa;
 
 import java.util.concurrent.CompletableFuture;
@@ -59,6 +60,27 @@ public final class MediaService {
 
     public CompletableFuture<String> sendDocument(String chatJid, byte[] docBytes, String mimetype, String fileName, String title) {
         return client.sendDocument(chatJid, docBytes, mimetype, fileName, title);
+    }
+
+    public CompletableFuture<String> sendSticker(String chatJid, byte[] webpBytes, boolean isAnimated) {
+        return client.sendSticker(chatJid, webpBytes, isAnimated);
+    }
+
+    public CompletableFuture<String> sendSticker(String chatJid, byte[] webpBytes) {
+        return client.sendSticker(chatJid, webpBytes, false);
+    }
+
+    public CompletableFuture<Void> deleteMedia(String directPath, byte[] encFileHash, MediaCrypto.MediaType type) {
+        return client.deleteMedia(directPath, encFileHash, type);
+    }
+
+    public CompletableFuture<Void> sendMediaRetryReceipt(String messageId, String chatJid, String senderJid,
+                                                         boolean isFromMe, boolean isGroup, byte[] mediaKey) {
+        return client.sendMediaRetryReceipt(messageId, chatJid, senderJid, isFromMe, isGroup, mediaKey);
+    }
+
+    public CompletableFuture<Void> sendMediaRetryReceipt(MessageReceiver.Decoded target, byte[] mediaKey) {
+        return client.sendMediaRetryReceipt(target, mediaKey);
     }
 
     public CompletableFuture<MediaConn> refreshMediaConn() {

@@ -145,6 +145,31 @@ public final class MessagingService {
         return client.starMessage(chatJid, target.msgId(), star);
     }
 
+    public CompletableFuture<String> sendSticker(String chatJid, byte[] webpBytes, boolean isAnimated) {
+        return client.sendSticker(chatJid, webpBytes, isAnimated);
+    }
+
+    public CompletableFuture<String> sendSticker(String chatJid, byte[] webpBytes) {
+        return client.sendSticker(chatJid, webpBytes, false);
+    }
+
+    public void sendReadSelfReceipt(String chatJid, String msgId) {
+        client.sendReadSelfReceipt(chatJid, msgId);
+    }
+
+    public void sendPlayedSelfReceipt(String chatJid, String msgId) {
+        client.sendPlayedSelfReceipt(chatJid, msgId);
+    }
+
+    public CompletableFuture<Void> sendMediaRetryReceipt(String messageId, String chatJid, String senderJid,
+                                                         boolean isFromMe, boolean isGroup, byte[] mediaKey) {
+        return client.sendMediaRetryReceipt(messageId, chatJid, senderJid, isFromMe, isGroup, mediaKey);
+    }
+
+    public CompletableFuture<Void> sendMediaRetryReceipt(MessageReceiver.Decoded target, byte[] mediaKey) {
+        return client.sendMediaRetryReceipt(target, mediaKey);
+    }
+
     public String generateMessageId() {
         return client.generateMessageId();
     }

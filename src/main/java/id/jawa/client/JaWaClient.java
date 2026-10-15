@@ -1577,6 +1577,34 @@ public final class JaWaClient implements AutoCloseable {
                     documentBytes.length, mimetype, fileName, title)));
     }
 
+    public java.util.concurrent.CompletableFuture<String> sendSticker(
+            String chatJid,
+            byte[] webpBytes,
+            boolean isAnimated) {
+        return encryptAndUpload(webpBytes, id.jawa.feature.media.MediaCrypto.MediaType.IMAGE)
+            .thenCompose(u -> sendBuiltMessage(chatJid,
+                MessageEncoder.stickerMessage(
+                    u.upload().url(), u.upload().directPath(),
+                    u.mediaKey(),
+                    u.enc().fileSha256(), u.enc().fileEncSha256(),
+                    webpBytes.length, isAnimated)));
+    }
+
+    public java.util.concurrent.CompletableFuture<String> sendSticker(String chatJid, byte[] webpBytes) {
+        return sendSticker(chatJid, webpBytes, false);
+    }
+
+    public java.util.concurrent.CompletableFuture<Void> deleteMedia(
+            String directPath, byte[] encFileHash, id.jawa.feature.media.MediaCrypto.MediaType type) {
+        return refreshMediaConn().thenAcceptAsync(conn -> {
+            try {
+                id.jawa.feature.media.MediaUploader.delete(conn, directPath, encFileHash, type);
+            } catch (Exception e) {
+                LOG.warn("Failed deleting media: {}", e.toString());
+            }
+        });
+    }
+
     public java.util.concurrent.CompletableFuture<String> sendRevoke(
             String chatJid,
             String targetMsgId,
@@ -2297,6 +2325,84 @@ public final class JaWaClient implements AutoCloseable {
 
     public void sendReadReceiptBatch(String chatJid, java.util.List<String> msgIds, String senderJid) {
         sendStateReceiptBatch(chatJid, msgIds, senderJid, "read");
+    }
+
+    public void sendReadSelfReceipt(String chatJid, String msgId) {
+        sendStateReceipt(chatJid, msgId, null, "read-self");
+    }
+
+    public void sendPlayedSelfReceipt(String chatJid, String msgId) {
+        sendStateReceipt(chatJid, msgId, null, "played-self");
+    }
+
+    public java.util.concurrent.CompletableFuture<Void> sendMediaRetryReceipt(
+            String messageId, String chatJid, String senderJid,
+            boolean isFromMe, boolean isGroup, byte[] mediaKey) {
+        return java.util.concurrent.CompletableFuture.runAsync(() -> {
+            try {
+                if (creds == null || creds.meJid == null) {
+                    throw new IllegalStateException("Not logged in");
+                }
+                String ownJid = id.jawa.domain.model.Jid.bare(creds.meJid);
+                byte[] retryKey = id.jawa.protocol.crypto.Hkdf.derive(
+                    mediaKey, null, "WhatsApp Media Retry Notification".getBytes(java.nio.charset.StandardCharsets.UTF_8), 32);
+                id.jawa.proto.Wa.ServerErrorReceipt receipt = id.jawa.proto.Wa.ServerErrorReceipt.newBuilder()
+                    .setStanzaId(messageId)
+                    .build();
+                byte[] plaintext = receipt.toByteArray();
+                byte[] iv = id.jawa.protocol.crypto.Bytes.random(12);
+                byte[] ciphertext = id.jawa.protocol.crypto.AesGcm.encrypt(
+                    retryKey, iv, plaintext, messageId.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+
+                java.util.Map<String, String> rmrAttrs = new java.util.LinkedHashMap<>();
+                rmrAttrs.put("jid", chatJid);
+                rmrAttrs.put("from_me", String.valueOf(isFromMe));
+                if (isGroup && senderJid != null && !senderJid.isBlank()) {
+                    rmrAttrs.put("participant", senderJid);
+                }
+
+                java.util.List<BinaryNode> encryptChildren = java.util.List.of(
+                    new BinaryNode("enc_p", java.util.Map.of(), ciphertext),
+                    new BinaryNode("enc_iv", java.util.Map.of(), iv)
+                );
+
+                BinaryNode encryptNode = new BinaryNode("encrypt", java.util.Map.of(), encryptChildren);
+                BinaryNode rmrNode = new BinaryNode("rmr", rmrAttrs, null);
+
+                java.util.Map<String, String> receiptAttrs = new java.util.LinkedHashMap<>();
+                receiptAttrs.put("id", messageId);
+                receiptAttrs.put("to", ownJid);
+                receiptAttrs.put("type", "server-error");
+
+                BinaryNode receiptStanza = new BinaryNode("receipt", receiptAttrs, java.util.List.of(encryptNode, rmrNode));
+                send(receiptStanza);
+            } catch (Exception e) {
+                LOG.error("Failed to send media retry receipt: {}", e.getMessage(), e);
+                throw new RuntimeException(e);
+            }
+        });
+    }
+
+    public java.util.concurrent.CompletableFuture<Void> sendMediaRetryReceipt(
+            id.jawa.feature.messaging.MessageReceiver.Decoded target, byte[] mediaKey) {
+        boolean isGroup = target.groupJid() != null && !target.groupJid().isBlank();
+        String chatJid = isGroup ? target.groupJid() : target.senderJid();
+        String ownJid = creds != null && creds.meJid != null ? id.jawa.domain.model.Jid.bare(creds.meJid) : "";
+        boolean isFromMe = !ownJid.isBlank() && ownJid.equals(id.jawa.domain.model.Jid.bare(target.senderJid()));
+        return sendMediaRetryReceipt(target.msgId(), chatJid, target.senderJid(), isFromMe, isGroup, mediaKey);
+    }
+
+    public static id.jawa.proto.Wa.MediaRetryNotification decryptMediaRetryNotification(
+            byte[] ciphertext, byte[] iv, String messageId, byte[] mediaKey) {
+        byte[] retryKey = id.jawa.protocol.crypto.Hkdf.derive(
+            mediaKey, null, "WhatsApp Media Retry Notification".getBytes(java.nio.charset.StandardCharsets.UTF_8), 32);
+        byte[] plaintext = id.jawa.protocol.crypto.AesGcm.decrypt(
+            retryKey, iv, ciphertext, messageId.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        try {
+            return id.jawa.proto.Wa.MediaRetryNotification.parseFrom(plaintext);
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to parse MediaRetryNotification", e);
+        }
     }
 
     private void sendStateReceipt(String chatJid, String msgId, String senderJid, String type) {

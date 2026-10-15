@@ -1042,6 +1042,103 @@ public class BotDiscoveryExample {
 
 ---
 
+### 28. WebP Stickers (Static & Animated)
+
+Send static or animated WebP stickers to private chats or groups:
+
+```java
+package com.example;
+
+import id.jawa.client.JaWaClient;
+import java.nio.file.Files;
+import java.nio.file.Path;
+
+public class StickerExample {
+
+    public static void sendStickers(JaWaClient client, String chatJid) throws Exception {
+        byte[] staticWebp = Files.readAllBytes(Path.of("sticker.webp"));
+        String staticMsgId = client.media().sendSticker(chatJid, staticWebp).get();
+        System.out.println("Static sticker sent: " + staticMsgId);
+
+        byte[] animatedWebp = Files.readAllBytes(Path.of("animated.webp"));
+        String animMsgId = client.media().sendSticker(chatJid, animatedWebp, true).get();
+        System.out.println("Animated sticker sent: " + animMsgId);
+    }
+}
+```
+
+---
+
+### 29. Media Deletion from WhatsApp CDN
+
+Explicitly delete uploaded media files from WhatsApp CDN servers using direct path and encrypted file hash:
+
+```java
+package com.example;
+
+import id.jawa.client.JaWaClient;
+import id.jawa.feature.media.MediaCrypto;
+
+public class MediaDeleteExample {
+
+    public static void deleteUploadedMedia(JaWaClient client, String directPath, byte[] encFileHash) throws Exception {
+        client.media().deleteMedia(directPath, encFileHash, MediaCrypto.MediaType.IMAGE).get();
+        System.out.println("Media deleted from WhatsApp CDN successfully");
+    }
+}
+```
+
+---
+
+### 30. Media Retry Requests (404/410 Handling)
+
+Request phone re-upload when media files expire or return 404/410, and decrypt incoming retry responses:
+
+```java
+package com.example;
+
+import id.jawa.client.JaWaClient;
+import id.jawa.feature.messaging.MessageReceiver;
+import id.jawa.proto.Wa;
+
+public class MediaRetryExample {
+
+    public static void requestMediaRetry(JaWaClient client, MessageReceiver.Decoded target, byte[] mediaKey) throws Exception {
+        client.media().sendMediaRetryReceipt(target, mediaKey).get();
+        System.out.println("Media retry receipt sent to primary phone");
+    }
+
+    public static void handleRetryResponse(byte[] ciphertext, byte[] iv, String messageId, byte[] mediaKey) {
+        Wa.MediaRetryNotification notif = JaWaClient.decryptMediaRetryNotification(ciphertext, iv, messageId, mediaKey);
+        System.out.println("Retry Result: " + notif.getResult());
+        System.out.println("New Direct Path: " + notif.getDirectPath());
+    }
+}
+```
+
+---
+
+### 31. Companion Privacy Receipts (Read-Self & Played-Self)
+
+Mark messages or view-once media as read locally on companion devices without sending blue ticks to the counterparty:
+
+```java
+package com.example;
+
+import id.jawa.client.JaWaClient;
+
+public class PrivacyReceiptsExample {
+
+    public static void markReadPrivately(JaWaClient client, String chatJid, String msgId) {
+        client.messages().sendReadSelfReceipt(chatJid, msgId);
+        client.messages().sendPlayedSelfReceipt(chatJid, msgId);
+        System.out.println("Privacy receipt sent for companion sync");
+    }
+}
+```
+
+---
+
 ## 📄 License
 
 This project is licensed under the terms of the **GNU General Public License v3.0** (GPL-3.0-or-later). See [LICENSE](LICENSE) for details.

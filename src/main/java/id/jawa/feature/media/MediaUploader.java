@@ -119,4 +119,31 @@ public final class MediaUploader {
         }
         return null;
     }
+
+    public static void delete(MediaConn mediaConn, String directPath, byte[] encFileHash, MediaCrypto.MediaType type) throws IOException, InterruptedException {
+        if (directPath == null || directPath.isBlank() || mediaConn == null || mediaConn.hosts().isEmpty()) {
+            return;
+        }
+        String host = mediaConn.hosts().get(0);
+        String mmsType = MMS_TYPE.get(type);
+        if (mmsType == null) return;
+
+        String path = directPath;
+        int q = path.indexOf('?');
+        if (q > 0) path = path.substring(0, q);
+
+        String token = Base64.getUrlEncoder().withoutPadding().encodeToString(encFileHash);
+        String dMd = Base64.getUrlEncoder().withoutPadding().encodeToString(path.getBytes(StandardCharsets.UTF_8));
+        String auth = URLEncoder.encode(mediaConn.auth(), StandardCharsets.UTF_8);
+
+        String url = "https://" + host + "/mms/" + mmsType + "/" + token + "?token=" + token + "&d_md=" + dMd + "&auth=" + auth;
+        HttpRequest request = HttpRequest.newBuilder()
+            .uri(URI.create(url))
+            .timeout(Duration.ofSeconds(15))
+            .header("Origin", "https://web.whatsapp.com")
+            .header("Referer", "https://web.whatsapp.com/")
+            .DELETE()
+            .build();
+        HTTP.send(request, HttpResponse.BodyHandlers.discarding());
+    }
 }

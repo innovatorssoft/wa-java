@@ -284,4 +284,60 @@ class JaWaClientServicesTest {
         assertThat(client.groups()).isNotNull();
         assertThat(client.profile()).isNotNull();
     }
+
+    @Test
+    void testStickerMessageEncoder() {
+        byte[] mediaKey = new byte[32];
+        byte[] sha256 = new byte[32];
+        byte[] encSha256 = new byte[32];
+        var msg = id.jawa.feature.messaging.MessageEncoder.stickerMessage(
+            "https://mmg.whatsapp.net/v/t62/123",
+            "/v/t62/123",
+            mediaKey,
+            sha256,
+            encSha256,
+            12345L,
+            true
+        );
+        assertThat(msg.hasStickerMessage()).isTrue();
+        var sticker = msg.getStickerMessage();
+        assertThat(sticker.getUrl()).isEqualTo("https://mmg.whatsapp.net/v/t62/123");
+        assertThat(sticker.getDirectPath()).isEqualTo("/v/t62/123");
+        assertThat(sticker.getMimetype()).isEqualTo("image/webp");
+        assertThat(sticker.getFileLength()).isEqualTo(12345L);
+        assertThat(sticker.getIsAnimated()).isTrue();
+    }
+
+    @Test
+    void testMediaRetryNotificationCryptoRoundtrip(@TempDir Path tempDir) {
+        FileAuthStore store = new FileAuthStore(tempDir.resolve("test-store4.session"));
+        JaWaClient client = new JaWaClient(store);
+
+        byte[] mediaKey = id.jawa.protocol.crypto.Bytes.random(32);
+        String msgId = "3EB0ABC123456789";
+
+        id.jawa.proto.Wa.MediaRetryNotification original = id.jawa.proto.Wa.MediaRetryNotification.newBuilder()
+            .setStanzaId(msgId)
+            .setDirectPath("/v/t62/reuploaded_media")
+            .setResult(id.jawa.proto.Wa.MediaRetryNotification.ResultType.SUCCESS)
+            .build();
+
+        byte[] plaintext = original.toByteArray();
+        byte[] retryKey = id.jawa.protocol.crypto.Hkdf.derive(
+            mediaKey, null, "WhatsApp Media Retry Notification".getBytes(java.nio.charset.StandardCharsets.UTF_8), 32);
+        byte[] iv = id.jawa.protocol.crypto.Bytes.random(12);
+        byte[] ciphertext = id.jawa.protocol.crypto.AesGcm.encrypt(
+            retryKey, iv, plaintext, msgId.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+
+        id.jawa.proto.Wa.MediaRetryNotification decrypted =
+            JaWaClient.decryptMediaRetryNotification(ciphertext, iv, msgId, mediaKey);
+
+        assertThat(decrypted).isNotNull();
+        assertThat(decrypted.getStanzaId()).isEqualTo(msgId);
+        assertThat(decrypted.getDirectPath()).isEqualTo("/v/t62/reuploaded_media");
+        assertThat(decrypted.getResult()).isEqualTo(id.jawa.proto.Wa.MediaRetryNotification.ResultType.SUCCESS);
+
+        assertThat(client.messages()).isNotNull();
+        assertThat(client.media()).isNotNull();
+    }
 }
