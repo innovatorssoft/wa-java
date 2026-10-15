@@ -111,89 +111,89 @@ JaWaClient client = new JaWaClient(store)
 
 ---
 
-<a id="daftar-panduan"></a>
-## 📖 Panduan Cepat & Indeks Fitur
+<a id="feature-directory"></a><a id="daftar-panduan"></a>
+## 📖 Quickstart Guide & Feature Directory
 
-Gunakan navigasi interaktif di bawah ini untuk mempelajari alur kerja dasar dan langsung melompat ke contoh kode serta penjelasan teknis setiap fitur:
+Use the interactive directory below to learn the basic workflow and quickly jump to working code examples and technical explanations for any feature:
 
-### 🔄 Alur Kerja Dasar (Lifecycle Guide)
+### 🔄 Application Lifecycle Guide
 
-1. **Auth & Signal Storage**: Siapkan penyimpanan kredensial menggunakan `FileAuthStore` (file `.session`) atau `SqliteAuthStore` (database SQLite).
-2. **Inisialisasi Client**: Buat objek `JaWaClient` dengan meneruskan auth store dan path signal store, lalu atur konfigurasi yang diinginkan.
-3. **Pemasangan Sesi (Pairing)**: Hubungkan bot ke WhatsApp pada ponsel utama via kode pairing 8 karakter (`requestPairingCode`) atau pemindaian QR Terminal.
-4. **Listener Event**: Daftarkan listener menggunakan `client.listener(...)` untuk menangani pesan masuk (`onMessage`), pembaruan QR (`onQr`), koneksi (`onConnected`), dan event lainnya.
-5. **Akses Sub-Service**: Kirim pesan teks, tombol interaktif, stiker, media, serta kelola grup dan privasi menggunakan sub-services terstruktur (`client.messages()`, `client.groups()`, `client.media()`, `client.privacy()`, `client.chats()`, `client.newsletters()`, `client.profile()`).
-
----
-
-### 📑 Daftar Indeks Fitur (Klik untuk Menuju Kode)
-
-#### 🔐 1. Autentikasi & Penyimpanan Sesi
-| No | Fitur & Topik | Deskripsi Singkat | Navigasi Langsung |
-| :--- | :--- | :--- | :--- |
-| 1 | **Phone Pairing Code** | Pasangkan bot menggunakan kode 8 digit ke nomor ponsel | [Buka Panduan & Kode](#phone-pairing) |
-| 2 | **Terminal QR Code Pairing** | Pindai kode QR ASCII langsung pada terminal console | [Buka Panduan & Kode](#qr-pairing) |
-| 3 | **SQLite Database Session Storage** | Simpan sesi, keys, dan kredensial di database SQLite | [Buka Panduan & Kode](#sqlite-store) |
-| 4 | **Logout & Session Unlinking** | Putus tautan sesi companion secara aman dan bersihkan data | [Buka Panduan & Kode](#logout-session) |
-
-#### 💬 2. Pesan & Fitur Interaktif
-| No | Fitur & Topik | Deskripsi Singkat | Navigasi Langsung |
-| :--- | :--- | :--- | :--- |
-| 5 | **LID to Phone Number Resolver** | Resolusi sender JID format LID ke nomor telepon asli penerima | [Buka Panduan & Kode](#lid-pn) |
-| 6 | **Interactive CTA Buttons & Lists** | Kirim tombol Call To Action (URL, Copy, Quick Reply) & Dropdown | [Buka Panduan & Kode](#buttons-list) |
-| 7 | **Carousel Cards Slider** | Slider kartu horizontal interaktif dengan gambar dan tombol aksi | [Buka Panduan & Kode](#carousel) |
-| 8 | **Message Starring & Chat Cleanup** | Bintang pesan penting, hapus perorangan, atau bersihkan riwayat chat | [Buka Panduan & Kode](#star-cleanup) |
-| 9 | **Offline Sync Message Filtering** | Abaikan pesan kedaluwarsa saat bot baru online kembali | [Buka Panduan & Kode](#offline-sync) |
-| 10 | **Companion Privacy Receipts** | Tandai dibaca secara lokal (read-self) tanpa memicu centang biru | [Buka Panduan & Kode](#privacy-receipts) |
-
-#### 📸 3. Media, Dokumen & Stiker
-| No | Fitur & Topik | Deskripsi Singkat | Navigasi Langsung |
-| :--- | :--- | :--- | :--- |
-| 11 | **Automatic Media Downloader** | Unduh dan dekripsi foto, video, audio PTT, dokumen, dan view-once | [Buka Panduan & Kode](#media-downloader) |
-| 12 | **WebP Stickers (Statis & Animasi)** | Kirim stiker WebP statis maupun animasi stiker bergerak | [Buka Panduan & Kode](#stickers) |
-| 13 | **Media Deletion from WhatsApp CDN** | Hapus file media yang telah terunggah dari server MMS CDN | [Buka Panduan & Kode](#media-delete) |
-| 14 | **Media Retry Requests (404/410)** | Minta ponsel utama mengunggah ulang media expired dan dekripsi hasilnya | [Buka Panduan & Kode](#media-retry) |
-
-#### 👥 4. Grup & Komunitas
-| No | Fitur & Topik | Deskripsi Singkat | Navigasi Langsung |
-| :--- | :--- | :--- | :--- |
-| 15 | **Advanced Group Administration** | Buat grup, kelola peserta/admin, kunci grup, dan link invite | [Buka Panduan & Kode](#group-admin) |
-| 16 | **Group Invite Message Acceptance** | Terima dan masuki grup dari pesan undangan privat | [Buka Panduan & Kode](#group-invite) |
-| 17 | **Community Management** | Kelola Komunitas WhatsApp, inspeksi subgroup, link/unlink grup | [Buka Panduan & Kode](#community) |
-
-#### 📢 5. Saluran / Channel (Newsletter)
-| No | Fitur & Topik | Deskripsi Singkat | Navigasi Langsung |
-| :--- | :--- | :--- | :--- |
-| 18 | **Newsletter & Channel Management** | Follow, mute, reaksi emoji, live updates, ToS notice, dan riwayat pesan | [Buka Panduan & Kode](#newsletter-channel) |
-
-#### 🔒 6. Pengaturan Privasi & Keamanan Akun
-| No | Fitur & Topik | Deskripsi Singkat | Navigasi Langsung |
-| :--- | :--- | :--- | :--- |
-| 19 | **Privacy Settings & Ephemeral** | Atur privasi last seen, online, foto, centang biru, disappearing timer | [Buka Panduan & Kode](#privacy-settings) |
-| 20 | **Blocklist Management** | Kueri daftar blokir, blokir dan buka blokir nomor kontak | [Buka Panduan & Kode](#blocklist) |
-| 21 | **Status Privacy Settings** | Atur siapa saja kontak yang diizinkan melihat status cerita akun | [Buka Panduan & Kode](#status-privacy) |
-| 22 | **Profile, Privacy & Blocklist API** | Operasi cepat bio status, foto avatar, dan pemblokiran kontak | [Buka Panduan & Kode](#profile-privacy-api) |
-
-#### 👤 7. Profil, Kontak & WhatsApp Bisnis
-| No | Fitur & Topik | Deskripsi Singkat | Navigasi Langsung |
-| :--- | :--- | :--- | :--- |
-| 23 | **Profile Text Status (About / Bio)** | Ubah status info bio About profil akun via WhatsApp MEX GraphQL | [Buka Panduan & Kode](#about-bio) |
-| 24 | **High-Resolution Profile Pictures** | Dapatkan URL foto profil resolusi tinggi (HD) dan thumbnail | [Buka Panduan & Kode](#profile-picture) |
-| 25 | **Contact QR & Business Short Links** | Buat tautan QR kontak dan resolusi tautan pesan pendek bisnis | [Buka Panduan & Kode](#qr-shortlinks) |
-| 26 | **Business Profiles & USync Info** | Kueri jam operasional, alamat, email, kategori, dan query USync | [Buka Panduan & Kode](#biz-usync) |
-| 27 | **Order Details (Business Commerce)** | Parsing detail checkout transaksi pesanan barang dan total harga | [Buka Panduan & Kode](#order-details) |
-| 28 | **Updating Push Name** | Perbarui nama tampilan perangkat bot yang terlihat di WhatsApp | [Buka Panduan & Kode](#push-name) |
-| 29 | **Meta AI Bot Discovery** | Temukan daftar bot dan persona AI Meta yang tersedia di server | [Buka Panduan & Kode](#bot-discovery) |
-
-#### ⚙️ 8. Manajemen Chat & Panggilan
-| No | Fitur & Topik | Deskripsi Singkat | Navigasi Langsung |
-| :--- | :--- | :--- | :--- |
-| 30 | **Chat Management (Pin, Mute, Archive)** | Sematkan chat, arsipkan, bisukan obrolan, dan timer disappearing | [Buka Panduan & Kode](#chat-management) |
-| 31 | **Call Management (Tolak Panggilan)** | Tolak panggilan suara atau video yang masuk secara otomatis | [Buka Panduan & Kode](#call-management) |
+1. **Auth & Signal Storage**: Initialize credential storage using `FileAuthStore` (`.session` file) or `SqliteAuthStore` (SQLite database).
+2. **Client Initialization**: Create a `JaWaClient` instance with storage paths and configure connection options (auto-reconnect, auto-receipts, presence).
+3. **Session Pairing**: Link your companion bot to WhatsApp on your primary phone using an 8-character pairing code (`requestPairingCode`) or ASCII terminal QR code scan.
+4. **Event Listener**: Register a listener via `client.listener(...)` to handle incoming messages (`onMessage`), QR updates (`onQr`), connection state (`onConnected`), and other events.
+5. **Sub-Services Access**: Send text messages, interactive buttons, media, stickers, manage groups, and configure privacy using structured sub-services (`client.messages()`, `client.groups()`, `client.media()`, `client.privacy()`, `client.chats()`, `client.newsletters()`, `client.profile()`).
 
 ---
 
-## 🚀 Contoh Kode & Panduan Implementasi
+### 📑 Feature Directory & Direct Links
+
+#### 🔐 1. Authentication & Session Persistence
+| No | Feature & Topic | Description | Direct Navigation |
+| :--- | :--- | :--- | :--- |
+| 1 | **Phone Pairing Code** | Pair companion device with an 8-character code sent to your phone | [View Guide & Code](#phone-pairing) |
+| 2 | **Terminal QR Code Pairing** | Scan ASCII QR matrix directly from the terminal console | [View Guide & Code](#qr-pairing) |
+| 3 | **SQLite Database Session Storage** | Store sessions, keys, and credentials in SQLite with automatic vacuum | [View Guide & Code](#sqlite-store) |
+| 4 | **Logout & Session Unlinking** | Safely terminate companion session and clear stored tokens | [View Guide & Code](#logout-session) |
+
+#### 💬 2. Messaging & Interactive Features
+| No | Feature & Topic | Description | Direct Navigation |
+| :--- | :--- | :--- | :--- |
+| 5 | **LID to Phone Number Resolver** | Resolve LID-formatted sender JID to real phone number with cache | [View Guide & Code](#lid-pn) |
+| 6 | **Interactive CTA Buttons & Lists** | Send interactive CTA buttons (URL, Copy Code, Quick Reply) & Dropdowns | [View Guide & Code](#buttons-list) |
+| 7 | **Carousel Cards Slider** | Interactive horizontal scrolling card carousel with images and buttons | [View Guide & Code](#carousel) |
+| 8 | **Message Starring & Chat Cleanup** | Star important messages, delete individual chats, or clear history | [View Guide & Code](#star-cleanup) |
+| 9 | **Offline Sync Message Filtering** | Filter out historical offline messages received during reconnection | [View Guide & Code](#offline-sync) |
+| 10 | **Companion Privacy Receipts** | Mark read locally without sending blue ticks (read-self and played-self) | [View Guide & Code](#privacy-receipts) |
+
+#### 📸 3. Media, Documents & Stickers
+| No | Feature & Topic | Description | Direct Navigation |
+| :--- | :--- | :--- | :--- |
+| 11 | **Automatic Media Downloader** | Download and decrypt images, video, audio PTT, documents, and view-once | [View Guide & Code](#media-downloader) |
+| 12 | **WebP Stickers (Static & Animated)** | Send static WebP stickers and animated stickers | [View Guide & Code](#stickers) |
+| 13 | **Media Deletion from WhatsApp CDN** | Delete uploaded attachments directly from WhatsApp MMS CDN servers | [View Guide & Code](#media-delete) |
+| 14 | **Media Retry Requests (404/410)** | Request phone re-upload for expired media and decrypt responses | [View Guide & Code](#media-retry) |
+
+#### 👥 4. Groups & Communities
+| No | Feature & Topic | Description | Direct Navigation |
+| :--- | :--- | :--- | :--- |
+| 15 | **Advanced Group Administration** | Create groups, manage participants/admins, lock settings, invite links | [View Guide & Code](#group-admin) |
+| 16 | **Group Invite Message Acceptance** | Accept and join WhatsApp groups from private invite messages | [View Guide & Code](#group-invite) |
+| 17 | **Community Management** | Manage WhatsApp Communities, inspect child subgroups, link/unlink groups | [View Guide & Code](#community) |
+
+#### 📢 5. Channels & Newsletters
+| No | Feature & Topic | Description | Direct Navigation |
+| :--- | :--- | :--- | :--- |
+| 18 | **Newsletter & Channel Management** | Follow, mute, send reactions, live updates, ToS acceptance, message history | [View Guide & Code](#newsletter-channel) |
+
+#### 🔒 6. Privacy & Security Settings
+| No | Feature & Topic | Description | Direct Navigation |
+| :--- | :--- | :--- | :--- |
+| 19 | **Privacy Settings & Ephemeral** | Configure last seen, online status, avatar, blue ticks, disappearing timers | [View Guide & Code](#privacy-settings) |
+| 20 | **Blocklist Management** | Query blocked contacts, block and unblock users | [View Guide & Code](#blocklist) |
+| 21 | **Status Privacy Settings** | Configure contact audience for WhatsApp status stories | [View Guide & Code](#status-privacy) |
+| 22 | **Profile, Privacy & Blocklist API** | Unified API for about status, profile picture, and blocklist actions | [View Guide & Code](#profile-privacy-api) |
+
+#### 👤 7. Profile, Contacts & WhatsApp Business
+| No | Feature & Topic | Description | Direct Navigation |
+| :--- | :--- | :--- | :--- |
+| 23 | **Profile Text Status (About / Bio)** | Update user About bio text status via WhatsApp MEX GraphQL mutation | [View Guide & Code](#about-bio) |
+| 24 | **High-Resolution Profile Pictures** | Fetch high-resolution (HD) profile photos and thumbnail previews | [View Guide & Code](#profile-picture) |
+| 25 | **Contact QR & Business Short Links** | Generate contact QR links and resolve wa.me/message short links | [View Guide & Code](#qr-shortlinks) |
+| 26 | **Business Profiles & USync Info** | Query operating hours, address, email, categories, and multi-field USync | [View Guide & Code](#biz-usync) |
+| 27 | **Order Details (Business Commerce)** | Parse checkout order details, items, currency, and total amount | [View Guide & Code](#order-details) |
+| 28 | **Updating Push Name** | Update companion device display name broadcasted to contacts | [View Guide & Code](#push-name) |
+| 29 | **Meta AI Bot Discovery** | Discover WhatsApp Meta AI personas and bot accounts registered on server | [View Guide & Code](#bot-discovery) |
+
+#### ⚙️ 8. Chat & Call Management
+| No | Feature & Topic | Description | Direct Navigation |
+| :--- | :--- | :--- | :--- |
+| 30 | **Chat Management (Pin, Mute, Archive)** | Pin chats, archive, mute notifications, and configure disappearing messages | [View Guide & Code](#chat-management) |
+| 31 | **Call Management** | Detect incoming calls and reject voice or video calls programmatically | [View Guide & Code](#call-management) |
+
+---
+
+## 🚀 Code Examples & Detailed Guides
 
 <a id="sec-1"></a><a id="lid-pn"></a>
 ### 1. Extract & Resolve Phone Number (PN)
@@ -226,7 +226,7 @@ public class PhoneNumberResolverExample {
                 String senderJid = d.senderJid();
                 String phoneNumber = extractPhoneNumber(senderJid);
 
-                System.out.println("Pesan dari nomor HP: +" + phoneNumber);
+                System.out.println("Message from Phone Number: +" + phoneNumber);
                 System.out.println("Raw Sender JID     : " + senderJid);
             }
         });
@@ -250,7 +250,7 @@ public class PhoneNumberResolverExample {
 }
 ```
 
-[↑ Kembali ke Indeks Fitur](#daftar-panduan)
+[↑ Back to Feature Directory](#feature-directory)
 
 ---
 
@@ -306,7 +306,7 @@ public class PhonePairingExample {
 }
 ```
 
-[↑ Kembali ke Indeks Fitur](#daftar-panduan)
+[↑ Back to Feature Directory](#feature-directory)
 
 ---
 
@@ -352,7 +352,7 @@ public class QrPairingExample {
 }
 ```
 
-[↑ Kembali ke Indeks Fitur](#daftar-panduan)
+[↑ Back to Feature Directory](#feature-directory)
 
 ---
 
@@ -413,7 +413,7 @@ public class ButtonsAndListExample {
 }
 ```
 
-[↑ Kembali ke Indeks Fitur](#daftar-panduan)
+[↑ Back to Feature Directory](#feature-directory)
 
 ---
 
@@ -457,7 +457,7 @@ public class CarouselExample {
 }
 ```
 
-[↑ Kembali ke Indeks Fitur](#daftar-panduan)
+[↑ Back to Feature Directory](#feature-directory)
 
 ---
 
@@ -508,7 +508,7 @@ public class SqliteSessionExample {
 | `store.getStats()` | Returns active row counts across `credentials`, `sessions`, `prekeys`, `sender_keys`, and `appstate_keys`. |
 | `store.clearAll()` | Clears all stored records and keys for clean session unpairing and reset. |
 
-[↑ Kembali ke Indeks Fitur](#daftar-panduan)
+[↑ Back to Feature Directory](#feature-directory)
 
 ---
 
@@ -536,7 +536,7 @@ public class MediaDownloadExample {
 }
 ```
 
-[↑ Kembali ke Indeks Fitur](#daftar-panduan)
+[↑ Back to Feature Directory](#feature-directory)
 
 ---
 
@@ -567,7 +567,7 @@ public class ProfilePrivacyExample {
 }
 ```
 
-[↑ Kembali ke Indeks Fitur](#daftar-panduan)
+[↑ Back to Feature Directory](#feature-directory)
 
 ---
 
@@ -622,7 +622,7 @@ To configure or disable automatic wrapping:
 client.autoEphemeral(false);
 ```
 
-[↑ Kembali ke Indeks Fitur](#daftar-panduan)
+[↑ Back to Feature Directory](#feature-directory)
 
 ---
 
@@ -667,7 +667,7 @@ public class PrivacyExample {
 | `readreceipts` | Read receipts (blue ticks) | `all`, `none` |
 | `calladd` | Who can call this account | `all`, `known` |
 
-[↑ Kembali ke Indeks Fitur](#daftar-panduan)
+[↑ Back to Feature Directory](#feature-directory)
 
 ---
 
@@ -704,7 +704,7 @@ public class QrAndShortLinkExample {
 }
 ```
 
-[↑ Kembali ke Indeks Fitur](#daftar-panduan)
+[↑ Back to Feature Directory](#feature-directory)
 
 ---
 
@@ -751,7 +751,7 @@ public class BusinessAndUserInfoExample {
 }
 ```
 
-[↑ Kembali ke Indeks Fitur](#daftar-panduan)
+[↑ Back to Feature Directory](#feature-directory)
 
 ---
 
@@ -788,7 +788,7 @@ public class AdvancedGroupAdminExample {
 }
 ```
 
-[↑ Kembali ke Indeks Fitur](#daftar-panduan)
+[↑ Back to Feature Directory](#feature-directory)
 
 ---
 
@@ -848,7 +848,7 @@ public class NewsletterExample {
 }
 ```
 
-[↑ Kembali ke Indeks Fitur](#daftar-panduan)
+[↑ Back to Feature Directory](#feature-directory)
 
 ---
 
@@ -874,7 +874,7 @@ public class CallManagementExample {
 }
 ```
 
-[↑ Kembali ke Indeks Fitur](#daftar-panduan)
+[↑ Back to Feature Directory](#feature-directory)
 
 ---
 
@@ -894,7 +894,7 @@ JaWaClient client = new JaWaClient(store)
 | `.autoIgnoreOfflineMessages(boolean)` | `true` | When true, ignores historical offline messages delivered during initial connection. |
 | `.offlineMessageGracePeriodSec(int)` | `2` | Number of seconds grace period around login timestamp for message evaluation. |
 
-[↑ Kembali ke Indeks Fitur](#daftar-panduan)
+[↑ Back to Feature Directory](#feature-directory)
 
 ---
 
@@ -917,7 +917,7 @@ public class PushNameExample {
 }
 ```
 
-[↑ Kembali ke Indeks Fitur](#daftar-panduan)
+[↑ Back to Feature Directory](#feature-directory)
 
 ---
 
@@ -940,7 +940,7 @@ public class LogoutExample {
 }
 ```
 
-[↑ Kembali ke Indeks Fitur](#daftar-panduan)
+[↑ Back to Feature Directory](#feature-directory)
 
 ---
 
@@ -974,7 +974,7 @@ public class OrderExample {
 }
 ```
 
-[↑ Kembali ke Indeks Fitur](#daftar-panduan)
+[↑ Back to Feature Directory](#feature-directory)
 
 ---
 
@@ -1000,7 +1000,7 @@ public class StarAndChatExample {
 }
 ```
 
-[↑ Kembali ke Indeks Fitur](#daftar-panduan)
+[↑ Back to Feature Directory](#feature-directory)
 
 ---
 
@@ -1031,7 +1031,7 @@ public class BlocklistExample {
 }
 ```
 
-[↑ Kembali ke Indeks Fitur](#daftar-panduan)
+[↑ Back to Feature Directory](#feature-directory)
 
 ---
 
@@ -1059,7 +1059,7 @@ public class StatusPrivacyExample {
 }
 ```
 
-[↑ Kembali ke Indeks Fitur](#daftar-panduan)
+[↑ Back to Feature Directory](#feature-directory)
 
 ---
 
@@ -1082,7 +1082,7 @@ public class ProfileStatusExample {
 }
 ```
 
-[↑ Kembali ke Indeks Fitur](#daftar-panduan)
+[↑ Back to Feature Directory](#feature-directory)
 
 ---
 
@@ -1116,7 +1116,7 @@ public class CommunityExample {
 }
 ```
 
-[↑ Kembali ke Indeks Fitur](#daftar-panduan)
+[↑ Back to Feature Directory](#feature-directory)
 
 ---
 
@@ -1143,7 +1143,7 @@ public class GroupInviteMessageExample {
 }
 ```
 
-[↑ Kembali ke Indeks Fitur](#daftar-panduan)
+[↑ Back to Feature Directory](#feature-directory)
 
 ---
 
@@ -1176,7 +1176,7 @@ public class ProfilePictureExample {
 }
 ```
 
-[↑ Kembali ke Indeks Fitur](#daftar-panduan)
+[↑ Back to Feature Directory](#feature-directory)
 
 ---
 
@@ -1204,7 +1204,7 @@ public class BotDiscoveryExample {
 }
 ```
 
-[↑ Kembali ke Indeks Fitur](#daftar-panduan)
+[↑ Back to Feature Directory](#feature-directory)
 
 ---
 
@@ -1234,7 +1234,7 @@ public class StickerExample {
 }
 ```
 
-[↑ Kembali ke Indeks Fitur](#daftar-panduan)
+[↑ Back to Feature Directory](#feature-directory)
 
 ---
 
@@ -1258,7 +1258,7 @@ public class MediaDeleteExample {
 }
 ```
 
-[↑ Kembali ke Indeks Fitur](#daftar-panduan)
+[↑ Back to Feature Directory](#feature-directory)
 
 ---
 
@@ -1289,7 +1289,7 @@ public class MediaRetryExample {
 }
 ```
 
-[↑ Kembali ke Indeks Fitur](#daftar-panduan)
+[↑ Back to Feature Directory](#feature-directory)
 
 ---
 
@@ -1313,7 +1313,7 @@ public class PrivacyReceiptsExample {
 }
 ```
 
-[↑ Kembali ke Indeks Fitur](#daftar-panduan)
+[↑ Back to Feature Directory](#feature-directory)
 
 ---
 
