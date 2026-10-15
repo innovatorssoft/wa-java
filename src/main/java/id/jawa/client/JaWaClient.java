@@ -758,6 +758,21 @@ public final class JaWaClient implements AutoCloseable {
         return id.jawa.feature.media.MediaDownloader.download(msg);
     }
 
+    public byte[] downloadMedia(id.jawa.feature.messaging.MessageReceiver.Decoded target) {
+        return id.jawa.feature.media.MediaDownloader.download(target);
+    }
+
+    public java.util.concurrent.CompletableFuture<Void> acceptTOSNotice(String noticeId, String stage) {
+        BinaryNode notice = new BinaryNode("notice", java.util.Map.of("id", noticeId, "stage", stage), null);
+        BinaryNode iq = new BinaryNode("iq", java.util.Map.of(
+            "id", generateMessageId(),
+            "type", "set",
+            "xmlns", "tos",
+            "to", id.jawa.domain.model.Jid.SERVER_WHATSAPP
+        ), java.util.List.of(notice));
+        return sendIqAsync(iq).thenApply(resp -> null);
+    }
+
     public java.util.concurrent.CompletableFuture<BinaryNode> updateProfileStatus(String statusText) {
         String iqId = newIqId();
         BinaryNode iq = new BinaryNode("iq",
@@ -2163,6 +2178,10 @@ public final class JaWaClient implements AutoCloseable {
     }
 
     public void send(BinaryNode node) {
+        if (transport == null || frame == null) {
+            LOG.warn("Cannot send node while transport/frame is not connected");
+            return;
+        }
         byte[] plain = BinaryEncoder.encode(node);
         byte[] enc = transport.encrypt(plain);
         frame.send(enc);

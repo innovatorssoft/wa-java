@@ -19,6 +19,10 @@ public final class MediaService {
         return client.downloadMedia(msg);
     }
 
+    public byte[] downloadMedia(MessageReceiver.Decoded target) {
+        return client.downloadMedia(target);
+    }
+
     public CompletableFuture<byte[]> downloadMedia(String url, String directPath, byte[] mediaKey,
                                                    byte[] fileEncSha256, MediaCrypto.MediaType type) {
         return client.downloadMedia(url, directPath, mediaKey, fileEncSha256, type);

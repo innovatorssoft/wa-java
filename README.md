@@ -427,7 +427,7 @@ public class MediaDownloadExample {
     public static void onIncomingMessage(JaWaClient client, MessageReceiver.Decoded decoded) {
         if (decoded.message() == null) return;
 
-        byte[] mediaBytes = client.downloadMedia(decoded.message());
+        byte[] mediaBytes = client.downloadMedia(decoded);
         if (mediaBytes != null) {
             System.out.println("Downloaded decrypted file: " + mediaBytes.length + " bytes");
         }
@@ -687,6 +687,9 @@ import java.util.List;
 public class NewsletterExample {
 
     public static void channelActions(JaWaClient client, String channelJid) throws Exception {
+        client.newsletters().acceptNewsletterTOSNotice().get();
+        System.out.println("Channel TOS notice accepted");
+
         client.newsletters().follow(channelJid).get();
         System.out.println("Followed channel: " + channelJid);
 

@@ -41,6 +41,16 @@ public final class WaConstants {
 
     public static final int[] WA_VERSION = new int[] { 2, 3000, 1044834443 };
 
+    public static int[] getVersion() {
+        return WA_VERSION.clone();
+    }
+
+    public static void setVersion(int primary, int secondary, int tertiary) {
+        WA_VERSION[0] = primary;
+        WA_VERSION[1] = secondary;
+        WA_VERSION[2] = tertiary;
+    }
+
     private WaConstants() {}
 
     private static byte[] pad32(String s) {

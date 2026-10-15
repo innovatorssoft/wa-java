@@ -70,4 +70,12 @@ public final class NewsletterService {
     public CompletableFuture<String> sendMexQuery(String queryId, String jsonVariables) {
         return client.sendMexQuery(queryId, jsonVariables);
     }
+
+    public CompletableFuture<Void> acceptTOSNotice(String noticeId, String stage) {
+        return client.acceptTOSNotice(noticeId, stage);
+    }
+
+    public CompletableFuture<Void> acceptNewsletterTOSNotice() {
+        return client.acceptTOSNotice("20601218", "5");
+    }
 }

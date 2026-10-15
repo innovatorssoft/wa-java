@@ -340,4 +340,45 @@ class JaWaClientServicesTest {
         assertThat(client.messages()).isNotNull();
         assertThat(client.media()).isNotNull();
     }
+
+    @Test
+    void testWaConstantsVersionAndNoticeAcceptance(@TempDir Path tempDir) {
+        int[] originalVer = id.jawa.domain.model.WaConstants.getVersion();
+        assertThat(originalVer).hasSize(3);
+
+        id.jawa.domain.model.WaConstants.setVersion(2, 3000, 999999);
+        int[] updatedVer = id.jawa.domain.model.WaConstants.getVersion();
+        assertThat(updatedVer[2]).isEqualTo(999999);
+
+        id.jawa.domain.model.WaConstants.setVersion(originalVer[0], originalVer[1], originalVer[2]);
+
+        FileAuthStore store = new FileAuthStore(tempDir.resolve("test-store5.session"));
+        JaWaClient client = new JaWaClient(store);
+        assertThat(client.newsletters().acceptTOSNotice("20601218", "5")).isNotNull();
+        assertThat(client.newsletters().acceptNewsletterTOSNotice()).isNotNull();
+    }
+
+    @Test
+    void testMediaDownloaderUnwrapping() {
+        var plain = id.jawa.proto.Wa.Message.newBuilder()
+            .setImageMessage(id.jawa.proto.Wa.Message.ImageMessage.newBuilder()
+                .setUrl("")
+                .setDirectPath("")
+                .build())
+            .build();
+        var wrapped = id.jawa.proto.Wa.Message.newBuilder()
+            .setEphemeralMessage(id.jawa.proto.Wa.Message.FutureProofMessage.newBuilder()
+                .setMessage(plain)
+                .build())
+            .build();
+
+        byte[] downloaded = id.jawa.feature.media.MediaDownloader.download(wrapped);
+        assertThat(downloaded).isNull();
+
+        id.jawa.feature.messaging.MessageReceiver.Decoded decoded =
+            new id.jawa.feature.messaging.MessageReceiver.Decoded(
+                "628123@s.whatsapp.net", null, "3EB0123", "text", plain, null, null, 1700000000L);
+        byte[] downloadedDecoded = id.jawa.feature.media.MediaDownloader.download(decoded);
+        assertThat(downloadedDecoded).isNull();
+    }
 }

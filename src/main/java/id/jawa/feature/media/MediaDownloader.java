@@ -33,6 +33,22 @@ public final class MediaDownloader {
 
     public static byte[] download(Wa.Message msg) {
         if (msg == null) return null;
+        while (msg != null) {
+            if (msg.hasEphemeralMessage() && msg.getEphemeralMessage().hasMessage()) {
+                msg = msg.getEphemeralMessage().getMessage();
+            } else if (msg.hasViewOnceMessage() && msg.getViewOnceMessage().hasMessage()) {
+                msg = msg.getViewOnceMessage().getMessage();
+            } else if (msg.hasViewOnceMessageV2() && msg.getViewOnceMessageV2().hasMessage()) {
+                msg = msg.getViewOnceMessageV2().getMessage();
+            } else if (msg.hasDocumentWithCaptionMessage() && msg.getDocumentWithCaptionMessage().hasMessage()) {
+                msg = msg.getDocumentWithCaptionMessage().getMessage();
+            } else if (msg.hasDeviceSentMessage() && msg.getDeviceSentMessage().hasMessage()) {
+                msg = msg.getDeviceSentMessage().getMessage();
+            } else {
+                break;
+            }
+        }
+        if (msg == null) return null;
 
         if (msg.hasImageMessage()) {
             var img = msg.getImageMessage();
@@ -61,6 +77,11 @@ public final class MediaDownloader {
         }
 
         return null;
+    }
+
+    public static byte[] download(MessageReceiver.Decoded target) {
+        if (target == null) return null;
+        return download(target.message());
     }
 
     private static String resolveUrl(String url, String directPath) {
