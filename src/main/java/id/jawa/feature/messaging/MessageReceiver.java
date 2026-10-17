@@ -30,6 +30,11 @@ import org.whispersystems.libsignal.protocol.SignalMessage;
 
 import java.util.regex.Pattern;
 
+/**
+ * Decrypts and unpacks inbound Signal Protocol encrypted stanzas into structured {@link Decoded} messages.
+ * <p>
+ * Handles direct messages, sender-key group messages, pre-key sessions, and interactive callback responses.
+ */
 public final class MessageReceiver {
 
     private static final Logger LOG = LoggerFactory.getLogger(MessageReceiver.class);

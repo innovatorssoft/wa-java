@@ -14,6 +14,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -76,8 +77,8 @@ class E2EConnectionIntegrationTest {
     void postHandshakeTransportExchangesEncryptedBinaryStanzas() throws Exception {
         byte[] clientKey = new byte[32];
         byte[] serverKey = new byte[32];
-        java.util.Arrays.fill(clientKey, (byte) 0x11);
-        java.util.Arrays.fill(serverKey, (byte) 0x22);
+        Arrays.fill(clientKey, (byte) 0x11);
+        Arrays.fill(serverKey, (byte) 0x22);
 
         NoiseTransport clientTransport = new NoiseTransport(clientKey, serverKey);
         NoiseTransport serverTransport = new NoiseTransport(serverKey, clientKey);

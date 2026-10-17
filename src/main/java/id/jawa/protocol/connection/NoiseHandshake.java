@@ -11,6 +11,12 @@ import id.jawa.protocol.crypto.Sha256;
 
 import java.util.Arrays;
 
+/**
+ * Implements the Noise_XX_25519_AESGCM_SHA256 handshake state machine for WhatsApp Web authentication.
+ * <p>
+ * Performs mutual key exchange, server certificate verification via {@link CertChainValidator},
+ * and derives symmetric transport keys for bidirectional encrypted streaming.
+ */
 public final class NoiseHandshake {
 
     private final byte[] ephemeralPriv;
@@ -23,6 +29,12 @@ public final class NoiseHandshake {
 
     private NoiseTransport transport;
 
+    /**
+     * Initializes a new Noise handshake state with the client's ephemeral key and connection intro header.
+     *
+     * @param ephemeral client ephemeral Curve25519 key pair
+     * @param introHeader protocol intro bytes
+     */
     public NoiseHandshake(KeyPair25519 ephemeral, byte[] introHeader) {
         this.ephemeralPriv = ephemeral.privateKey();
         this.hash = WaConstants.NOISE_MODE.clone();

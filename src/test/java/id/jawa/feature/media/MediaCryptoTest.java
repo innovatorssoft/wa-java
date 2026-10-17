@@ -1,19 +1,10 @@
 package id.jawa.feature.media;
 
-import id.jawa.protocol.connection.*;
-import id.jawa.protocol.codec.*;
-import id.jawa.protocol.crypto.*;
-import id.jawa.domain.model.*;
-import id.jawa.domain.store.*;
-import id.jawa.feature.pairing.*;
-import id.jawa.feature.messaging.*;
-import id.jawa.feature.media.*;
-import id.jawa.feature.appstate.*;
-import id.jawa.feature.signal.*;
-
+import id.jawa.protocol.crypto.Sha256;
 import org.junit.jupiter.api.Test;
 
 import java.security.SecureRandom;
+import java.util.Arrays;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -71,7 +62,7 @@ class MediaCryptoTest {
         var enc = MediaCrypto.encrypt(plaintext, bytes(0x11, 32), MediaCrypto.MediaType.VIDEO);
         assertThat(enc.fileSha256()).hasSize(32);
 
-        byte[] manual = id.jawa.protocol.crypto.Sha256.hash(plaintext);
+        byte[] manual = Sha256.hash(plaintext);
         assertThat(enc.fileSha256()).isEqualTo(manual);
         assertThat(enc.fileSha256()).isNotEqualTo(enc.fileEncSha256());
     }
@@ -112,7 +103,7 @@ class MediaCryptoTest {
 
     private static byte[] bytes(int value, int length) {
         byte[] out = new byte[length];
-        java.util.Arrays.fill(out, (byte) value);
+        Arrays.fill(out, (byte) value);
         return out;
     }
 }

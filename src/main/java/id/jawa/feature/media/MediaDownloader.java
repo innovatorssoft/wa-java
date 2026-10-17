@@ -12,6 +12,12 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 
+/**
+ * Handles fetching and decrypting WhatsApp media attachments (images, audio, video, documents, stickers).
+ * <p>
+ * Supports unwrapping ephemeral and view-once containers, downloading from direct CDN paths or URLs,
+ * and performing CBC/CTR/GCM media decryption.
+ */
 public final class MediaDownloader {
 
     private static final Logger LOG = LoggerFactory.getLogger(MediaDownloader.class);

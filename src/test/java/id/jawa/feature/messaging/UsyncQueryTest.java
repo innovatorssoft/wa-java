@@ -1,16 +1,8 @@
 package id.jawa.feature.messaging;
 
-import id.jawa.protocol.connection.*;
-import id.jawa.protocol.codec.*;
-import id.jawa.protocol.crypto.*;
-import id.jawa.domain.model.*;
-import id.jawa.domain.store.*;
-import id.jawa.feature.pairing.*;
-import id.jawa.feature.messaging.*;
-import id.jawa.feature.media.*;
-import id.jawa.feature.appstate.*;
-import id.jawa.feature.signal.*;
 
+import id.jawa.domain.model.ContactStatus;
+import id.jawa.domain.model.DeviceInfo;
 import id.jawa.protocol.codec.BinaryDecoder;
 import id.jawa.protocol.codec.BinaryEncoder;
 import id.jawa.protocol.codec.BinaryNode;
@@ -20,6 +12,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class UsyncQueryTest {
 
@@ -137,9 +130,9 @@ class UsyncQueryTest {
     @Test
     void nonResultIqThrows() {
         BinaryNode err = new BinaryNode("iq", Map.of("type", "error"), null);
-        org.assertj.core.api.Assertions.assertThatThrownBy(() -> UsyncQuery.parseDeviceListResult(err))
+        assertThatThrownBy(() -> UsyncQuery.parseDeviceListResult(err))
             .isInstanceOf(IllegalArgumentException.class);
-        org.assertj.core.api.Assertions.assertThatThrownBy(() -> UsyncQuery.parseContactResult(err))
+        assertThatThrownBy(() -> UsyncQuery.parseContactResult(err))
             .isInstanceOf(IllegalArgumentException.class);
     }
 }

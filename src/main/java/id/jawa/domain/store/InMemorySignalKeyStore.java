@@ -1,13 +1,14 @@
 package id.jawa.domain.store;
 
-
 import id.jawa.protocol.crypto.KeyPair25519;
 
-import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 
+/**
+ * Thread-safe in-memory implementation of {@link SignalKeyStore} with optional persistent file backing.
+ */
 public final class InMemorySignalKeyStore implements SignalKeyStore {
 
     private final Map<Integer, KeyPair25519> preKeys = new ConcurrentHashMap<>();
@@ -23,7 +24,9 @@ public final class InMemorySignalKeyStore implements SignalKeyStore {
     }
 
     @Override
-    public KeyPair25519 getPreKey(int id) { return preKeys.get(id); }
+    public KeyPair25519 getPreKey(int id) {
+        return preKeys.get(id);
+    }
 
     @Override
     public void putPreKey(int id, KeyPair25519 kp) {
@@ -44,8 +47,10 @@ public final class InMemorySignalKeyStore implements SignalKeyStore {
             KeyPair25519 kp = preKeys.get(id);
             if (kp != null) out.put(id, kp);
         }
-        return new LinkedHashMap<>(out);
+        return out;
     }
 
-    public int size() { return preKeys.size(); }
+    public int size() {
+        return preKeys.size();
+    }
 }

@@ -18,6 +18,13 @@ import org.slf4j.LoggerFactory;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * Protocol handler for 8-character phone number pairing code registration.
+ * <p>
+ * Manages the multi-step handshake: generates pairing code via Crockford base32 encoding,
+ * derives encryption keys using PBKDF2 and HKDF, builds companion hello/finish stanzas,
+ * and extracts companion credentials.
+ */
 public final class PairingCodeHandler {
 
     private static final Logger LOG = LoggerFactory.getLogger(PairingCodeHandler.class);

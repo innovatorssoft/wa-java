@@ -16,6 +16,12 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+/**
+ * WebSocket transport framing layer for WhatsApp Web protocol.
+ * <p>
+ * Handles WebSocket connection lifecycle, frame length prefixing (3-byte big-endian integers),
+ * protocol preamble intro headers (ED header), and thread-safe incoming frame buffering.
+ */
 public final class FrameSocket implements AutoCloseable {
 
     private static final Logger LOG = LoggerFactory.getLogger(FrameSocket.class);
@@ -31,6 +37,12 @@ public final class FrameSocket implements AutoCloseable {
     private final String wsUrl;
     private WebSocket ws;
 
+    /**
+     * Creates a new FrameSocket instance.
+     *
+     * @param routingInfo optional edge routing info bytes
+     * @param wsUrl target WebSocket endpoint URL
+     */
     public FrameSocket(byte[] routingInfo, String wsUrl) {
         this.introHeader = (routingInfo == null || routingInfo.length == 0)
             ? WaConstants.WA_HEADER
@@ -42,9 +54,13 @@ public final class FrameSocket implements AutoCloseable {
         this(routingInfo, WaConstants.WS_URL);
     }
 
-    public FrameSocket() { this(null, WaConstants.WS_URL); }
+    public FrameSocket() {
+        this(null, WaConstants.WS_URL);
+    }
 
-    public String wsUrl() { return wsUrl; }
+    public String wsUrl() {
+        return wsUrl;
+    }
 
     public void connect() throws IOException, WebSocketException {
         if (ws != null) throw new IllegalStateException("already connected");

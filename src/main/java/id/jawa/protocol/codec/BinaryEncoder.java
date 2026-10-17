@@ -7,6 +7,11 @@ import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 
+/**
+ * Serializes {@link BinaryNode} stanzas into WhatsApp's binary XML wire format (WAM).
+ * <p>
+ * Handles token table lookups, nibble packing, hex encoding, and UTF-8 string encoding.
+ */
 public final class BinaryEncoder {
 
     private final ByteArrayOutputStream buf = new ByteArrayOutputStream(256);
@@ -15,6 +20,12 @@ public final class BinaryEncoder {
         buf.write(WaTags.FLAG_RAW);
     }
 
+    /**
+     * Encodes a {@link BinaryNode} into its binary WAM wire representation.
+     *
+     * @param node the binary node to serialize
+     * @return serialized binary payload
+     */
     public static byte[] encode(BinaryNode node) {
         BinaryEncoder e = new BinaryEncoder();
         e.writeNode(node);

@@ -13,13 +13,27 @@ import java.util.List;
 import java.util.Map;
 import java.util.zip.InflaterInputStream;
 
+/**
+ * Decodes WhatsApp binary XML wire format (WAM) payloads into {@link BinaryNode} trees.
+ * <p>
+ * Supports optional zlib inflation ({@code FLAG_DEFLATE}) and token table expansion.
+ */
 public final class BinaryDecoder {
 
     private final byte[] data;
     private int pos;
 
-    private BinaryDecoder(byte[] data) { this.data = data; this.pos = 0; }
+    private BinaryDecoder(byte[] data) {
+        this.data = data;
+        this.pos = 0;
+    }
 
+    /**
+     * Decodes a binary payload buffer into a {@link BinaryNode} hierarchy.
+     *
+     * @param payload the raw binary stanza payload including format flag byte
+     * @return the decoded root binary node
+     */
     public static BinaryNode decode(byte[] payload) {
         if (payload == null || payload.length == 0) {
             throw new IllegalArgumentException("empty payload");

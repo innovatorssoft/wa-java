@@ -13,6 +13,9 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * Manages generation and batch uploading of one-time Signal Protocol pre-keys to WhatsApp server.
+ */
 public final class PreKeyManager {
 
     private PreKeyManager() {}

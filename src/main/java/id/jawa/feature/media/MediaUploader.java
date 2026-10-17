@@ -15,6 +15,11 @@ import java.time.Duration;
 import java.util.Base64;
 import java.util.Map;
 
+/**
+ * Handles uploading encrypted media payloads to WhatsApp MMS CDN servers.
+ * <p>
+ * Supports auth bearer token dispatch, chunk streaming, and direct path resolution.
+ */
 public final class MediaUploader {
 
     private static final Logger LOG = LoggerFactory.getLogger(MediaUploader.class);

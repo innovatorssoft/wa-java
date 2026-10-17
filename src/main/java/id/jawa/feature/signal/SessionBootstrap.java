@@ -12,6 +12,9 @@ import org.whispersystems.libsignal.UntrustedIdentityException;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * Utility for bulk installing Signal sessions from fetched pre-key bundles.
+ */
 public final class SessionBootstrap {
 
     private static final Logger LOG = LoggerFactory.getLogger(SessionBootstrap.class);

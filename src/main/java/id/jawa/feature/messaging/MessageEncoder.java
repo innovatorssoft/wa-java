@@ -6,6 +6,12 @@ import id.jawa.protocol.crypto.Bytes;
 
 import java.util.List;
 
+/**
+ * Builder and encoder utility for constructing WhatsApp Protocol Buffer {@link Wa.Message} payloads.
+ * <p>
+ * Supports text, interactive buttons, list dropdowns, carousels, media (image, audio, video, document,
+ * sticker), location, contact cards, quoted replies, reactions, and PKCS#7/randomized padding.
+ */
 public final class MessageEncoder {
 
     private MessageEncoder() {}

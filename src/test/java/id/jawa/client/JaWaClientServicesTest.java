@@ -1,10 +1,39 @@
 package id.jawa.client;
 
+import id.jawa.domain.model.AuthCreds;
+import id.jawa.domain.model.Blocklist;
+import id.jawa.domain.model.BlocklistItem;
+import id.jawa.domain.model.BotListInfo;
+import id.jawa.domain.model.BusinessMessageLinkTarget;
+import id.jawa.domain.model.BusinessProfile;
+import id.jawa.domain.model.CommunitySubGroup;
+import id.jawa.domain.model.GroupJoinRequest;
+import id.jawa.domain.model.Jid;
+import id.jawa.domain.model.NewsletterMessage;
+import id.jawa.domain.model.NewsletterMetadata;
+import id.jawa.domain.model.OrderDetails;
+import id.jawa.domain.model.ProfilePictureInfo;
+import id.jawa.domain.model.StatusPrivacy;
+import id.jawa.domain.model.WaConstants;
 import id.jawa.domain.store.FileAuthStore;
+import id.jawa.feature.media.MediaDownloader;
+import id.jawa.feature.messaging.GroupAction;
+import id.jawa.feature.messaging.GroupListQuery;
+import id.jawa.feature.messaging.MessageEncoder;
+import id.jawa.feature.messaging.MessageReceiver.Decoded;
+import id.jawa.feature.messaging.UsyncQuery;
+import id.jawa.proto.Wa;
+import id.jawa.protocol.crypto.AesGcm;
+import id.jawa.protocol.crypto.Bytes;
+import id.jawa.protocol.crypto.Hkdf;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -65,20 +94,20 @@ class JaWaClientServicesTest {
         assertThat(client.getChatEphemeralTimer(chatJid)).isEqualTo(86400);
         assertThat(client.chats().getDisappearingTimer(chatJid)).isEqualTo(86400);
 
-        id.jawa.proto.Wa.Message plainMsg = id.jawa.proto.Wa.Message.newBuilder()
+        Wa.Message plainMsg = Wa.Message.newBuilder()
             .setConversation("hello ephemeral")
             .build();
 
-        id.jawa.proto.Wa.Message wrapped = client.wrapEphemeralIfNeeded(chatJid, plainMsg);
+        Wa.Message wrapped = client.wrapEphemeralIfNeeded(chatJid, plainMsg);
         assertThat(wrapped.hasEphemeralMessage()).isTrue();
         assertThat(wrapped.getEphemeralMessage().getMessage().getConversation()).isEqualTo("hello ephemeral");
 
-        id.jawa.proto.Wa.Message doubleWrapAttempt = client.wrapEphemeralIfNeeded(chatJid, wrapped);
+        Wa.Message doubleWrapAttempt = client.wrapEphemeralIfNeeded(chatJid, wrapped);
         assertThat(doubleWrapAttempt).isSameAs(wrapped);
 
-        id.jawa.proto.Wa.Message protocolMsg = id.jawa.proto.Wa.Message.newBuilder()
-            .setProtocolMessage(id.jawa.proto.Wa.Message.ProtocolMessage.newBuilder()
-                .setType(id.jawa.proto.Wa.Message.ProtocolMessage.Type.EPHEMERAL_SETTING)
+        Wa.Message protocolMsg = Wa.Message.newBuilder()
+            .setProtocolMessage(Wa.Message.ProtocolMessage.newBuilder()
+                .setType(Wa.Message.ProtocolMessage.Type.EPHEMERAL_SETTING)
                 .setEphemeralExpiration(86400))
             .build();
         assertThat(client.wrapEphemeralIfNeeded(chatJid, protocolMsg)).isSameAs(protocolMsg);
@@ -95,35 +124,35 @@ class JaWaClientServicesTest {
 
     @Test
     void groupActionBuildersGenerateValidBinaryNodes() {
-        var inviteGet = id.jawa.feature.messaging.GroupAction.buildInviteLink("iq1", "12345@g.us", false);
+        var inviteGet = GroupAction.buildInviteLink("iq1", "12345@g.us", false);
         assertThat(inviteGet.tag()).isEqualTo("iq");
         assertThat(inviteGet.attr("type")).isEqualTo("get");
         assertThat(inviteGet.attr("xmlns")).isEqualTo("w:g2");
         assertThat(inviteGet.child("invite")).isNotNull();
 
-        var inviteReset = id.jawa.feature.messaging.GroupAction.buildInviteLink("iq2", "12345@g.us", true);
+        var inviteReset = GroupAction.buildInviteLink("iq2", "12345@g.us", true);
         assertThat(inviteReset.attr("type")).isEqualTo("set");
 
-        var linkInfo = id.jawa.feature.messaging.GroupAction.buildLinkInfo("iq3", "ABCDEF12345");
+        var linkInfo = GroupAction.buildLinkInfo("iq3", "ABCDEF12345");
         assertThat(linkInfo.attr("type")).isEqualTo("get");
         assertThat(linkInfo.attr("to")).isEqualTo("g.us");
         assertThat(linkInfo.child("invite").attr("code")).isEqualTo("ABCDEF12345");
 
-        var join = id.jawa.feature.messaging.GroupAction.buildJoinWithLink("iq4", "ABCDEF12345");
+        var join = GroupAction.buildJoinWithLink("iq4", "ABCDEF12345");
         assertThat(join.attr("type")).isEqualTo("set");
         assertThat(join.attr("to")).isEqualTo("g.us");
         assertThat(join.child("invite").attr("code")).isEqualTo("ABCDEF12345");
 
-        var locked = id.jawa.feature.messaging.GroupAction.buildSetLocked("iq5", "12345@g.us", true);
+        var locked = GroupAction.buildSetLocked("iq5", "12345@g.us", true);
         assertThat(locked.child("locked")).isNotNull();
 
-        var unlocked = id.jawa.feature.messaging.GroupAction.buildSetLocked("iq6", "12345@g.us", false);
+        var unlocked = GroupAction.buildSetLocked("iq6", "12345@g.us", false);
         assertThat(unlocked.child("unlocked")).isNotNull();
 
-        var announce = id.jawa.feature.messaging.GroupAction.buildSetAnnounce("iq7", "12345@g.us", true);
+        var announce = GroupAction.buildSetAnnounce("iq7", "12345@g.us", true);
         assertThat(announce.child("announcement")).isNotNull();
 
-        var notAnnounce = id.jawa.feature.messaging.GroupAction.buildSetAnnounce("iq8", "12345@g.us", false);
+        var notAnnounce = GroupAction.buildSetAnnounce("iq8", "12345@g.us", false);
         assertThat(notAnnounce.child("not_announcement")).isNotNull();
     }
 
@@ -151,11 +180,11 @@ class JaWaClientServicesTest {
         assertThat(client.privacy()).isNotNull();
         assertThat(client.privacy()).isSameAs(client.privacy());
 
-        var q = id.jawa.feature.messaging.UsyncQuery.buildUserInfoQuery("iq1", "sid1", java.util.List.of("628123456789@s.whatsapp.net"));
+        var q = UsyncQuery.buildUserInfoQuery("iq1", "sid1", List.of("628123456789@s.whatsapp.net"));
         assertThat(q.attr("xmlns")).isEqualTo("usync");
         assertThat(q.child("usync")).isNotNull();
 
-        var groupIq = id.jawa.feature.messaging.GroupListQuery.buildGroupInfoQuery("iq2", "12345@g.us");
+        var groupIq = GroupListQuery.buildGroupInfoQuery("iq2", "12345@g.us");
         assertThat(groupIq.attr("to")).isEqualTo("12345@g.us");
         assertThat(groupIq.child("query").attr("request")).isEqualTo("interactive");
     }
@@ -165,37 +194,37 @@ class JaWaClientServicesTest {
         FileAuthStore store = new FileAuthStore(tempDir.resolve("test.session"));
         JaWaClient client = new JaWaClient(store);
 
-        assertThat(id.jawa.domain.model.Jid.bare("628123456789:2@s.whatsapp.net"))
+        assertThat(Jid.bare("628123456789:2@s.whatsapp.net"))
             .isEqualTo("628123456789@s.whatsapp.net");
-        assertThat(id.jawa.domain.model.Jid.bare("120363123456@g.us"))
+        assertThat(Jid.bare("120363123456@g.us"))
             .isEqualTo("120363123456@g.us");
-        assertThat(id.jawa.domain.model.Jid.parse("628123456789:2@s.whatsapp.net").toBareString())
+        assertThat(Jid.parse("628123456789:2@s.whatsapp.net").toBareString())
             .isEqualTo("628123456789@s.whatsapp.net");
 
-        var req = new id.jawa.domain.model.GroupJoinRequest("628123456789@s.whatsapp.net", 1700000000L);
+        var req = new GroupJoinRequest("628123456789@s.whatsapp.net", 1700000000L);
         assertThat(req.jid()).isEqualTo("628123456789@s.whatsapp.net");
         assertThat(req.requestedAt()).isEqualTo(1700000000L);
 
-        var bizTarget = new id.jawa.domain.model.BusinessMessageLinkTarget(
+        var bizTarget = new BusinessMessageLinkTarget(
             "628123456789@s.whatsapp.net", "Test Store", "Hello", true, "Verified Store", "HIGH"
         );
         assertThat(bizTarget.isSigned()).isTrue();
         assertThat(bizTarget.message()).isEqualTo("Hello");
 
-        var bizProf = new id.jawa.domain.model.BusinessProfile(
+        var bizProf = new BusinessProfile(
             "628123456789@s.whatsapp.net", "Jakarta", "store@example.com", "Official Store",
-            java.util.List.of("https://example.com"),
-            java.util.List.of(new id.jawa.domain.model.BusinessProfile.Category("cat1", "Shopping")),
+            List.of("https://example.com"),
+            List.of(new BusinessProfile.Category("cat1", "Shopping")),
             "Asia/Jakarta",
-            java.util.List.of(new id.jawa.domain.model.BusinessProfile.BusinessHourConfig("mon", "open", "09:00", "17:00")),
-            java.util.Map.of("opt1", "val1")
+            List.of(new BusinessProfile.BusinessHourConfig("mon", "open", "09:00", "17:00")),
+            Map.of("opt1", "val1")
         );
         assertThat(bizProf.email()).isEqualTo("store@example.com");
         assertThat(bizProf.websites()).hasSize(1);
         assertThat(bizProf.categories()).hasSize(1);
 
-        var newsMsg = new id.jawa.domain.model.NewsletterMessage(
-            12345L, "3EB0ABC", "text", 1700000000L, 50, java.util.Map.of("👍", 5), null
+        var newsMsg = new NewsletterMessage(
+            12345L, "3EB0ABC", "text", 1700000000L, 50, Map.of("👍", 5), null
         );
         assertThat(newsMsg.serverId()).isEqualTo(12345L);
         assertThat(newsMsg.viewsCount()).isEqualTo(50);
@@ -206,16 +235,16 @@ class JaWaClientServicesTest {
     void testNewsletterMetadataAndStoreClear(@TempDir Path tempDir) throws Exception {
         var storeFile = tempDir.resolve("test-store.session");
         var store = new FileAuthStore(storeFile);
-        var creds = id.jawa.domain.model.AuthCreds.generate();
+        var creds = AuthCreds.generate();
         creds.meJid = "628123456789:1@s.whatsapp.net";
         creds.pushName = "TestBot";
         store.save(creds);
 
-        assertThat(java.nio.file.Files.exists(storeFile)).isTrue();
+        assertThat(Files.exists(storeFile)).isTrue();
         store.clear();
-        assertThat(java.nio.file.Files.exists(storeFile)).isFalse();
+        assertThat(Files.exists(storeFile)).isFalse();
 
-        var meta = new id.jawa.domain.model.NewsletterMetadata(
+        var meta = new NewsletterMetadata(
             "120363123456@newsletter", "Tech News", "Latest Updates", "Invite123",
             1700000000L, 1000, "ADMIN", false, "https://example.com/pic.jpg"
         );
@@ -229,9 +258,9 @@ class JaWaClientServicesTest {
         assertThat(client.newsletters()).isNotNull();
         assertThat(client.profile()).isNotNull();
 
-        var price = new id.jawa.domain.model.OrderDetails.OrderPrice(10000L, 10000L, "IDR", "paid");
-        var product = new id.jawa.domain.model.OrderDetails.OrderProduct("p1", "Item", 10000L, "IDR", 1, "img1", "https://img");
-        var order = new id.jawa.domain.model.OrderDetails("ord123", 1700000000L, "cat1", price, java.util.List.of(product));
+        var price = new OrderDetails.OrderPrice(10000L, 10000L, "IDR", "paid");
+        var product = new OrderDetails.OrderProduct("p1", "Item", 10000L, "IDR", 1, "img1", "https://img");
+        var order = new OrderDetails("ord123", 1700000000L, "cat1", price, List.of(product));
         assertThat(order.id()).isEqualTo("ord123");
         assertThat(order.price().total()).isEqualTo(10000L);
         assertThat(order.products()).hasSize(1);
@@ -239,17 +268,17 @@ class JaWaClientServicesTest {
 
     @Test
     void testBlocklistAndStatusPrivacyModels(@TempDir Path tempDir) {
-        var item = new id.jawa.domain.model.BlocklistItem("123@lid", "628123@s.whatsapp.net", true);
+        var item = new BlocklistItem("123@lid", "628123@s.whatsapp.net", true);
         assertThat(item.lid()).isEqualTo("123@lid");
         assertThat(item.pn()).isEqualTo("628123@s.whatsapp.net");
         assertThat(item.active()).isTrue();
 
-        var blocklist = new id.jawa.domain.model.Blocklist("hash1", "lid", java.util.List.of(item));
+        var blocklist = new Blocklist("hash1", "lid", List.of(item));
         assertThat(blocklist.dhash()).isEqualTo("hash1");
         assertThat(blocklist.addressingMode()).isEqualTo("lid");
         assertThat(blocklist.items()).hasSize(1);
 
-        var statusPriv = new id.jawa.domain.model.StatusPrivacy("blacklist", true, java.util.List.of("user1@s.whatsapp.net"));
+        var statusPriv = new StatusPrivacy("blacklist", true, List.of("user1@s.whatsapp.net"));
         assertThat(statusPriv.type()).isEqualTo("blacklist");
         assertThat(statusPriv.isDefault()).isTrue();
         assertThat(statusPriv.list()).containsExactly("user1@s.whatsapp.net");
@@ -263,19 +292,19 @@ class JaWaClientServicesTest {
 
     @Test
     void testCommunitySubGroupAndProfilePictureModels(@TempDir Path tempDir) {
-        var subGroup = new id.jawa.domain.model.CommunitySubGroup("120363@g.us", "General", 1700000000L, true);
+        var subGroup = new CommunitySubGroup("120363@g.us", "General", 1700000000L, true);
         assertThat(subGroup.jid()).isEqualTo("120363@g.us");
         assertThat(subGroup.subject()).isEqualTo("General");
         assertThat(subGroup.nameSetAt()).isEqualTo(1700000000L);
         assertThat(subGroup.defaultSubGroup()).isTrue();
 
-        var picInfo = new id.jawa.domain.model.ProfilePictureInfo("pic123", "https://img.whatsapp.net/p.jpg", "image", "/mms/image/123");
+        var picInfo = new ProfilePictureInfo("pic123", "https://img.whatsapp.net/p.jpg", "image", "/mms/image/123");
         assertThat(picInfo.id()).isEqualTo("pic123");
         assertThat(picInfo.url()).isEqualTo("https://img.whatsapp.net/p.jpg");
         assertThat(picInfo.type()).isEqualTo("image");
         assertThat(picInfo.directPath()).isEqualTo("/mms/image/123");
 
-        var botInfo = new id.jawa.domain.model.BotListInfo("p_bot_1", "13135550001@s.whatsapp.net");
+        var botInfo = new BotListInfo("p_bot_1", "13135550001@s.whatsapp.net");
         assertThat(botInfo.personaId()).isEqualTo("p_bot_1");
         assertThat(botInfo.botJid()).isEqualTo("13135550001@s.whatsapp.net");
 
@@ -290,7 +319,7 @@ class JaWaClientServicesTest {
         byte[] mediaKey = new byte[32];
         byte[] sha256 = new byte[32];
         byte[] encSha256 = new byte[32];
-        var msg = id.jawa.feature.messaging.MessageEncoder.stickerMessage(
+        var msg = MessageEncoder.stickerMessage(
             "https://mmg.whatsapp.net/v/t62/123",
             "/v/t62/123",
             mediaKey,
@@ -313,29 +342,29 @@ class JaWaClientServicesTest {
         FileAuthStore store = new FileAuthStore(tempDir.resolve("test-store4.session"));
         JaWaClient client = new JaWaClient(store);
 
-        byte[] mediaKey = id.jawa.protocol.crypto.Bytes.random(32);
+        byte[] mediaKey = Bytes.random(32);
         String msgId = "3EB0ABC123456789";
 
-        id.jawa.proto.Wa.MediaRetryNotification original = id.jawa.proto.Wa.MediaRetryNotification.newBuilder()
+        Wa.MediaRetryNotification original = Wa.MediaRetryNotification.newBuilder()
             .setStanzaId(msgId)
             .setDirectPath("/v/t62/reuploaded_media")
-            .setResult(id.jawa.proto.Wa.MediaRetryNotification.ResultType.SUCCESS)
+            .setResult(Wa.MediaRetryNotification.ResultType.SUCCESS)
             .build();
 
         byte[] plaintext = original.toByteArray();
-        byte[] retryKey = id.jawa.protocol.crypto.Hkdf.derive(
-            mediaKey, null, "WhatsApp Media Retry Notification".getBytes(java.nio.charset.StandardCharsets.UTF_8), 32);
-        byte[] iv = id.jawa.protocol.crypto.Bytes.random(12);
-        byte[] ciphertext = id.jawa.protocol.crypto.AesGcm.encrypt(
-            retryKey, iv, plaintext, msgId.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        byte[] retryKey = Hkdf.derive(
+            mediaKey, null, "WhatsApp Media Retry Notification".getBytes(StandardCharsets.UTF_8), 32);
+        byte[] iv = Bytes.random(12);
+        byte[] ciphertext = AesGcm.encrypt(
+            retryKey, iv, plaintext, msgId.getBytes(StandardCharsets.UTF_8));
 
-        id.jawa.proto.Wa.MediaRetryNotification decrypted =
+        Wa.MediaRetryNotification decrypted =
             JaWaClient.decryptMediaRetryNotification(ciphertext, iv, msgId, mediaKey);
 
         assertThat(decrypted).isNotNull();
         assertThat(decrypted.getStanzaId()).isEqualTo(msgId);
         assertThat(decrypted.getDirectPath()).isEqualTo("/v/t62/reuploaded_media");
-        assertThat(decrypted.getResult()).isEqualTo(id.jawa.proto.Wa.MediaRetryNotification.ResultType.SUCCESS);
+        assertThat(decrypted.getResult()).isEqualTo(Wa.MediaRetryNotification.ResultType.SUCCESS);
 
         assertThat(client.messages()).isNotNull();
         assertThat(client.media()).isNotNull();
@@ -343,14 +372,14 @@ class JaWaClientServicesTest {
 
     @Test
     void testWaConstantsVersionAndNoticeAcceptance(@TempDir Path tempDir) {
-        int[] originalVer = id.jawa.domain.model.WaConstants.getVersion();
+        int[] originalVer = WaConstants.getVersion();
         assertThat(originalVer).hasSize(3);
 
-        id.jawa.domain.model.WaConstants.setVersion(2, 3000, 999999);
-        int[] updatedVer = id.jawa.domain.model.WaConstants.getVersion();
+        WaConstants.setVersion(2, 3000, 999999);
+        int[] updatedVer = WaConstants.getVersion();
         assertThat(updatedVer[2]).isEqualTo(999999);
 
-        id.jawa.domain.model.WaConstants.setVersion(originalVer[0], originalVer[1], originalVer[2]);
+        WaConstants.setVersion(originalVer[0], originalVer[1], originalVer[2]);
 
         FileAuthStore store = new FileAuthStore(tempDir.resolve("test-store5.session"));
         JaWaClient client = new JaWaClient(store);
@@ -360,25 +389,25 @@ class JaWaClientServicesTest {
 
     @Test
     void testMediaDownloaderUnwrapping() {
-        var plain = id.jawa.proto.Wa.Message.newBuilder()
-            .setImageMessage(id.jawa.proto.Wa.Message.ImageMessage.newBuilder()
+        var plain = Wa.Message.newBuilder()
+            .setImageMessage(Wa.Message.ImageMessage.newBuilder()
                 .setUrl("")
                 .setDirectPath("")
                 .build())
             .build();
-        var wrapped = id.jawa.proto.Wa.Message.newBuilder()
-            .setEphemeralMessage(id.jawa.proto.Wa.Message.FutureProofMessage.newBuilder()
+        var wrapped = Wa.Message.newBuilder()
+            .setEphemeralMessage(Wa.Message.FutureProofMessage.newBuilder()
                 .setMessage(plain)
                 .build())
             .build();
 
-        byte[] downloaded = id.jawa.feature.media.MediaDownloader.download(wrapped);
+        byte[] downloaded = MediaDownloader.download(wrapped);
         assertThat(downloaded).isNull();
 
-        id.jawa.feature.messaging.MessageReceiver.Decoded decoded =
-            new id.jawa.feature.messaging.MessageReceiver.Decoded(
+        Decoded decoded =
+            new Decoded(
                 "628123@s.whatsapp.net", null, "3EB0123", "text", plain, null, null, 1700000000L);
-        byte[] downloadedDecoded = id.jawa.feature.media.MediaDownloader.download(decoded);
+        byte[] downloadedDecoded = MediaDownloader.download(decoded);
         assertThat(downloadedDecoded).isNull();
     }
 }

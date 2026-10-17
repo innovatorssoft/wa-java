@@ -76,6 +76,7 @@ import org.whispersystems.libsignal.ecc.Curve;
 import org.whispersystems.libsignal.ecc.ECKeyPair;
 import org.whispersystems.libsignal.state.PreKeyRecord;
 
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -1787,7 +1788,7 @@ public final class JaWaClient implements AutoCloseable {
             return CompletableFuture.supplyAsync(() -> {
                 try {
                     return MediaDownloader.downloadByUrl(url, mediaKey, fileEncSha256, type);
-                } catch (java.io.IOException | InterruptedException e) {
+                } catch (IOException | InterruptedException e) {
                     throw new CompletionException(e);
                 }
             });
@@ -1801,7 +1802,7 @@ public final class JaWaClient implements AutoCloseable {
                 try {
                     return MediaDownloader.downloadByDirectPath(
                         mc, directPath, mediaKey, fileEncSha256, type);
-                } catch (java.io.IOException | InterruptedException e) {
+                } catch (IOException | InterruptedException e) {
                     throw new CompletionException(e);
                 }
             }));
@@ -1825,7 +1826,7 @@ public final class JaWaClient implements AutoCloseable {
                     MediaUploader.upload(mc, enc, type);
                 return CompletableFuture.completedFuture(
                     new MediaUpload(mediaKey, enc, up));
-            } catch (java.io.IOException | InterruptedException e) {
+            } catch (IOException | InterruptedException e) {
                 return CompletableFuture.failedFuture(e);
             }
         });

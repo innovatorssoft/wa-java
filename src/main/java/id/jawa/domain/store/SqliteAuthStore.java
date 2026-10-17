@@ -18,10 +18,19 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
+/**
+ * SQLite-based implementation of {@link AuthStore} providing single-file transactional storage
+ * for credentials, sessions, pre-keys, sender keys, and app-state synchronization keys.
+ */
 public final class SqliteAuthStore implements AuthStore, AutoCloseable {
 
     private final String jdbcUrl;
 
+    /**
+     * Initializes a new SQLite auth store located at the specified database file path.
+     *
+     * @param dbFile path to the SQLite database file
+     */
     public SqliteAuthStore(Path dbFile) {
         if (dbFile.getParent() != null) {
             try {
@@ -34,6 +43,11 @@ public final class SqliteAuthStore implements AuthStore, AutoCloseable {
         initDb();
     }
 
+    /**
+     * Initializes a new SQLite auth store with a string path.
+     *
+     * @param dbPath filesystem path to the SQLite database file
+     */
     public SqliteAuthStore(String dbPath) {
         this(Path.of(dbPath));
     }

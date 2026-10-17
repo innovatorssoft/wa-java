@@ -1,13 +1,19 @@
 package id.jawa.domain.store;
 
-
 import org.whispersystems.libsignal.groups.SenderKeyName;
 import org.whispersystems.libsignal.groups.state.SenderKeyRecord;
 import org.whispersystems.libsignal.groups.state.SenderKeyStore;
 
+import java.io.IOException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
+/**
+ * In-memory implementation of {@link SenderKeyStore} with optional persistent file storage backing.
+ * <p>
+ * Manages Signal group session keys in memory with thread-safe concurrent access,
+ * and persists records when backed by a {@link FileSenderKeyStorage} instance.
+ */
 public final class InMemorySenderKeyStore implements SenderKeyStore {
 
     private final ConcurrentMap<SenderKeyName, byte[]> records = new ConcurrentHashMap<>();
@@ -35,7 +41,7 @@ public final class InMemorySenderKeyStore implements SenderKeyStore {
         if (serialized == null) return new SenderKeyRecord();
         try {
             return new SenderKeyRecord(serialized);
-        } catch (java.io.IOException e) {
+        } catch (IOException e) {
             throw new IllegalStateException("corrupt sender-key record for " + senderKeyName, e);
         }
     }

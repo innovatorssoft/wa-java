@@ -11,6 +11,11 @@ import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel;
 import java.util.EnumMap;
 import java.util.Map;
 
+/**
+ * Renders QR codes directly into ANSI terminal text using half-block Unicode characters.
+ * <p>
+ * Enables terminal QR scanning for WhatsApp device pairing without external UI dependencies.
+ */
 public final class QrTerminal {
 
     private static final String ESC = "";
