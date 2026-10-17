@@ -99,7 +99,7 @@ public final class MessageSender {
         BinaryNode biz = BizNode.buildIfNeeded(message);
         if (biz != null) outer.add(biz);
 
-        java.util.Map<String, String> attrs = new java.util.HashMap<>();
+        Map<String, String> attrs = new HashMap<>();
         attrs.put("to", recipientBareJid);
         attrs.put("id", msgId);
         attrs.put("type", "text");
@@ -201,7 +201,7 @@ public final class MessageSender {
         BinaryNode biz = BizNode.buildIfNeeded(message);
         if (biz != null) outer.add(biz);
 
-        java.util.Map<String, String> attrs = new java.util.HashMap<>();
+        Map<String, String> attrs = new HashMap<>();
         attrs.put("to", recipientBareJid);
         attrs.put("id", msgId);
         attrs.put("type", "text");

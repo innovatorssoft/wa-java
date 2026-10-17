@@ -3,6 +3,7 @@ package id.jawa.client;
 import id.jawa.feature.messaging.MessageEncoder;
 import id.jawa.feature.messaging.MessageReceiver;
 import id.jawa.proto.Wa;
+import id.jawa.protocol.codec.BinaryNode;
 
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -136,11 +137,11 @@ public final class MessagingService {
         client.sendReadReceiptBatch(chatJid, msgIds, senderJid);
     }
 
-    public CompletableFuture<id.jawa.protocol.codec.BinaryNode> starMessage(String chatJid, String msgId, boolean star) {
+    public CompletableFuture<BinaryNode> starMessage(String chatJid, String msgId, boolean star) {
         return client.starMessage(chatJid, msgId, star);
     }
 
-    public CompletableFuture<id.jawa.protocol.codec.BinaryNode> starMessage(MessageReceiver.Decoded target, boolean star) {
+    public CompletableFuture<BinaryNode> starMessage(MessageReceiver.Decoded target, boolean star) {
         String chatJid = target.groupJid() != null ? target.groupJid() : target.senderJid();
         return client.starMessage(chatJid, target.msgId(), star);
     }

@@ -5,6 +5,7 @@ import id.jawa.protocol.codec.BinaryNode;
 import id.jawa.domain.model.Jid;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -59,7 +60,7 @@ public final class GroupAction {
 
     public static BinaryNode buildSetDescription(String iqId, String groupJid,
                                                   String body, String previousId, String newId) {
-        java.util.LinkedHashMap<String, String> attrs = new java.util.LinkedHashMap<>();
+        LinkedHashMap<String, String> attrs = new LinkedHashMap<>();
         attrs.put("id", newId);
         if (previousId != null && !previousId.isEmpty()) attrs.put("prev", previousId);
         BinaryNode description;

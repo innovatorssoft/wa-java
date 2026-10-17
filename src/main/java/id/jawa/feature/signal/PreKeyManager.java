@@ -8,6 +8,7 @@ import id.jawa.protocol.codec.BinaryNode;
 import id.jawa.protocol.crypto.Curve25519;
 import id.jawa.protocol.crypto.KeyPair25519;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -35,7 +36,7 @@ public final class PreKeyManager {
     }
 
     public static BinaryNode buildUploadStanza(String id, AuthCreds creds, Map<Integer, KeyPair25519> preKeys) {
-        java.util.List<BinaryNode> keyList = new java.util.ArrayList<>(preKeys.size());
+        List<BinaryNode> keyList = new ArrayList<>(preKeys.size());
         for (var e : preKeys.entrySet()) {
             keyList.add(new BinaryNode("key", Map.of(), List.of(
                 new BinaryNode("id",    Map.of(), encodeUintBE(e.getKey(), 3)),

@@ -1,5 +1,6 @@
 package id.jawa.feature.messaging;
 
+import id.jawa.domain.model.Jid;
 import id.jawa.protocol.codec.BinaryNode;
 
 import java.util.ArrayList;
@@ -33,7 +34,7 @@ public final class GroupListQuery {
             ));
         return new BinaryNode("iq",
             Map.of(
-                "to",    id.jawa.domain.model.Jid.SERVER_GROUP,
+                "to",    Jid.SERVER_GROUP,
                 "xmlns", "w:g2",
                 "type",  "get",
                 "id",    iqId
@@ -62,7 +63,7 @@ public final class GroupListQuery {
         long subjectTs = parseLong(g.attr("s_t"), 0);
         String groupJid = g.attr("jid");
         if (groupJid == null || groupJid.isEmpty()) {
-            groupJid = (groupId != null ? groupId : "") + "@" + id.jawa.domain.model.Jid.SERVER_GROUP;
+            groupJid = (groupId != null ? groupId : "") + "@" + Jid.SERVER_GROUP;
         }
         List<String> participants = new ArrayList<>();
         for (BinaryNode p : g.childrenList()) {

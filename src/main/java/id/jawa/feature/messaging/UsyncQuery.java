@@ -1,5 +1,6 @@
 package id.jawa.feature.messaging;
 
+import id.jawa.client.JaWaClient;
 import id.jawa.domain.model.ContactStatus;
 import id.jawa.domain.model.DeviceInfo;
 import id.jawa.domain.model.Jid;
@@ -72,9 +73,9 @@ public final class UsyncQuery {
                         String jidBare = jidParsed.user() + "@" + jidParsed.server();
                         String valBare = valParsed.user() + "@" + valParsed.server();
                         if (jidBare.endsWith("@lid") && valBare.endsWith("@s.whatsapp.net")) {
-                            id.jawa.client.JaWaClient.LID_TO_PN_MAP.put(jidBare, valBare);
+                            JaWaClient.LID_TO_PN_MAP.put(jidBare, valBare);
                         } else if (jidBare.endsWith("@s.whatsapp.net") && valBare.endsWith("@lid")) {
-                            id.jawa.client.JaWaClient.LID_TO_PN_MAP.put(valBare, jidBare);
+                            JaWaClient.LID_TO_PN_MAP.put(valBare, jidBare);
                         }
                     }
                 }

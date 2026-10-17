@@ -4,9 +4,10 @@ package id.jawa.feature.messaging;
 import com.google.protobuf.InvalidProtocolBufferException;
 import id.jawa.protocol.codec.BinaryNode;
 import id.jawa.proto.Wa;
+import id.jawa.client.JaWaClient;
+import id.jawa.domain.model.Jid;
 import id.jawa.feature.signal.JaWaProtocolStore;
 import id.jawa.feature.signal.SessionBootstrap;
-import id.jawa.domain.model.Jid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.whispersystems.libsignal.DuplicateMessageException;
@@ -26,6 +27,8 @@ import org.whispersystems.libsignal.groups.state.SenderKeyStore;
 import org.whispersystems.libsignal.protocol.PreKeySignalMessage;
 import org.whispersystems.libsignal.protocol.SenderKeyDistributionMessage;
 import org.whispersystems.libsignal.protocol.SignalMessage;
+
+import java.util.regex.Pattern;
 
 public final class MessageReceiver {
 
@@ -69,23 +72,23 @@ public final class MessageReceiver {
 
         String senderPn = messageStanza.attr("sender_pn");
         if (senderPn != null && !senderPn.isBlank() && from != null && from.endsWith("@lid")) {
-            id.jawa.domain.model.Jid fromJid = id.jawa.domain.model.Jid.parse(from);
-            id.jawa.domain.model.Jid pnJid = id.jawa.domain.model.Jid.parse(senderPn);
+            Jid fromJid = Jid.parse(from);
+            Jid pnJid = Jid.parse(senderPn);
             if (fromJid != null && pnJid != null) {
                 String fromBare = fromJid.user() + "@lid";
-                String pnBare = pnJid.user() + "@" + id.jawa.domain.model.Jid.SERVER_WHATSAPP;
-                id.jawa.client.JaWaClient.LID_TO_PN_MAP.put(fromBare, pnBare);
+                String pnBare = pnJid.user() + "@" + Jid.SERVER_WHATSAPP;
+                JaWaClient.LID_TO_PN_MAP.put(fromBare, pnBare);
                 LOG.debug("LID mapping added from sender_pn: {} -> {}", fromBare, pnBare);
             }
         }
         String participantPn = messageStanza.attr("participant_pn");
         if (participantPn != null && !participantPn.isBlank() && participant != null && participant.endsWith("@lid")) {
-            id.jawa.domain.model.Jid partJid = id.jawa.domain.model.Jid.parse(participant);
-            id.jawa.domain.model.Jid pnJid = id.jawa.domain.model.Jid.parse(participantPn);
+            Jid partJid = Jid.parse(participant);
+            Jid pnJid = Jid.parse(participantPn);
             if (partJid != null && pnJid != null) {
                 String partBare = partJid.user() + "@lid";
-                String pnBare = pnJid.user() + "@" + id.jawa.domain.model.Jid.SERVER_WHATSAPP;
-                id.jawa.client.JaWaClient.LID_TO_PN_MAP.put(partBare, pnBare);
+                String pnBare = pnJid.user() + "@" + Jid.SERVER_WHATSAPP;
+                JaWaClient.LID_TO_PN_MAP.put(partBare, pnBare);
                 LOG.debug("LID mapping added from participant_pn: {} -> {}", partBare, pnBare);
             }
         }
@@ -196,7 +199,7 @@ public final class MessageReceiver {
 
             String selectedId = null;
             if (params != null) {
-                var matcher = java.util.regex.Pattern.compile("\"id\"\\s*:\\s*\"([^\"]+)\"").matcher(params);
+                var matcher = Pattern.compile("\"id\"\\s*:\\s*\"([^\"]+)\"").matcher(params);
                 if (matcher.find()) {
                     selectedId = matcher.group(1);
                 }

@@ -1,8 +1,9 @@
 package id.jawa.protocol.connection;
 
 
-import id.jawa.protocol.crypto.Bytes;
+import id.jawa.domain.model.WaConstants;
 import id.jawa.protocol.crypto.AesGcm;
+import id.jawa.protocol.crypto.Bytes;
 import id.jawa.protocol.crypto.Curve25519;
 import id.jawa.protocol.crypto.Hkdf;
 import id.jawa.protocol.crypto.KeyPair25519;
@@ -24,7 +25,7 @@ public final class NoiseHandshake {
 
     public NoiseHandshake(KeyPair25519 ephemeral, byte[] introHeader) {
         this.ephemeralPriv = ephemeral.privateKey();
-        this.hash = id.jawa.domain.model.WaConstants.NOISE_MODE.clone();
+        this.hash = WaConstants.NOISE_MODE.clone();
         this.salt = hash.clone();
         this.encKey = hash.clone();
         this.decKey = hash.clone();

@@ -1,8 +1,10 @@
 package id.jawa.feature.messaging;
 
-
+import com.google.protobuf.ByteString;
 import id.jawa.proto.Wa;
 import id.jawa.protocol.crypto.Bytes;
+
+import java.util.List;
 
 public final class MessageEncoder {
 
@@ -81,7 +83,7 @@ public final class MessageEncoder {
     }
 
     public static Wa.Message pollMessage(String name,
-                                         java.util.List<String> options,
+                                         List<String> options,
                                          int selectableCount) {
         Wa.Message.PollCreationMessage.Builder pcm = Wa.Message.PollCreationMessage.newBuilder()
             .setName(name)
@@ -91,7 +93,7 @@ public final class MessageEncoder {
                 .setOptionName(opt).build());
         }
         Wa.MessageContextInfo mci = Wa.MessageContextInfo.newBuilder()
-            .setMessageSecret(com.google.protobuf.ByteString.copyFrom(id.jawa.protocol.crypto.Bytes.random(32)))
+            .setMessageSecret(ByteString.copyFrom(Bytes.random(32)))
             .build();
         Wa.Message.Builder mb = Wa.Message.newBuilder().setMessageContextInfo(mci);
         if (selectableCount == 1) {
@@ -102,7 +104,7 @@ public final class MessageEncoder {
         return mb.build();
     }
 
-    public static Wa.Message textWithMentions(String body, java.util.List<String> mentionedBareJids) {
+    public static Wa.Message textWithMentions(String body, List<String> mentionedBareJids) {
         Wa.ContextInfo.Builder ctx = Wa.ContextInfo.newBuilder();
         for (String jid : mentionedBareJids) ctx.addMentionedJid(jid);
         Wa.Message.ExtendedTextMessage extended = Wa.Message.ExtendedTextMessage.newBuilder()
@@ -112,19 +114,19 @@ public final class MessageEncoder {
         return Wa.Message.newBuilder().setExtendedTextMessage(extended).build();
     }
 
-    private static com.google.protobuf.ByteString bs(byte[] b) {
-        return com.google.protobuf.ByteString.copyFrom(b);
+    private static ByteString bs(byte[] b) {
+        return ByteString.copyFrom(b);
     }
 
     public record ListRow(String rowId, String title, String description) {}
 
-    public record ListSection(String title, java.util.List<ListRow> rows) {}
+    public record ListSection(String title, List<ListRow> rows) {}
 
     public static Wa.Message listMessage(String title,
                                          String body,
                                          String footer,
                                          String buttonText,
-                                         java.util.List<ListSection> sections) {
+                                         List<ListSection> sections) {
         Wa.Message.ListMessage.Builder b = Wa.Message.ListMessage.newBuilder()
             .setTitle(title)
             .setDescription(body)
@@ -173,7 +175,7 @@ public final class MessageEncoder {
               + "\",\"id\":\"" + escape(id) + "\"}");
         }
 
-        public static CtaButton singleSelect(String displayText, java.util.List<ListSection> sections) {
+        public static CtaButton singleSelect(String displayText, List<ListSection> sections) {
             StringBuilder b = new StringBuilder("{\"title\":\"").append(escape(displayText));
             b.append("\",\"sections\":[");
             for (int i = 0; i < sections.size(); i++) {
@@ -200,10 +202,10 @@ public final class MessageEncoder {
                                Wa.Message.ImageMessage imageHeader,
                                Wa.Message.VideoMessage videoHeader,
                                String footer,
-                               java.util.List<CtaButton> buttons) {}
+                               List<CtaButton> buttons) {}
 
     public static Wa.Message interactiveCarousel(String body, String footer,
-                                                 java.util.List<CarouselCard> cards) {
+                                                 List<CarouselCard> cards) {
         Wa.Message.InteractiveMessage.CarouselMessage.Builder cm =
             Wa.Message.InteractiveMessage.CarouselMessage.newBuilder()
                 .setMessageVersion(1);
@@ -248,7 +250,7 @@ public final class MessageEncoder {
     }
 
     public static Wa.Message interactiveCtaButtons(String body, String footer,
-                                                   java.util.List<CtaButton> buttons) {
+                                                   List<CtaButton> buttons) {
         Wa.Message.InteractiveMessage.NativeFlowMessage.Builder nf =
             Wa.Message.InteractiveMessage.NativeFlowMessage.newBuilder()
                 .setMessageVersion(1);
@@ -287,7 +289,7 @@ public final class MessageEncoder {
     public record QuickReplyButton(String buttonId, String displayText) {}
 
     public static Wa.Message buttonsMessage(String body, String footer,
-                                            java.util.List<QuickReplyButton> buttons) {
+                                            List<QuickReplyButton> buttons) {
         Wa.Message.ButtonsMessage.Builder b = Wa.Message.ButtonsMessage.newBuilder()
             .setContentText(body)
             .setHeaderType(Wa.Message.ButtonsMessage.HeaderType.EMPTY);
@@ -376,9 +378,9 @@ public final class MessageEncoder {
         Wa.Message.ImageMessage.Builder b = Wa.Message.ImageMessage.newBuilder()
             .setUrl(uploadedUrl)
             .setDirectPath(directPath)
-            .setMediaKey(com.google.protobuf.ByteString.copyFrom(mediaKey))
-            .setFileSha256(com.google.protobuf.ByteString.copyFrom(fileSha256))
-            .setFileEncSha256(com.google.protobuf.ByteString.copyFrom(fileEncSha256))
+            .setMediaKey(ByteString.copyFrom(mediaKey))
+            .setFileSha256(ByteString.copyFrom(fileSha256))
+            .setFileEncSha256(ByteString.copyFrom(fileEncSha256))
             .setFileLength(fileLength)
             .setMimetype(mimetype)
             .setMediaKeyTimestamp(System.currentTimeMillis() / 1000);

@@ -1,6 +1,7 @@
 package id.jawa.feature.media;
 
 
+import id.jawa.domain.model.Jid;
 import id.jawa.protocol.codec.BinaryNode;
 
 import java.time.Instant;
@@ -31,7 +32,7 @@ public record MediaConn(
                 "id",    iqId,
                 "type",  "set",
                 "xmlns", "w:m",
-                "to",    id.jawa.domain.model.Jid.SERVER_WHATSAPP
+                "to",    Jid.SERVER_WHATSAPP
             ),
             List.of(BinaryNode.of("media_conn")));
     }

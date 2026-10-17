@@ -1,6 +1,7 @@
 package id.jawa.client;
 
 import id.jawa.domain.model.NewsletterMessage;
+import id.jawa.domain.model.NewsletterMetadata;
 import id.jawa.proto.Wa;
 import id.jawa.protocol.codec.BinaryNode;
 
@@ -59,11 +60,11 @@ public final class NewsletterService {
         return client.toggleMuteNewsletter(newsletterJid, mute);
     }
 
-    public CompletableFuture<id.jawa.domain.model.NewsletterMetadata> getInfo(String newsletterJid) {
+    public CompletableFuture<NewsletterMetadata> getInfo(String newsletterJid) {
         return client.getNewsletterInfo(newsletterJid);
     }
 
-    public CompletableFuture<id.jawa.domain.model.NewsletterMetadata> getInfoWithInvite(String inviteCodeOrUrl) {
+    public CompletableFuture<NewsletterMetadata> getInfoWithInvite(String inviteCodeOrUrl) {
         return client.getNewsletterInfoWithInvite(inviteCodeOrUrl);
     }
 

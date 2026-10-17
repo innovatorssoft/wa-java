@@ -1,6 +1,7 @@
 package id.jawa.protocol.codec;
 
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -64,7 +65,7 @@ public record BinaryNode(String tag, Map<String, String> attrs, Object content) 
     }
 
     public List<BinaryNode> children(String tag) {
-        List<BinaryNode> out = new java.util.ArrayList<>();
+        List<BinaryNode> out = new ArrayList<>();
         for (BinaryNode k : childrenList()) if (tag.equals(k.tag())) out.add(k);
         return out;
     }
