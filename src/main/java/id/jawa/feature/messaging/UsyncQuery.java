@@ -7,6 +7,7 @@ import id.jawa.domain.model.Jid;
 import id.jawa.domain.model.UserInfo;
 import id.jawa.protocol.codec.BinaryNode;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashMap;
@@ -202,7 +203,7 @@ public final class UsyncQuery {
             String statusText = null;
             BinaryNode status = user.child("status");
             if (status != null && status.bytesContent() != null) {
-                statusText = new String(status.bytesContent(), java.nio.charset.StandardCharsets.UTF_8);
+                statusText = new String(status.bytesContent(), StandardCharsets.UTF_8);
             }
 
             String pictureId = null;

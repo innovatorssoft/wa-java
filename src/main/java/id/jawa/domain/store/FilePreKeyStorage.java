@@ -9,6 +9,7 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.TreeMap;
@@ -110,8 +111,8 @@ public final class FilePreKeyStorage {
                 Path tmp = baseDir.resolve(id + SUFFIX + ".tmp");
                 Path dest = baseDir.resolve(id + SUFFIX);
                 Files.write(tmp, bytes);
-                Files.move(tmp, dest, java.nio.file.StandardCopyOption.REPLACE_EXISTING,
-                    java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+                Files.move(tmp, dest, StandardCopyOption.REPLACE_EXISTING,
+                    StandardCopyOption.ATOMIC_MOVE);
             } catch (IOException e) {
                 LOG.warn("Failed persisting pre-key {}: {}", id, e.toString());
             }

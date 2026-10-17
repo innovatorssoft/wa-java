@@ -1,12 +1,13 @@
 package id.jawa.feature.messaging;
 
 
-import id.jawa.protocol.codec.BinaryNode;
-import id.jawa.proto.Wa;
-import id.jawa.feature.signal.JaWaProtocolStore;
-import id.jawa.feature.signal.SessionBootstrap;
+import com.google.protobuf.InvalidProtocolBufferException;
 import id.jawa.domain.model.AuthCreds;
 import id.jawa.domain.model.Jid;
+import id.jawa.feature.signal.JaWaProtocolStore;
+import id.jawa.feature.signal.SessionBootstrap;
+import id.jawa.proto.Wa;
+import id.jawa.protocol.codec.BinaryNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.whispersystems.libsignal.SessionCipher;
@@ -222,7 +223,7 @@ public final class MessageSender {
             if (full.hasDeviceSignature()) b.setDeviceSignature(full.getDeviceSignature());
 
             return b.build().toByteArray();
-        } catch (com.google.protobuf.InvalidProtocolBufferException e) {
+        } catch (InvalidProtocolBufferException e) {
             throw new IllegalStateException("invalid creds.account proto", e);
         }
     }

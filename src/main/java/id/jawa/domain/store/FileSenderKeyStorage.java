@@ -11,6 +11,7 @@ import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.Base64;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -103,8 +104,8 @@ public final class FileSenderKeyStorage {
                 Path tmp = baseDir.resolve(key + ".tmp");
                 Path dest = baseDir.resolve(key);
                 Files.write(tmp, record);
-                Files.move(tmp, dest, java.nio.file.StandardCopyOption.REPLACE_EXISTING,
-                    java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+                Files.move(tmp, dest, StandardCopyOption.REPLACE_EXISTING,
+                    StandardCopyOption.ATOMIC_MOVE);
             } catch (IOException e) {
                 LOG.warn("Failed persisting sender key for {}: {}", name, e.toString());
             }

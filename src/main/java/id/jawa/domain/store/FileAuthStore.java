@@ -8,6 +8,7 @@ import id.jawa.protocol.crypto.KeyPair25519;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -91,8 +92,8 @@ public final class FileAuthStore implements AuthStore {
         for (var e : kv.entrySet()) sb.append(e.getKey()).append('=').append(e.getValue()).append('\n');
         Path tmp = file.resolveSibling(file.getFileName() + ".tmp");
         Files.writeString(tmp, sb.toString());
-        Files.move(tmp, file, java.nio.file.StandardCopyOption.REPLACE_EXISTING,
-                java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+        Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING,
+                StandardCopyOption.ATOMIC_MOVE);
     }
 
     private static byte[] b64(String s)    { return Bytes.fromBase64(s); }

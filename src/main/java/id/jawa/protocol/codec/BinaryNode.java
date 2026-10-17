@@ -1,6 +1,7 @@
 package id.jawa.protocol.codec;
 
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -53,7 +54,7 @@ public record BinaryNode(String tag, Map<String, String> attrs, Object content) 
         return switch (content) {
             case null -> null;
             case String s -> s;
-            case byte[] b -> new String(b, java.nio.charset.StandardCharsets.UTF_8);
+            case byte[] b -> new String(b, StandardCharsets.UTF_8);
             default -> throw new IllegalStateException(
                 "content is not text/bytes: " + content.getClass());
         };
@@ -74,7 +75,7 @@ public record BinaryNode(String tag, Map<String, String> attrs, Object content) 
         return switch (content) {
             case null -> null;
             case byte[] b -> b;
-            case String s -> s.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            case String s -> s.getBytes(StandardCharsets.UTF_8);
             default -> throw new IllegalStateException(
                 "content is not text/bytes: " + content.getClass());
         };

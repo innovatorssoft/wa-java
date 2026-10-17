@@ -1,15 +1,53 @@
 package id.jawa.client;
 
-
 import com.google.protobuf.ByteString;
 import id.jawa.domain.model.AuthCreds;
+import id.jawa.domain.model.Blocklist;
+import id.jawa.domain.model.BlocklistItem;
+import id.jawa.domain.model.BotListInfo;
+import id.jawa.domain.model.BusinessMessageLinkTarget;
+import id.jawa.domain.model.BusinessProfile;
 import id.jawa.domain.model.ChatPresence;
+import id.jawa.domain.model.CommunitySubGroup;
+import id.jawa.domain.model.ContactQrTarget;
+import id.jawa.domain.model.ContactStatus;
+import id.jawa.domain.model.DeviceInfo;
+import id.jawa.domain.model.GroupJoinRequest;
+import id.jawa.domain.model.Jid;
+import id.jawa.domain.model.NewsletterMessage;
+import id.jawa.domain.model.NewsletterMetadata;
+import id.jawa.domain.model.OrderDetails;
+import id.jawa.domain.model.PrivacySettings;
+import id.jawa.domain.model.ProfilePictureInfo;
+import id.jawa.domain.model.Receipt;
+import id.jawa.domain.model.SignedPreKey;
+import id.jawa.domain.model.StatusPrivacy;
+import id.jawa.domain.model.UserInfo;
 import id.jawa.domain.model.WaConstants;
 import id.jawa.domain.store.AuthStore;
+import id.jawa.domain.store.FilePreKeyStorage;
+import id.jawa.domain.store.FileSenderKeyStorage;
+import id.jawa.domain.store.FileSessionStorage;
+import id.jawa.domain.store.InMemorySenderKeyStore;
 import id.jawa.domain.store.InMemorySignalKeyStore;
 import id.jawa.domain.store.SignalKeyStore;
+import id.jawa.domain.store.SqliteAuthStore;
+import id.jawa.feature.appstate.AppStateKey;
+import id.jawa.feature.appstate.AppStateProcessor;
+import id.jawa.feature.appstate.AppStateSyncQuery;
+import id.jawa.feature.appstate.FileAppStateKeyStorage;
+import id.jawa.feature.appstate.PatchName;
+import id.jawa.feature.media.MediaConn;
+import id.jawa.feature.media.MediaCrypto;
+import id.jawa.feature.media.MediaDownloader;
+import id.jawa.feature.media.MediaUploader;
+import id.jawa.feature.messaging.GroupAction;
+import id.jawa.feature.messaging.GroupListQuery;
+import id.jawa.feature.messaging.GroupSender;
 import id.jawa.feature.messaging.MessageEncoder;
+import id.jawa.feature.messaging.MessageReceiver;
 import id.jawa.feature.messaging.MessageSender;
+import id.jawa.feature.messaging.UsyncQuery;
 import id.jawa.feature.pairing.ClientPayloadBuilder;
 import id.jawa.feature.pairing.PairingCodeHandler;
 import id.jawa.feature.pairing.PairingHandler;
@@ -24,22 +62,63 @@ import id.jawa.protocol.codec.BinaryNode;
 import id.jawa.protocol.connection.FrameSocket;
 import id.jawa.protocol.connection.NoiseHandshake;
 import id.jawa.protocol.connection.NoiseTransport;
+import id.jawa.protocol.crypto.AesGcm;
 import id.jawa.protocol.crypto.Bytes;
 import id.jawa.protocol.crypto.Curve25519;
+import id.jawa.protocol.crypto.Hkdf;
 import id.jawa.protocol.crypto.KeyPair25519;
 import id.jawa.protocol.crypto.Sha256;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.whispersystems.libsignal.InvalidKeyException;
+import org.whispersystems.libsignal.SignalProtocolAddress;
+import org.whispersystems.libsignal.ecc.Curve;
+import org.whispersystems.libsignal.ecc.ECKeyPair;
+import org.whispersystems.libsignal.state.PreKeyRecord;
 
+import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.BiConsumer;
+import java.util.function.Consumer;
+import java.util.function.Function;
+import java.util.function.Predicate;
+import java.util.function.Supplier;
 
 public final class JaWaClient implements AutoCloseable {
 
     private static final Logger LOG = LoggerFactory.getLogger(JaWaClient.class);
 
-    public static final java.util.concurrent.ConcurrentHashMap<String, String> LID_TO_PN_MAP =
-        new java.util.concurrent.ConcurrentHashMap<>();
+    public static final ConcurrentHashMap<String, String> LID_TO_PN_MAP =
+        new ConcurrentHashMap<>();
 
     public enum TerminationReason {
 
@@ -64,14 +143,14 @@ public final class JaWaClient implements AutoCloseable {
 
         default void onConnected() {}
 
-        default void onMessage(id.jawa.feature.messaging.MessageReceiver.Decoded decoded) {}
+        default void onMessage(MessageReceiver.Decoded decoded) {}
 
-        default void onReceipt(id.jawa.domain.model.Receipt receipt) {}
+        default void onReceipt(Receipt receipt) {}
 
         default void onAppStateKeysReceived(int count) {}
 
-        default void onAppStateMutations(id.jawa.feature.appstate.PatchName name,
-                                         java.util.List<id.jawa.feature.appstate.AppStateProcessor.Mutation> mutations) {}
+        default void onAppStateMutations(PatchName name,
+                                         List<AppStateProcessor.Mutation> mutations) {}
 
         default void onTerminated(TerminationReason reason, String detail, boolean permanent) {}
 
@@ -82,16 +161,16 @@ public final class JaWaClient implements AutoCloseable {
 
     private final AuthStore store;
     private SignalKeyStore signalStore = new InMemorySignalKeyStore();
-    private id.jawa.domain.store.InMemorySenderKeyStore senderKeyStore = new id.jawa.domain.store.InMemorySenderKeyStore();
-    private final java.nio.file.Path signalDir;
-    private id.jawa.domain.store.FileSessionStorage sessionStorage;
-    private id.jawa.domain.store.FilePreKeyStorage preKeyStorage;
-    private id.jawa.domain.store.FileSenderKeyStorage senderKeyStorage;
-    private id.jawa.feature.appstate.FileAppStateKeyStorage appStateKeyStorage;
-    private id.jawa.feature.appstate.AppStateProcessor appStateProcessor;
+    private InMemorySenderKeyStore senderKeyStore = new InMemorySenderKeyStore();
+    private final Path signalDir;
+    private FileSessionStorage sessionStorage;
+    private FilePreKeyStorage preKeyStorage;
+    private FileSenderKeyStorage senderKeyStorage;
+    private FileAppStateKeyStorage appStateKeyStorage;
+    private AppStateProcessor appStateProcessor;
     private JaWaProtocolStore protocolStore;
     private PairingCodeHandler pairCodeHandler;
-    private java.util.concurrent.ScheduledExecutorService keepalive;
+    private ScheduledExecutorService keepalive;
     private Listener listener = new Listener() {};
     private FrameSocket frame;
     private NoiseHandshake noise;
@@ -103,8 +182,8 @@ public final class JaWaClient implements AutoCloseable {
     private final AtomicBoolean reconnectAfterPair = new AtomicBoolean(false);
 
     private final AtomicBoolean terminated = new AtomicBoolean(false);
-    private final java.util.concurrent.atomic.AtomicInteger reconnectAttempts =
-        new java.util.concurrent.atomic.AtomicInteger(0);
+    private final AtomicInteger reconnectAttempts =
+        new AtomicInteger(0);
     private boolean autoReconnect = true;
     private boolean autoReadReceipt = false;
     private boolean autoComposingPresence = false;
@@ -113,13 +192,13 @@ public final class JaWaClient implements AutoCloseable {
     private boolean autoIgnoreOfflineMessages = true;
     private int offlineMessageGracePeriodSec = 2;
     private volatile long connectedAtEpochSec = 0;
-    private final java.util.concurrent.ConcurrentHashMap<String, Integer>
-        chatEphemeralTimers = new java.util.concurrent.ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Integer>
+        chatEphemeralTimers = new ConcurrentHashMap<>();
     private String wsUrl = WaConstants.WS_URL;
 
     private static final long[] RECONNECT_BACKOFF_MS = {2_000, 4_000, 8_000, 16_000, 30_000, 60_000};
 
-    private final java.util.concurrent.CountDownLatch closeLatch = new java.util.concurrent.CountDownLatch(1);
+    private final CountDownLatch closeLatch = new CountDownLatch(1);
     private static final int PRE_KEY_UPLOAD_COUNT = 30;
 
     private final MessagingService messagingService = new MessagingService(this);
@@ -130,20 +209,20 @@ public final class JaWaClient implements AutoCloseable {
     private final ChatService chatService = new ChatService(this);
     private final PrivacyService privacyService = new PrivacyService(this);
 
-    private final java.util.concurrent.ConcurrentHashMap<String, id.jawa.feature.messaging.GroupListQuery.GroupInfo>
-        groupCache = new java.util.concurrent.ConcurrentHashMap<>();
-    private final java.util.concurrent.ConcurrentHashMap<String, java.util.List<id.jawa.domain.model.DeviceInfo>>
-        deviceCache = new java.util.concurrent.ConcurrentHashMap<>();
-    private final java.util.concurrent.ConcurrentHashMap<String, String>
-        groupPhashMap = new java.util.concurrent.ConcurrentHashMap<>();
-    private final java.util.concurrent.locks.ReentrantLock messageSendLock =
-        new java.util.concurrent.locks.ReentrantLock();
+    private final ConcurrentHashMap<String, GroupListQuery.GroupInfo>
+        groupCache = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, List<DeviceInfo>>
+        deviceCache = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, String>
+        groupPhashMap = new ConcurrentHashMap<>();
+    private final ReentrantLock messageSendLock =
+        new ReentrantLock();
 
     public JaWaClient(AuthStore store) {
         this(store, null);
     }
 
-    public JaWaClient(AuthStore store, java.nio.file.Path signalDir) {
+    public JaWaClient(AuthStore store, Path signalDir) {
         this.store = store;
         this.signalDir = signalDir;
     }
@@ -199,7 +278,7 @@ public final class JaWaClient implements AutoCloseable {
 
     public long getConnectedAtEpochSec() { return connectedAtEpochSec; }
 
-    public java.util.Map<String, Integer> getChatEphemeralTimers() {
+    public Map<String, Integer> getChatEphemeralTimers() {
         return chatEphemeralTimers;
     }
 
@@ -217,7 +296,7 @@ public final class JaWaClient implements AutoCloseable {
         return chatEphemeralTimers.getOrDefault(chatJid, 0);
     }
 
-    public id.jawa.proto.Wa.Message wrapEphemeralIfNeeded(String chatJid, id.jawa.proto.Wa.Message msg) {
+    public Wa.Message wrapEphemeralIfNeeded(String chatJid, Wa.Message msg) {
         if (!autoEphemeral || msg == null || chatJid == null) {
             return msg;
         }
@@ -225,7 +304,7 @@ public final class JaWaClient implements AutoCloseable {
             return msg;
         }
         String key = chatJid;
-        id.jawa.domain.model.Jid parsed = id.jawa.domain.model.Jid.parse(chatJid);
+        Jid parsed = Jid.parse(chatJid);
         if (parsed != null && !chatJid.endsWith("@g.us")) {
             key = parsed.user() + "@" + parsed.server();
         }
@@ -234,8 +313,8 @@ public final class JaWaClient implements AutoCloseable {
             timer = chatEphemeralTimers.get(chatJid);
         }
         if (timer != null && timer > 0) {
-            return id.jawa.proto.Wa.Message.newBuilder()
-                .setEphemeralMessage(id.jawa.proto.Wa.Message.FutureProofMessage.newBuilder()
+            return Wa.Message.newBuilder()
+                .setEphemeralMessage(Wa.Message.FutureProofMessage.newBuilder()
                     .setMessage(msg))
                 .build();
         }
@@ -309,22 +388,22 @@ public final class JaWaClient implements AutoCloseable {
         frame.send(clientFinish.toByteArray());
 
         transport = noise.finish();
-        if (store instanceof id.jawa.domain.store.SqliteAuthStore sqliteStore && sessionStorage == null) {
-            sessionStorage     = new id.jawa.domain.store.FileSessionStorage(sqliteStore);
-            preKeyStorage      = new id.jawa.domain.store.FilePreKeyStorage(sqliteStore);
-            senderKeyStorage   = new id.jawa.domain.store.FileSenderKeyStorage(sqliteStore);
-            appStateKeyStorage = new id.jawa.feature.appstate.FileAppStateKeyStorage(sqliteStore);
+        if (store instanceof SqliteAuthStore sqliteStore && sessionStorage == null) {
+            sessionStorage     = new FileSessionStorage(sqliteStore);
+            preKeyStorage      = new FilePreKeyStorage(sqliteStore);
+            senderKeyStorage   = new FileSenderKeyStorage(sqliteStore);
+            appStateKeyStorage = new FileAppStateKeyStorage(sqliteStore);
             signalStore        = new InMemorySignalKeyStore(preKeyStorage);
-            senderKeyStore     = new id.jawa.domain.store.InMemorySenderKeyStore(senderKeyStorage);
-            appStateProcessor  = new id.jawa.feature.appstate.AppStateProcessor(appStateKeyStorage);
+            senderKeyStore     = new InMemorySenderKeyStore(senderKeyStorage);
+            appStateProcessor  = new AppStateProcessor(appStateKeyStorage);
         } else if (signalDir != null && sessionStorage == null) {
-            sessionStorage     = new id.jawa.domain.store.FileSessionStorage(signalDir.resolve("sessions"));
-            preKeyStorage      = new id.jawa.domain.store.FilePreKeyStorage(signalDir.resolve("prekeys"));
-            senderKeyStorage   = new id.jawa.domain.store.FileSenderKeyStorage(signalDir.resolve("sender-keys"));
-            appStateKeyStorage = new id.jawa.feature.appstate.FileAppStateKeyStorage(signalDir.resolve("appstate-keys"));
+            sessionStorage     = new FileSessionStorage(signalDir.resolve("sessions"));
+            preKeyStorage      = new FilePreKeyStorage(signalDir.resolve("prekeys"));
+            senderKeyStorage   = new FileSenderKeyStorage(signalDir.resolve("sender-keys"));
+            appStateKeyStorage = new FileAppStateKeyStorage(signalDir.resolve("appstate-keys"));
             signalStore        = new InMemorySignalKeyStore(preKeyStorage);
-            senderKeyStore     = new id.jawa.domain.store.InMemorySenderKeyStore(senderKeyStorage);
-            appStateProcessor  = new id.jawa.feature.appstate.AppStateProcessor(appStateKeyStorage);
+            senderKeyStore     = new InMemorySenderKeyStore(senderKeyStorage);
+            appStateProcessor  = new AppStateProcessor(appStateKeyStorage);
         }
         protocolStore = new JaWaProtocolStore(creds, sessionStorage);
 
@@ -334,13 +413,13 @@ public final class JaWaClient implements AutoCloseable {
             for (var entry : preKeyStorage.snapshot().entrySet()) {
                 try {
                     byte[] prefixedPub = Curve25519.prependType(entry.getValue().publicKey());
-                    org.whispersystems.libsignal.ecc.ECKeyPair kp =
-                        new org.whispersystems.libsignal.ecc.ECKeyPair(
-                            org.whispersystems.libsignal.ecc.Curve.decodePoint(prefixedPub, 0),
-                            org.whispersystems.libsignal.ecc.Curve.decodePrivatePoint(entry.getValue().privateKey()));
+                    ECKeyPair kp =
+                        new ECKeyPair(
+                            Curve.decodePoint(prefixedPub, 0),
+                            Curve.decodePrivatePoint(entry.getValue().privateKey()));
                     protocolStore.storePreKey(entry.getKey(),
-                        new org.whispersystems.libsignal.state.PreKeyRecord(entry.getKey(), kp));
-                } catch (org.whispersystems.libsignal.InvalidKeyException e) {
+                        new PreKeyRecord(entry.getKey(), kp));
+                } catch (InvalidKeyException e) {
                     LOG.warn("Failed to re-mirror persisted pre-key {} into protocolStore", entry.getKey(), e);
                 }
             }
@@ -354,7 +433,7 @@ public final class JaWaClient implements AutoCloseable {
 
     private void startKeepalive() {
         if (keepalive != null) return;
-        keepalive = java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+        keepalive = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = Thread.ofVirtual().name("jawa-keepalive").unstarted(r);
             t.setDaemon(true);
             return t;
@@ -366,23 +445,23 @@ public final class JaWaClient implements AutoCloseable {
                 try {
                     String iqId = newIqId();
                     BinaryNode ping = new BinaryNode("iq",
-                        java.util.Map.of(
-                            "to",    id.jawa.domain.model.Jid.SERVER_WHATSAPP,
+                        Map.of(
+                            "to",    Jid.SERVER_WHATSAPP,
                             "type",  "get",
                             "xmlns", "w:p",
                             "id",    iqId
                         ),
-                        java.util.List.of(new BinaryNode("ping", java.util.Map.of(), null)));
+                        List.of(new BinaryNode("ping", Map.of(), null)));
                     sendIq(ping, resp -> LOG.trace("keepalive ack id={}", iqId));
                 } catch (Throwable t) {
                     LOG.warn("Keepalive send failed", t);
                 }
 
-                long delay = 20 + java.util.concurrent.ThreadLocalRandom.current().nextInt(10);
-                keepalive.schedule(this, delay, java.util.concurrent.TimeUnit.SECONDS);
+                long delay = 20 + ThreadLocalRandom.current().nextInt(10);
+                keepalive.schedule(this, delay, TimeUnit.SECONDS);
             }
         };
-        keepalive.schedule(tick, 20, java.util.concurrent.TimeUnit.SECONDS);
+        keepalive.schedule(tick, 20, TimeUnit.SECONDS);
     }
 
     public void join() throws InterruptedException {
@@ -424,17 +503,17 @@ public final class JaWaClient implements AutoCloseable {
         }
     }
 
-    private void captureAppStateKeysFrom(id.jawa.feature.messaging.MessageReceiver.Decoded decoded) {
+    private void captureAppStateKeysFrom(MessageReceiver.Decoded decoded) {
         if (appStateKeyStorage == null || decoded.message() == null) return;
         if (!decoded.message().hasProtocolMessage()) return;
         var pm = decoded.message().getProtocolMessage();
         if (!pm.hasAppStateSyncKeyShare()) return;
         int count = 0;
-        for (id.jawa.proto.Wa.Message.AppStateSyncKey k : pm.getAppStateSyncKeyShare().getKeysList()) {
+        for (Wa.Message.AppStateSyncKey k : pm.getAppStateSyncKeyShare().getKeysList()) {
             byte[] id = k.getKeyId().getKeyId().toByteArray();
             byte[] data = k.getKeyData().getKeyData().toByteArray();
             if (data.length != 32) continue;
-            appStateKeyStorage.put(new id.jawa.feature.appstate.AppStateKey(id, data));
+            appStateKeyStorage.put(new AppStateKey(id, data));
             count++;
         }
         if (count > 0) {
@@ -444,31 +523,31 @@ public final class JaWaClient implements AutoCloseable {
         }
     }
 
-    public java.util.concurrent.CompletableFuture<java.util.List<id.jawa.feature.appstate.AppStateProcessor.Mutation>>
-            requestAppStateSync(id.jawa.feature.appstate.PatchName name, long fromVersion) {
+    public CompletableFuture<List<AppStateProcessor.Mutation>>
+            requestAppStateSync(PatchName name, long fromVersion) {
         if (appStateProcessor == null) {
-            return java.util.concurrent.CompletableFuture.failedFuture(
+            return CompletableFuture.failedFuture(
                 new IllegalStateException("signalDir not set — app-state sync requires persistent storage"));
         }
         String iqId = newIqId();
         BinaryNode iq = fromVersion < 0
-            ? id.jawa.feature.appstate.AppStateSyncQuery.buildSnapshotRequest(iqId, name)
-            : id.jawa.feature.appstate.AppStateSyncQuery.buildPatchRequest(iqId, name, fromVersion);
+            ? AppStateSyncQuery.buildSnapshotRequest(iqId, name)
+            : AppStateSyncQuery.buildPatchRequest(iqId, name, fromVersion);
         LOG.debug("Sent app-state sync IQ id={} name={} from={}", iqId, name.wire, fromVersion);
         return sendIqAsync(iq).thenApply(resp -> {
             if ("error".equals(resp.attr("type"))) {
                 LOG.warn("App-state sync rejected: {}", resp);
-                return java.util.List.<id.jawa.feature.appstate.AppStateProcessor.Mutation>of();
+                return List.<AppStateProcessor.Mutation>of();
             }
-            id.jawa.feature.appstate.AppStateSyncQuery.PatchList list =
-                id.jawa.feature.appstate.AppStateSyncQuery.parseResponse(resp);
-            if (list == null) return java.util.List.<id.jawa.feature.appstate.AppStateProcessor.Mutation>of();
+            AppStateSyncQuery.PatchList list =
+                AppStateSyncQuery.parseResponse(resp);
+            if (list == null) return List.<AppStateProcessor.Mutation>of();
 
-            java.util.List<id.jawa.feature.appstate.AppStateProcessor.Mutation> all = new java.util.ArrayList<>();
+            List<AppStateProcessor.Mutation> all = new ArrayList<>();
             if (list.snapshot() != null) {
                 all.addAll(appStateProcessor.decodeSnapshot(list.snapshot(), false));
             }
-            for (id.jawa.proto.Wa.SyncdPatch p : list.patches()) {
+            for (Wa.SyncdPatch p : list.patches()) {
                 all.addAll(appStateProcessor.decodePatch(p, false));
             }
             LOG.info("App-state sync {}: {} snapshot record(s) + {} patch(es) -> {} mutation(s) decoded",
@@ -572,20 +651,20 @@ public final class JaWaClient implements AutoCloseable {
         }
     }
 
-    private final java.util.Map<String, java.util.function.Consumer<BinaryNode>> pendingIqResults
-        = new java.util.concurrent.ConcurrentHashMap<>();
+    private final Map<String, Consumer<BinaryNode>> pendingIqResults
+        = new ConcurrentHashMap<>();
 
     private String newIqId() {
         return Bytes.toHex(Bytes.random(8));
     }
 
     public String generateMessageId() {
-        java.nio.ByteBuffer bb = java.nio.ByteBuffer.allocate(8 + 64 + 16);
+        ByteBuffer bb = ByteBuffer.allocate(8 + 64 + 16);
         bb.putLong(System.currentTimeMillis() / 1000L);
         if (creds != null && creds.meJid != null) {
-            id.jawa.domain.model.Jid j = id.jawa.domain.model.Jid.parse(creds.meJid);
+            Jid j = Jid.parse(creds.meJid);
             if (j != null && j.user() != null) {
-                bb.put((j.user() + "@c.us").getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                bb.put((j.user() + "@c.us").getBytes(StandardCharsets.UTF_8));
             }
         }
         bb.put(Bytes.random(16));
@@ -593,11 +672,11 @@ public final class JaWaClient implements AutoCloseable {
         byte[] input = new byte[bb.remaining()];
         bb.get(input);
         byte[] hash = Sha256.hash(input);
-        byte[] prefix = java.util.Arrays.copyOfRange(hash, 0, 9);
+        byte[] prefix = Arrays.copyOfRange(hash, 0, 9);
         return "3EB0" + Bytes.toHex(prefix).toUpperCase();
     }
 
-    public String sendIq(BinaryNode iq, java.util.function.Consumer<BinaryNode> onResponse) {
+    public String sendIq(BinaryNode iq, Consumer<BinaryNode> onResponse) {
         String id = iq.attr("id");
         if (id == null) throw new IllegalArgumentException("iq has no id attribute");
         if (onResponse != null) pendingIqResults.put(id, onResponse);
@@ -605,13 +684,13 @@ public final class JaWaClient implements AutoCloseable {
         return id;
     }
 
-    public java.util.concurrent.CompletableFuture<BinaryNode> sendIqAsync(BinaryNode iq) {
-        var f = new java.util.concurrent.CompletableFuture<BinaryNode>();
+    public CompletableFuture<BinaryNode> sendIqAsync(BinaryNode iq) {
+        var f = new CompletableFuture<BinaryNode>();
         sendIq(iq, f::complete);
         return f;
     }
 
-    public java.util.concurrent.CompletableFuture<String> requestPairingCode(String phoneNumber, String customCode) {
+    public CompletableFuture<String> requestPairingCode(String phoneNumber, String customCode) {
         if (creds.account != null) {
             throw new IllegalStateException("already paired (creds.account is set) — cannot request a pairing code");
         }
@@ -627,7 +706,7 @@ public final class JaWaClient implements AutoCloseable {
         });
     }
 
-    public java.util.concurrent.CompletableFuture<String> sendMessage(String chatJid, id.jawa.proto.Wa.Message msg) {
+    public CompletableFuture<String> sendMessage(String chatJid, Wa.Message msg) {
         if (chatJid.endsWith("@newsletter")) {
             return sendNewsletterMessage(chatJid, msg);
         }
@@ -636,11 +715,11 @@ public final class JaWaClient implements AutoCloseable {
             : sendDmMessage(chatJid, msg);
     }
 
-    public java.util.concurrent.CompletableFuture<String> sendMessage(
-            id.jawa.feature.messaging.MessageReceiver.Decoded target, id.jawa.proto.Wa.Message msg) {
+    public CompletableFuture<String> sendMessage(
+            MessageReceiver.Decoded target, Wa.Message msg) {
         String chatJid = target.groupJid() != null ? target.groupJid() : target.senderJid();
         if (!chatJid.endsWith("@g.us")) {
-            id.jawa.domain.model.Jid j = id.jawa.domain.model.Jid.parse(chatJid);
+            Jid j = Jid.parse(chatJid);
             if (j != null) {
                 chatJid = j.user() + "@" + j.server();
             }
@@ -648,76 +727,76 @@ public final class JaWaClient implements AutoCloseable {
         return sendMessage(chatJid, msg);
     }
 
-    public java.util.concurrent.CompletableFuture<String> sendText(String chatJid, String text) {
+    public CompletableFuture<String> sendText(String chatJid, String text) {
         return sendMessage(chatJid, MessageEncoder.text(text));
     }
 
-    public java.util.concurrent.CompletableFuture<String> sendText(
-            id.jawa.feature.messaging.MessageReceiver.Decoded target, String text) {
+    public CompletableFuture<String> sendText(
+            MessageReceiver.Decoded target, String text) {
         return sendMessage(target, MessageEncoder.text(text));
     }
 
-    public java.util.concurrent.CompletableFuture<String> sendTextWithMentions(
-            String chatJid, String text, java.util.List<String> mentionedBareJids) {
-        id.jawa.proto.Wa.Message msg = MessageEncoder.textWithMentions(text, mentionedBareJids);
+    public CompletableFuture<String> sendTextWithMentions(
+            String chatJid, String text, List<String> mentionedBareJids) {
+        Wa.Message msg = MessageEncoder.textWithMentions(text, mentionedBareJids);
         return chatJid.endsWith("@g.us")
             ? sendGroupMessage(chatJid, msg)
             : sendDmMessage(chatJid, msg);
     }
 
-    public java.util.concurrent.CompletableFuture<String> sendPoll(
-            String chatJid, String name, java.util.List<String> options, int selectableCount) {
-        id.jawa.proto.Wa.Message msg = MessageEncoder.pollMessage(name, options, selectableCount);
+    public CompletableFuture<String> sendPoll(
+            String chatJid, String name, List<String> options, int selectableCount) {
+        Wa.Message msg = MessageEncoder.pollMessage(name, options, selectableCount);
         return chatJid.endsWith("@g.us")
             ? sendGroupMessage(chatJid, msg)
             : sendDmMessage(chatJid, msg);
     }
 
-    public java.util.concurrent.CompletableFuture<String> sendLocation(
+    public CompletableFuture<String> sendLocation(
             String chatJid, double latitude, double longitude, String name, String address) {
-        id.jawa.proto.Wa.Message msg = MessageEncoder.locationMessage(latitude, longitude, name, address);
+        Wa.Message msg = MessageEncoder.locationMessage(latitude, longitude, name, address);
         return chatJid.endsWith("@g.us")
             ? sendGroupMessage(chatJid, msg)
             : sendDmMessage(chatJid, msg);
     }
 
-    public java.util.concurrent.CompletableFuture<String> sendContact(
+    public CompletableFuture<String> sendContact(
             String chatJid, String displayName, String vcard) {
-        id.jawa.proto.Wa.Message msg = MessageEncoder.contactMessage(displayName, vcard);
+        Wa.Message msg = MessageEncoder.contactMessage(displayName, vcard);
         return chatJid.endsWith("@g.us")
             ? sendGroupMessage(chatJid, msg)
             : sendDmMessage(chatJid, msg);
     }
 
-    public java.util.concurrent.CompletableFuture<String> sendStatusText(
+    public CompletableFuture<String> sendStatusText(
             String text, int backgroundArgb, int fontType) {
-        id.jawa.proto.Wa.Message msg = MessageEncoder.statusTextMessage(text, backgroundArgb, fontType);
+        Wa.Message msg = MessageEncoder.statusTextMessage(text, backgroundArgb, fontType);
         return sendDmMessage("status@broadcast", msg);
     }
 
-    public java.util.concurrent.CompletableFuture<String> sendStatusMedia(id.jawa.proto.Wa.Message mediaMsg) {
+    public CompletableFuture<String> sendStatusMedia(Wa.Message mediaMsg) {
         return sendDmMessage("status@broadcast", mediaMsg);
     }
 
-    public java.util.concurrent.CompletableFuture<String> sendNewsletterText(
+    public CompletableFuture<String> sendNewsletterText(
             String newsletterJid, String text) {
         String msgId = generateMessageId();
         byte[] msgBytes = MessageEncoder.encode(MessageEncoder.text(text));
         BinaryNode node = new BinaryNode("message",
-            java.util.Map.of(
+            Map.of(
                 "to", newsletterJid,
                 "type", "text",
                 "id", msgId
             ),
-            java.util.List.of(new BinaryNode("plaintext", java.util.Map.of(), msgBytes)));
+            List.of(new BinaryNode("plaintext", Map.of(), msgBytes)));
         send(node);
-        return java.util.concurrent.CompletableFuture.completedFuture(msgId);
+        return CompletableFuture.completedFuture(msgId);
     }
 
-    public java.util.concurrent.CompletableFuture<String> sendNewsletterReaction(
+    public CompletableFuture<String> sendNewsletterReaction(
             String newsletterJid, String serverId, String reactionCode) {
         String msgId = generateMessageId();
-        java.util.Map<String, String> attrs = new java.util.HashMap<>();
+        Map<String, String> attrs = new HashMap<>();
         attrs.put("to", newsletterJid);
         attrs.put("type", "reaction");
         attrs.put("server_id", serverId);
@@ -726,121 +805,121 @@ public final class JaWaClient implements AutoCloseable {
             attrs.put("edit", "7");
         }
         BinaryNode reactNode = new BinaryNode("reaction",
-            reactionCode != null && !reactionCode.isBlank() ? java.util.Map.of("code", reactionCode) : java.util.Map.of(),
+            reactionCode != null && !reactionCode.isBlank() ? Map.of("code", reactionCode) : Map.of(),
             null);
-        BinaryNode msgNode = new BinaryNode("message", attrs, java.util.List.of(reactNode));
+        BinaryNode msgNode = new BinaryNode("message", attrs, List.of(reactNode));
         send(msgNode);
-        return java.util.concurrent.CompletableFuture.completedFuture(msgId);
+        return CompletableFuture.completedFuture(msgId);
     }
 
-    public java.util.concurrent.CompletableFuture<BinaryNode> fetchNewsletterMessages(
+    public CompletableFuture<BinaryNode> fetchNewsletterMessages(
             String newsletterJid, int count) {
         String iqId = newIqId();
         BinaryNode node = new BinaryNode("iq",
-            java.util.Map.of(
+            Map.of(
                 "id", iqId,
                 "type", "get",
                 "xmlns", "newsletter",
                 "to", newsletterJid
             ),
-            java.util.List.of(new BinaryNode("message_updates", java.util.Map.of("count", String.valueOf(count)), null)));
+            List.of(new BinaryNode("message_updates", Map.of("count", String.valueOf(count)), null)));
         return sendIqAsync(node);
     }
 
-    public byte[] downloadMedia(id.jawa.proto.Wa.Message msg) {
-        return id.jawa.feature.media.MediaDownloader.download(msg);
+    public byte[] downloadMedia(Wa.Message msg) {
+        return MediaDownloader.download(msg);
     }
 
-    public byte[] downloadMedia(id.jawa.feature.messaging.MessageReceiver.Decoded target) {
-        return id.jawa.feature.media.MediaDownloader.download(target);
+    public byte[] downloadMedia(MessageReceiver.Decoded target) {
+        return MediaDownloader.download(target);
     }
 
-    public java.util.concurrent.CompletableFuture<Void> acceptTOSNotice(String noticeId, String stage) {
-        BinaryNode notice = new BinaryNode("notice", java.util.Map.of("id", noticeId, "stage", stage), null);
-        BinaryNode iq = new BinaryNode("iq", java.util.Map.of(
+    public CompletableFuture<Void> acceptTOSNotice(String noticeId, String stage) {
+        BinaryNode notice = new BinaryNode("notice", Map.of("id", noticeId, "stage", stage), null);
+        BinaryNode iq = new BinaryNode("iq", Map.of(
             "id", generateMessageId(),
             "type", "set",
             "xmlns", "tos",
-            "to", id.jawa.domain.model.Jid.SERVER_WHATSAPP
-        ), java.util.List.of(notice));
+            "to", Jid.SERVER_WHATSAPP
+        ), List.of(notice));
         return sendIqAsync(iq).thenApply(resp -> null);
     }
 
-    public java.util.concurrent.CompletableFuture<BinaryNode> updateProfileStatus(String statusText) {
+    public CompletableFuture<BinaryNode> updateProfileStatus(String statusText) {
         String iqId = newIqId();
         BinaryNode iq = new BinaryNode("iq",
-            java.util.Map.of("to", id.jawa.domain.model.Jid.SERVER_WHATSAPP, "type", "set", "xmlns", "status", "id", iqId),
-            java.util.List.of(new BinaryNode("status", java.util.Map.of(), statusText.getBytes(java.nio.charset.StandardCharsets.UTF_8))));
+            Map.of("to", Jid.SERVER_WHATSAPP, "type", "set", "xmlns", "status", "id", iqId),
+            List.of(new BinaryNode("status", Map.of(), statusText.getBytes(StandardCharsets.UTF_8))));
         return sendIqAsync(iq);
     }
 
-    public java.util.concurrent.CompletableFuture<String> setStatusMessage(String statusText) {
+    public CompletableFuture<String> setStatusMessage(String statusText) {
         String escaped = statusText != null ? statusText.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r") : "";
         String vars = "{\"input\":{\"text\":\"" + escaped + "\"}}";
         return sendMexQuery("9152604461510864", vars);
     }
 
-    public java.util.concurrent.CompletableFuture<String> fetchProfilePictureUrl(String targetJid) {
+    public CompletableFuture<String> fetchProfilePictureUrl(String targetJid) {
         String iqId = newIqId();
         BinaryNode iq = new BinaryNode("iq",
-            java.util.Map.of("to", targetJid, "type", "get", "xmlns", "w:profile:picture", "id", iqId),
-            java.util.List.of(new BinaryNode("picture", java.util.Map.of("type", "preview"), null)));
+            Map.of("to", targetJid, "type", "get", "xmlns", "w:profile:picture", "id", iqId),
+            List.of(new BinaryNode("picture", Map.of("type", "preview"), null)));
         return sendIqAsync(iq).thenApply(resp -> {
             var picNode = resp.child("picture");
             return picNode != null ? picNode.attr("url") : null;
         });
     }
 
-    public java.util.concurrent.CompletableFuture<BinaryNode> updateGroupPicture(
+    public CompletableFuture<BinaryNode> updateGroupPicture(
             String groupJid, byte[] imageBytes) {
         if (imageBytes == null || imageBytes.length == 0) {
             return removeGroupPicture(groupJid);
         }
         String iqId = newIqId();
         BinaryNode picNode = new BinaryNode("picture",
-            java.util.Map.of("type", "image"),
+            Map.of("type", "image"),
             imageBytes);
         BinaryNode iq = new BinaryNode("iq",
-            java.util.Map.of("to", groupJid, "type", "set", "xmlns", "w:profile:picture", "id", iqId),
-            java.util.List.of(picNode));
+            Map.of("to", groupJid, "type", "set", "xmlns", "w:profile:picture", "id", iqId),
+            List.of(picNode));
         return sendIqAsync(iq);
     }
 
-    public java.util.concurrent.CompletableFuture<BinaryNode> removeGroupPicture(String groupJid) {
+    public CompletableFuture<BinaryNode> removeGroupPicture(String groupJid) {
         String iqId = newIqId();
         BinaryNode picNode = new BinaryNode("picture",
-            java.util.Map.of("type", "delete"),
+            Map.of("type", "delete"),
             null);
         BinaryNode iq = new BinaryNode("iq",
-            java.util.Map.of("to", groupJid, "type", "set", "xmlns", "w:profile:picture", "id", iqId),
-            java.util.List.of(picNode));
+            Map.of("to", groupJid, "type", "set", "xmlns", "w:profile:picture", "id", iqId),
+            List.of(picNode));
         return sendIqAsync(iq);
     }
 
-    public java.util.concurrent.CompletableFuture<BinaryNode> updateProfilePicture(byte[] imageBytes) {
-        id.jawa.domain.model.Jid myJid = id.jawa.domain.model.Jid.parse(creds.meJid);
+    public CompletableFuture<BinaryNode> updateProfilePicture(byte[] imageBytes) {
+        Jid myJid = Jid.parse(creds.meJid);
         String ownBareJid = myJid != null ? myJid.user() + "@s.whatsapp.net" : creds.meJid;
         return updateGroupPicture(ownBareJid, imageBytes);
     }
 
-    public java.util.concurrent.CompletableFuture<BinaryNode> removeProfilePicture() {
-        id.jawa.domain.model.Jid myJid = id.jawa.domain.model.Jid.parse(creds.meJid);
+    public CompletableFuture<BinaryNode> removeProfilePicture() {
+        Jid myJid = Jid.parse(creds.meJid);
         String ownBareJid = myJid != null ? myJid.user() + "@s.whatsapp.net" : creds.meJid;
         return removeGroupPicture(ownBareJid);
     }
 
-    public java.util.concurrent.CompletableFuture<BinaryNode> updateBlockStatus(String targetJid, boolean block) {
+    public CompletableFuture<BinaryNode> updateBlockStatus(String targetJid, boolean block) {
         String iqId = newIqId();
-        BinaryNode item = new BinaryNode("item", java.util.Map.of("action", block ? "block" : "unblock", "jid", targetJid), null);
+        BinaryNode item = new BinaryNode("item", Map.of("action", block ? "block" : "unblock", "jid", targetJid), null);
         BinaryNode iq = new BinaryNode("iq",
-            java.util.Map.of("to", id.jawa.domain.model.Jid.SERVER_WHATSAPP, "type", "set", "xmlns", "blocklist", "id", iqId),
-            java.util.List.of(item));
+            Map.of("to", Jid.SERVER_WHATSAPP, "type", "set", "xmlns", "blocklist", "id", iqId),
+            List.of(item));
         return sendIqAsync(iq);
     }
 
-    public java.util.concurrent.CompletableFuture<java.util.List<String>> fetchBlockList() {
+    public CompletableFuture<List<String>> fetchBlockList() {
         return getBlocklist().thenApply(bl -> {
-            java.util.List<String> list = new java.util.ArrayList<>();
+            List<String> list = new ArrayList<>();
             for (var item : bl.items()) {
                 list.add(item.lid() != null ? item.lid() : item.pn());
             }
@@ -848,43 +927,43 @@ public final class JaWaClient implements AutoCloseable {
         });
     }
 
-    public java.util.concurrent.CompletableFuture<id.jawa.domain.model.Blocklist> getBlocklist(String dhash) {
+    public CompletableFuture<Blocklist> getBlocklist(String dhash) {
         String iqId = newIqId();
-        java.util.List<BinaryNode> content = null;
+        List<BinaryNode> content = null;
         if (dhash != null && !dhash.isBlank()) {
-            content = java.util.List.of(new BinaryNode("item", java.util.Map.of("dhash", dhash), null));
+            content = List.of(new BinaryNode("item", Map.of("dhash", dhash), null));
         }
         BinaryNode iq = new BinaryNode("iq",
-            java.util.Map.of("to", id.jawa.domain.model.Jid.SERVER_WHATSAPP, "type", "get", "xmlns", "blocklist", "id", iqId),
+            Map.of("to", Jid.SERVER_WHATSAPP, "type", "get", "xmlns", "blocklist", "id", iqId),
             content);
         return sendIqAsync(iq).thenApply(this::parseBlocklistNode);
     }
 
-    public java.util.concurrent.CompletableFuture<id.jawa.domain.model.Blocklist> getBlocklist() {
+    public CompletableFuture<Blocklist> getBlocklist() {
         return getBlocklist(null);
     }
 
-    public java.util.concurrent.CompletableFuture<id.jawa.domain.model.Blocklist> updateBlocklist(String jid, boolean block) {
+    public CompletableFuture<Blocklist> updateBlocklist(String jid, boolean block) {
         String iqId = newIqId();
         String targetJid = jid.contains("@") ? jid : jid + "@s.whatsapp.net";
-        java.util.Map<String, String> itemAttrs = new java.util.HashMap<>();
+        Map<String, String> itemAttrs = new HashMap<>();
         itemAttrs.put("jid", targetJid);
         itemAttrs.put("action", block ? "block" : "unblock");
         BinaryNode item = new BinaryNode("item", itemAttrs, null);
         BinaryNode iq = new BinaryNode("iq",
-            java.util.Map.of("to", id.jawa.domain.model.Jid.SERVER_WHATSAPP, "type", "set", "xmlns", "blocklist", "id", iqId),
-            java.util.List.of(item));
+            Map.of("to", Jid.SERVER_WHATSAPP, "type", "set", "xmlns", "blocklist", "id", iqId),
+            List.of(item));
         return sendIqAsync(iq).thenApply(this::parseBlocklistNode);
     }
 
-    private id.jawa.domain.model.Blocklist parseBlocklistNode(BinaryNode resp) {
+    private Blocklist parseBlocklistNode(BinaryNode resp) {
         BinaryNode listNode = resp.child("list");
         if (listNode == null) {
-            return new id.jawa.domain.model.Blocklist(null, null, java.util.List.of());
+            return new Blocklist(null, null, List.of());
         }
         String dhash = listNode.attr("dhash");
         String addressingMode = listNode.attr("addressing_mode");
-        java.util.List<id.jawa.domain.model.BlocklistItem> items = new java.util.ArrayList<>();
+        List<BlocklistItem> items = new ArrayList<>();
         for (var item : listNode.childrenList()) {
             if ("item".equals(item.tag()) && item.attr("jid") != null) {
                 String itemJid = item.attr("jid");
@@ -893,58 +972,58 @@ public final class JaWaClient implements AutoCloseable {
                 if (itemJid != null && itemJid.endsWith("@lid") && pnJid != null && pnJid.endsWith("@s.whatsapp.net")) {
                     LID_TO_PN_MAP.put(itemJid, pnJid);
                 }
-                items.add(new id.jawa.domain.model.BlocklistItem(itemJid, pnJid, active));
+                items.add(new BlocklistItem(itemJid, pnJid, active));
             }
         }
-        return new id.jawa.domain.model.Blocklist(dhash, addressingMode, items);
+        return new Blocklist(dhash, addressingMode, items);
     }
 
-    public java.util.concurrent.CompletableFuture<java.util.List<id.jawa.domain.model.StatusPrivacy>> getStatusPrivacy() {
+    public CompletableFuture<List<StatusPrivacy>> getStatusPrivacy() {
         String iqId = newIqId();
         BinaryNode iq = new BinaryNode("iq",
-            java.util.Map.of("to", id.jawa.domain.model.Jid.SERVER_WHATSAPP, "type", "get", "xmlns", "status", "id", iqId),
-            java.util.List.of(new BinaryNode("privacy", java.util.Map.of(), null)));
+            Map.of("to", Jid.SERVER_WHATSAPP, "type", "get", "xmlns", "status", "id", iqId),
+            List.of(new BinaryNode("privacy", Map.of(), null)));
         return sendIqAsync(iq).thenApply(resp -> {
             BinaryNode privacyNode = resp.child("privacy");
-            if (privacyNode == null) return java.util.List.of();
-            java.util.List<id.jawa.domain.model.StatusPrivacy> list = new java.util.ArrayList<>();
+            if (privacyNode == null) return List.of();
+            List<StatusPrivacy> list = new ArrayList<>();
             for (BinaryNode child : privacyNode.childrenList()) {
                 if (!"list".equals(child.tag())) continue;
                 String type = child.attr("type");
                 boolean isDefault = "true".equalsIgnoreCase(child.attr("default"));
-                java.util.List<String> users = new java.util.ArrayList<>();
+                List<String> users = new ArrayList<>();
                 for (BinaryNode u : child.childrenList()) {
                     if ("user".equals(u.tag()) && u.attr("jid") != null) {
                         users.add(u.attr("jid"));
                     }
                 }
-                list.add(new id.jawa.domain.model.StatusPrivacy(type, isDefault, users));
+                list.add(new StatusPrivacy(type, isDefault, users));
             }
             return list;
         });
     }
 
-    public java.util.concurrent.CompletableFuture<BinaryNode> pinChat(String chatJid, boolean pin) {
+    public CompletableFuture<BinaryNode> pinChat(String chatJid, boolean pin) {
         String iqId = newIqId();
-        BinaryNode item = new BinaryNode("pin", java.util.Map.of("jid", chatJid, "action", pin ? "pin" : "unpin"), null);
+        BinaryNode item = new BinaryNode("pin", Map.of("jid", chatJid, "action", pin ? "pin" : "unpin"), null);
         BinaryNode iq = new BinaryNode("iq",
-            java.util.Map.of("to", id.jawa.domain.model.Jid.SERVER_WHATSAPP, "type", "set", "xmlns", "action", "id", iqId),
-            java.util.List.of(item));
+            Map.of("to", Jid.SERVER_WHATSAPP, "type", "set", "xmlns", "action", "id", iqId),
+            List.of(item));
         return sendIqAsync(iq);
     }
 
-    public java.util.concurrent.CompletableFuture<BinaryNode> archiveChat(String chatJid, boolean archive) {
+    public CompletableFuture<BinaryNode> archiveChat(String chatJid, boolean archive) {
         String iqId = newIqId();
-        BinaryNode item = new BinaryNode("archive", java.util.Map.of("jid", chatJid, "action", archive ? "archive" : "unarchive"), null);
+        BinaryNode item = new BinaryNode("archive", Map.of("jid", chatJid, "action", archive ? "archive" : "unarchive"), null);
         BinaryNode iq = new BinaryNode("iq",
-            java.util.Map.of("to", id.jawa.domain.model.Jid.SERVER_WHATSAPP, "type", "set", "xmlns", "action", "id", iqId),
-            java.util.List.of(item));
+            Map.of("to", Jid.SERVER_WHATSAPP, "type", "set", "xmlns", "action", "id", iqId),
+            List.of(item));
         return sendIqAsync(iq);
     }
 
-    public java.util.concurrent.CompletableFuture<BinaryNode> muteChat(String chatJid, long durationSeconds) {
+    public CompletableFuture<BinaryNode> muteChat(String chatJid, long durationSeconds) {
         String iqId = newIqId();
-        java.util.Map<String, String> attrs = new java.util.HashMap<>();
+        Map<String, String> attrs = new HashMap<>();
         attrs.put("jid", chatJid);
         if (durationSeconds > 0) {
             attrs.put("type", "set");
@@ -954,61 +1033,61 @@ public final class JaWaClient implements AutoCloseable {
         }
         BinaryNode item = new BinaryNode("mute", attrs, null);
         BinaryNode iq = new BinaryNode("iq",
-            java.util.Map.of("to", id.jawa.domain.model.Jid.SERVER_WHATSAPP, "type", "set", "xmlns", "action", "id", iqId),
-            java.util.List.of(item));
+            Map.of("to", Jid.SERVER_WHATSAPP, "type", "set", "xmlns", "action", "id", iqId),
+            List.of(item));
         return sendIqAsync(iq);
     }
 
-    public java.util.concurrent.CompletableFuture<BinaryNode> starMessage(String chatJid, String msgId, boolean star) {
+    public CompletableFuture<BinaryNode> starMessage(String chatJid, String msgId, boolean star) {
         String iqId = newIqId();
-        BinaryNode item = new BinaryNode("star", java.util.Map.of("jid", chatJid, "id", msgId, "action", star ? "star" : "unstar"), null);
+        BinaryNode item = new BinaryNode("star", Map.of("jid", chatJid, "id", msgId, "action", star ? "star" : "unstar"), null);
         BinaryNode iq = new BinaryNode("iq",
-            java.util.Map.of("to", id.jawa.domain.model.Jid.SERVER_WHATSAPP, "type", "set", "xmlns", "action", "id", iqId),
-            java.util.List.of(item));
+            Map.of("to", Jid.SERVER_WHATSAPP, "type", "set", "xmlns", "action", "id", iqId),
+            List.of(item));
         return sendIqAsync(iq);
     }
 
-    public java.util.concurrent.CompletableFuture<BinaryNode> deleteChat(String chatJid) {
+    public CompletableFuture<BinaryNode> deleteChat(String chatJid) {
         String iqId = newIqId();
-        BinaryNode item = new BinaryNode("chat", java.util.Map.of("jid", chatJid, "action", "delete"), null);
+        BinaryNode item = new BinaryNode("chat", Map.of("jid", chatJid, "action", "delete"), null);
         BinaryNode iq = new BinaryNode("iq",
-            java.util.Map.of("to", id.jawa.domain.model.Jid.SERVER_WHATSAPP, "type", "set", "xmlns", "action", "id", iqId),
-            java.util.List.of(item));
+            Map.of("to", Jid.SERVER_WHATSAPP, "type", "set", "xmlns", "action", "id", iqId),
+            List.of(item));
         return sendIqAsync(iq);
     }
 
-    public java.util.concurrent.CompletableFuture<BinaryNode> clearChat(String chatJid) {
+    public CompletableFuture<BinaryNode> clearChat(String chatJid) {
         String iqId = newIqId();
-        BinaryNode item = new BinaryNode("chat", java.util.Map.of("jid", chatJid, "action", "clear"), null);
+        BinaryNode item = new BinaryNode("chat", Map.of("jid", chatJid, "action", "clear"), null);
         BinaryNode iq = new BinaryNode("iq",
-            java.util.Map.of("to", id.jawa.domain.model.Jid.SERVER_WHATSAPP, "type", "set", "xmlns", "action", "id", iqId),
-            java.util.List.of(item));
+            Map.of("to", Jid.SERVER_WHATSAPP, "type", "set", "xmlns", "action", "id", iqId),
+            List.of(item));
         return sendIqAsync(iq);
     }
 
-    public java.util.concurrent.CompletableFuture<String>
-            sendDmMessage(String toUser, id.jawa.proto.Wa.Message msg) {
-        final id.jawa.proto.Wa.Message outboundMsg = wrapEphemeralIfNeeded(toUser, msg);
+    public CompletableFuture<String>
+            sendDmMessage(String toUser, Wa.Message msg) {
+        final Wa.Message outboundMsg = wrapEphemeralIfNeeded(toUser, msg);
         String ownBareJid;
         if (toUser != null && toUser.endsWith("@lid") && creds.meLid != null && !creds.meLid.isBlank()) {
-            id.jawa.domain.model.Jid lidJid = id.jawa.domain.model.Jid.parse(creds.meLid);
+            Jid lidJid = Jid.parse(creds.meLid);
             ownBareJid = lidJid != null ? lidJid.user() + "@lid" : creds.meLid;
         } else {
-            id.jawa.domain.model.Jid myJid = id.jawa.domain.model.Jid.parse(creds.meJid);
+            Jid myJid = Jid.parse(creds.meJid);
             if (myJid == null) {
-                return java.util.concurrent.CompletableFuture.failedFuture(
+                return CompletableFuture.failedFuture(
                     new IllegalStateException("creds.meJid invalid"));
             }
-            ownBareJid = myJid.user() + "@" + id.jawa.domain.model.Jid.SERVER_WHATSAPP;
+            ownBareJid = myJid.user() + "@" + Jid.SERVER_WHATSAPP;
         }
         boolean isSelfSend = toUser != null && toUser.equals(ownBareJid);
-        java.util.List<String> queryTargets = isSelfSend
-            ? java.util.List.of(toUser)
-            : java.util.List.of(toUser, ownBareJid);
+        List<String> queryTargets = isSelfSend
+            ? List.of(toUser)
+            : List.of(toUser, ownBareJid);
 
-        id.jawa.domain.model.Jid ownJidObj = id.jawa.domain.model.Jid.parse(ownBareJid);
+        Jid ownJidObj = Jid.parse(ownBareJid);
         String ownUser = ownJidObj != null ? ownJidObj.user() : "";
-        id.jawa.domain.model.Jid targetJidObj = id.jawa.domain.model.Jid.parse(toUser);
+        Jid targetJidObj = Jid.parse(toUser);
 
         return queryDevices(queryTargets).thenCompose(devicesMap -> {
             String resolvedRoutingJid = toUser;
@@ -1024,14 +1103,14 @@ public final class JaWaClient implements AutoCloseable {
             final String finalRoutingJid = resolvedRoutingJid;
             final String finalEncryptionLid = resolvedEncryptionLid;
 
-            id.jawa.domain.model.Jid pnBase = id.jawa.domain.model.Jid.parse(finalRoutingJid);
-            id.jawa.domain.model.Jid lidBase = finalEncryptionLid != null ? id.jawa.domain.model.Jid.parse(finalEncryptionLid) : null;
+            Jid pnBase = Jid.parse(finalRoutingJid);
+            Jid lidBase = finalEncryptionLid != null ? Jid.parse(finalEncryptionLid) : null;
 
-            java.util.List<String> allDeviceJids = new java.util.ArrayList<>();
-            java.util.List<String> encryptionDeviceJids = new java.util.ArrayList<>();
+            List<String> allDeviceJids = new ArrayList<>();
+            List<String> encryptionDeviceJids = new ArrayList<>();
 
             for (var entry : devicesMap.entrySet()) {
-                id.jawa.domain.model.Jid base = id.jawa.domain.model.Jid.parse(entry.getKey());
+                Jid base = Jid.parse(entry.getKey());
                 if (base == null) continue;
                 boolean isTarget = targetJidObj != null && base.user().equals(targetJidObj.user());
 
@@ -1069,28 +1148,28 @@ public final class JaWaClient implements AutoCloseable {
         });
     }
 
-    private static int countOwnDevices(java.util.List<String> deviceJids, String ownUser) {
+    private static int countOwnDevices(List<String> deviceJids, String ownUser) {
         int n = 0;
         for (String dj : deviceJids) {
-            id.jawa.domain.model.Jid j = id.jawa.domain.model.Jid.parse(dj);
+            Jid j = Jid.parse(dj);
             if (j != null && ownUser.equals(j.user())) n++;
         }
         return n;
     }
 
-    public java.util.concurrent.CompletableFuture<java.util.List<org.whispersystems.libsignal.SignalProtocolAddress>>
-            fetchBundlesAndInstallSessions(java.util.List<String> deviceJids) {
-        java.util.List<String> missing = new java.util.ArrayList<>();
+    public CompletableFuture<List<SignalProtocolAddress>>
+            fetchBundlesAndInstallSessions(List<String> deviceJids) {
+        List<String> missing = new ArrayList<>();
         for (String dj : deviceJids) {
-            id.jawa.domain.model.Jid j = id.jawa.domain.model.Jid.parse(dj);
+            Jid j = Jid.parse(dj);
             if (j == null) continue;
-            org.whispersystems.libsignal.SignalProtocolAddress addr = id.jawa.feature.signal.SessionBootstrap.addressFor(j);
+            SignalProtocolAddress addr = SessionBootstrap.addressFor(j);
             if (!protocolStore.containsSession(addr)) {
                 missing.add(dj);
             }
         }
         if (missing.isEmpty()) {
-            return java.util.concurrent.CompletableFuture.completedFuture(java.util.List.of());
+            return CompletableFuture.completedFuture(List.of());
         }
         if (missing.size() <= 40) {
             String iqId = newIqId();
@@ -1099,7 +1178,7 @@ public final class JaWaClient implements AutoCloseable {
             return sendIqAsync(q).thenApply(resp -> {
                 if ("error".equals(resp.attr("type"))) {
                     LOG.warn("Pre-key fetch error: {}", resp);
-                    return java.util.List.of();
+                    return List.of();
                 }
                 var bundles = PreKeyBundleFetcher.parseResponse(resp);
                 LOG.debug("Parsed {} bundles", bundles.size());
@@ -1107,23 +1186,23 @@ public final class JaWaClient implements AutoCloseable {
             });
         }
         int batchSize = 40;
-        java.util.List<java.util.concurrent.CompletableFuture<java.util.List<org.whispersystems.libsignal.SignalProtocolAddress>>> futures = new java.util.ArrayList<>();
+        List<CompletableFuture<List<SignalProtocolAddress>>> futures = new ArrayList<>();
         for (int i = 0; i < missing.size(); i += batchSize) {
-            java.util.List<String> chunk = missing.subList(i, Math.min(i + batchSize, missing.size()));
+            List<String> chunk = missing.subList(i, Math.min(i + batchSize, missing.size()));
             String iqId = newIqId();
             BinaryNode q = PreKeyBundleFetcher.buildFetchStanza(iqId, chunk);
             futures.add(sendIqAsync(q).thenApply(resp -> {
                 if ("error".equals(resp.attr("type"))) {
                     LOG.warn("Pre-key fetch error: {}", resp);
-                    return java.util.List.of();
+                    return List.of();
                 }
                 var bundles = PreKeyBundleFetcher.parseResponse(resp);
                 return SessionBootstrap.installAll(protocolStore, bundles);
             }));
         }
-        return java.util.concurrent.CompletableFuture.allOf(futures.toArray(new java.util.concurrent.CompletableFuture<?>[0]))
+        return CompletableFuture.allOf(futures.toArray(new CompletableFuture<?>[0]))
             .thenApply(v -> {
-                java.util.List<org.whispersystems.libsignal.SignalProtocolAddress> result = new java.util.ArrayList<>();
+                List<SignalProtocolAddress> result = new ArrayList<>();
                 for (var f : futures) {
                     result.addAll(f.join());
                 }
@@ -1131,22 +1210,22 @@ public final class JaWaClient implements AutoCloseable {
             });
     }
 
-    public java.util.concurrent.CompletableFuture<Void> setDisappearingTimer(String chatJid, int timerSeconds) {
-        if (chatJid == null) return java.util.concurrent.CompletableFuture.completedFuture(null);
+    public CompletableFuture<Void> setDisappearingTimer(String chatJid, int timerSeconds) {
+        if (chatJid == null) return CompletableFuture.completedFuture(null);
         setChatEphemeralTimer(chatJid, timerSeconds);
         if (chatJid.endsWith("@g.us")) {
             String iqId = newIqId();
             BinaryNode content = timerSeconds <= 0
-                ? new BinaryNode("not_ephemeral", java.util.Map.of(), null)
-                : new BinaryNode("ephemeral", java.util.Map.of("expiration", String.valueOf(timerSeconds)), null);
+                ? new BinaryNode("not_ephemeral", Map.of(), null)
+                : new BinaryNode("ephemeral", Map.of("expiration", String.valueOf(timerSeconds)), null);
             BinaryNode iq = new BinaryNode("iq",
-                java.util.Map.of("to", chatJid, "type", "set", "xmlns", "w:g2", "id", iqId),
-                java.util.List.of(content));
+                Map.of("to", chatJid, "type", "set", "xmlns", "w:g2", "id", iqId),
+                List.of(content));
             return sendIqAsync(iq).thenApply(res -> null);
         } else {
-            id.jawa.proto.Wa.Message msg = id.jawa.proto.Wa.Message.newBuilder()
-                .setProtocolMessage(id.jawa.proto.Wa.Message.ProtocolMessage.newBuilder()
-                    .setType(id.jawa.proto.Wa.Message.ProtocolMessage.Type.EPHEMERAL_SETTING)
+            Wa.Message msg = Wa.Message.newBuilder()
+                .setProtocolMessage(Wa.Message.ProtocolMessage.newBuilder()
+                    .setType(Wa.Message.ProtocolMessage.Type.EPHEMERAL_SETTING)
                     .setEphemeralExpiration(timerSeconds)
                     .setEphemeralSettingTimestamp(System.currentTimeMillis() / 1000L))
                 .build();
@@ -1154,39 +1233,39 @@ public final class JaWaClient implements AutoCloseable {
         }
     }
 
-    public java.util.concurrent.CompletableFuture<String>
+    public CompletableFuture<String>
             sendGroupText(String groupJid, String text) {
         return sendGroupMessage(groupJid, MessageEncoder.text(text));
     }
 
-    public java.util.concurrent.CompletableFuture<String>
-            sendGroupMessage(String groupJid, id.jawa.proto.Wa.Message msg) {
-        final id.jawa.proto.Wa.Message outboundMsg = wrapEphemeralIfNeeded(groupJid, msg);
-        id.jawa.feature.messaging.GroupListQuery.GroupInfo cached = groupCache.get(groupJid);
-        java.util.concurrent.CompletableFuture<id.jawa.feature.messaging.GroupListQuery.GroupInfo> targetFuture =
+    public CompletableFuture<String>
+            sendGroupMessage(String groupJid, Wa.Message msg) {
+        final Wa.Message outboundMsg = wrapEphemeralIfNeeded(groupJid, msg);
+        GroupListQuery.GroupInfo cached = groupCache.get(groupJid);
+        CompletableFuture<GroupListQuery.GroupInfo> targetFuture =
             cached != null
-                ? java.util.concurrent.CompletableFuture.completedFuture(cached)
+                ? CompletableFuture.completedFuture(cached)
                 : queryGroupInfo(groupJid);
 
         return targetFuture.thenCompose(target -> {
             if (target == null) {
-                return java.util.concurrent.CompletableFuture.failedFuture(
+                return CompletableFuture.failedFuture(
                     new IllegalStateException("not a member of group: " + groupJid));
             }
-            java.util.LinkedHashSet<String> bareUsers = new java.util.LinkedHashSet<>();
+            LinkedHashSet<String> bareUsers = new LinkedHashSet<>();
             for (String pj : target.participantJids()) {
-                id.jawa.domain.model.Jid j = id.jawa.domain.model.Jid.parse(pj);
+                Jid j = Jid.parse(pj);
                 if (j == null) continue;
                 bareUsers.add(j.user() + "@" + j.server());
             }
             if (bareUsers.isEmpty()) {
-                return java.util.concurrent.CompletableFuture.failedFuture(
+                return CompletableFuture.failedFuture(
                     new IllegalStateException("group has no participants"));
             }
             return queryDevices(bareUsers).thenCompose(devicesMap -> {
-                java.util.List<String> allDeviceJids = new java.util.ArrayList<>();
+                List<String> allDeviceJids = new ArrayList<>();
                 for (var entry : devicesMap.entrySet()) {
-                    id.jawa.domain.model.Jid base = id.jawa.domain.model.Jid.parse(entry.getKey());
+                    Jid base = Jid.parse(entry.getKey());
                     if (base == null) continue;
                     for (var d : entry.getValue()) {
                         allDeviceJids.add(d.asJid(base.user(), base.server()).asString());
@@ -1196,8 +1275,8 @@ public final class JaWaClient implements AutoCloseable {
                     String msgId = generateMessageId();
                     messageSendLock.lock();
                     try {
-                        id.jawa.feature.messaging.GroupSender.Result result =
-                            id.jawa.feature.messaging.GroupSender.buildStanza(
+                        GroupSender.Result result =
+                            GroupSender.buildStanza(
                                 protocolStore, senderKeyStore, creds, msgId,
                                 groupJid, allDeviceJids, outboundMsg);
                         if (result.phash() != null && !result.phash().isEmpty()) {
@@ -1215,8 +1294,8 @@ public final class JaWaClient implements AutoCloseable {
         });
     }
 
-    public java.util.concurrent.CompletableFuture<String> sendNewsletterMessage(
-            String newsletterJid, id.jawa.proto.Wa.Message msg) {
+    public CompletableFuture<String> sendNewsletterMessage(
+            String newsletterJid, Wa.Message msg) {
         String msgId = generateMessageId();
 
         String msgType = "text";
@@ -1225,27 +1304,27 @@ public final class JaWaClient implements AutoCloseable {
         else if (msg.hasAudioMessage()) msgType = "audio";
         else if (msg.hasDocumentMessage()) msgType = "document";
 
-        BinaryNode plaintextNode = new BinaryNode("plaintext", java.util.Map.of(), msg.toByteArray());
+        BinaryNode plaintextNode = new BinaryNode("plaintext", Map.of(), msg.toByteArray());
 
-        BinaryNode stanza = new BinaryNode("message", java.util.Map.of(
+        BinaryNode stanza = new BinaryNode("message", Map.of(
             "to", newsletterJid,
             "id", msgId,
             "type", msgType
-        ), java.util.List.of(plaintextNode));
+        ), List.of(plaintextNode));
 
         send(stanza);
         LOG.info("Sent newsletter message id={} to={} type={}", msgId, newsletterJid, msgType);
-        return java.util.concurrent.CompletableFuture.completedFuture(msgId);
+        return CompletableFuture.completedFuture(msgId);
     }
 
-    public java.util.concurrent.CompletableFuture<String> sendReaction(
+    public CompletableFuture<String> sendReaction(
             String chatJid,
             String targetMsgId,
             String targetParticipant,
             boolean fromMe,
             String emoji) {
         long ts = System.currentTimeMillis();
-        id.jawa.proto.Wa.Message msg = MessageEncoder.reaction(
+        Wa.Message msg = MessageEncoder.reaction(
             chatJid, targetMsgId, targetParticipant, fromMe, emoji, ts);
         if (chatJid.endsWith("@g.us")) {
             return sendGroupMessage(chatJid, msg);
@@ -1253,27 +1332,27 @@ public final class JaWaClient implements AutoCloseable {
         return sendDmMessage(chatJid, msg);
     }
 
-    public java.util.concurrent.CompletableFuture<String> sendReaction(
-            id.jawa.feature.messaging.MessageReceiver.Decoded target, String emoji) {
+    public CompletableFuture<String> sendReaction(
+            MessageReceiver.Decoded target, String emoji) {
         String chatJid = target.groupJid() != null ? target.groupJid() : target.senderJid();
         if (!chatJid.endsWith("@g.us")) {
-            id.jawa.domain.model.Jid j = id.jawa.domain.model.Jid.parse(chatJid);
+            Jid j = Jid.parse(chatJid);
             if (j != null) chatJid = j.user() + "@" + j.server();
         }
-        id.jawa.domain.model.Jid myJid = id.jawa.domain.model.Jid.parse(creds.meJid);
-        id.jawa.domain.model.Jid senderJid = id.jawa.domain.model.Jid.parse(target.senderJid());
+        Jid myJid = Jid.parse(creds.meJid);
+        Jid senderJid = Jid.parse(target.senderJid());
         boolean fromMe = myJid != null && senderJid != null && myJid.user().equals(senderJid.user());
         String targetParticipant = target.groupJid() != null ? target.senderJid() : null;
         return sendReaction(chatJid, target.msgId(), targetParticipant, fromMe, emoji);
     }
 
-    public java.util.concurrent.CompletableFuture<String> sendReply(
+    public CompletableFuture<String> sendReply(
             String chatJid,
             String text,
             String quotedMsgId,
             String quotedSender,
             String quotedText) {
-        id.jawa.proto.Wa.Message msg = MessageEncoder.reply(
+        Wa.Message msg = MessageEncoder.reply(
             text, quotedMsgId, quotedSender, quotedText);
         if (chatJid.endsWith("@g.us")) {
             return sendGroupMessage(chatJid, msg);
@@ -1281,11 +1360,11 @@ public final class JaWaClient implements AutoCloseable {
         return sendDmMessage(chatJid, msg);
     }
 
-    public java.util.concurrent.CompletableFuture<String> sendReply(
-            id.jawa.feature.messaging.MessageReceiver.Decoded target, String text) {
+    public CompletableFuture<String> sendReply(
+            MessageReceiver.Decoded target, String text) {
         String chatJid = target.groupJid() != null ? target.groupJid() : target.senderJid();
         if (!chatJid.endsWith("@g.us")) {
-            id.jawa.domain.model.Jid j = id.jawa.domain.model.Jid.parse(chatJid);
+            Jid j = Jid.parse(chatJid);
             if (j != null) chatJid = j.user() + "@" + j.server();
         }
         String quotedSender = target.groupJid() != null ? target.senderJid() : null;
@@ -1293,26 +1372,26 @@ public final class JaWaClient implements AutoCloseable {
         return sendReply(chatJid, text, target.msgId(), quotedSender, quotedText);
     }
 
-    public java.util.concurrent.CompletableFuture<String> sendListMessage(
+    public CompletableFuture<String> sendListMessage(
             String chatJid,
             String title,
             String body,
             String footer,
             String buttonText,
-            java.util.List<MessageEncoder.ListSection> sections) {
-        id.jawa.proto.Wa.Message msg = MessageEncoder.listMessage(
+            List<MessageEncoder.ListSection> sections) {
+        Wa.Message msg = MessageEncoder.listMessage(
             title, body, footer, buttonText, sections);
         return chatJid.endsWith("@g.us")
             ? sendGroupMessage(chatJid, msg)
             : sendDmMessage(chatJid, msg);
     }
 
-    public java.util.concurrent.CompletableFuture<String> sendCtaButtons(
+    public CompletableFuture<String> sendCtaButtons(
             String chatJid,
             String body,
             String footer,
-            java.util.List<MessageEncoder.CtaButton> buttons) {
-        id.jawa.proto.Wa.Message msg = MessageEncoder.interactiveCtaButtons(body, footer, buttons);
+            List<MessageEncoder.CtaButton> buttons) {
+        Wa.Message msg = MessageEncoder.interactiveCtaButtons(body, footer, buttons);
         return chatJid.endsWith("@g.us")
             ? sendGroupMessage(chatJid, msg)
             : sendDmMessage(chatJid, msg);
@@ -1324,33 +1403,33 @@ public final class JaWaClient implements AutoCloseable {
         byte[] mediaBytes,
         String mimetype,
         String footer,
-        java.util.List<MessageEncoder.CtaButton> buttons
+        List<MessageEncoder.CtaButton> buttons
     ) {}
 
-    public java.util.concurrent.CompletableFuture<String> sendCarousel(
+    public CompletableFuture<String> sendCarousel(
             String chatJid,
             String body,
             String footer,
-            java.util.List<CarouselCardInput> inputs) {
+            List<CarouselCardInput> inputs) {
         return sendCarousel(chatJid, body, footer, inputs, null);
     }
 
-    public java.util.concurrent.CompletableFuture<String> sendCarousel(
+    public CompletableFuture<String> sendCarousel(
             String chatJid,
             String body,
             String footer,
-            java.util.List<CarouselCardInput> inputs,
-            id.jawa.proto.Wa.ContextInfo quoted) {
-        java.util.List<java.util.concurrent.CompletableFuture<MessageEncoder.CarouselCard>> futures =
-            new java.util.ArrayList<>();
+            List<CarouselCardInput> inputs,
+            Wa.ContextInfo quoted) {
+        List<CompletableFuture<MessageEncoder.CarouselCard>> futures =
+            new ArrayList<>();
         for (CarouselCardInput in : inputs) {
             boolean isVideo = in.mimetype() != null && in.mimetype().startsWith("video/");
-            id.jawa.feature.media.MediaCrypto.MediaType type = isVideo
-                ? id.jawa.feature.media.MediaCrypto.MediaType.VIDEO
-                : id.jawa.feature.media.MediaCrypto.MediaType.IMAGE;
+            MediaCrypto.MediaType type = isVideo
+                ? MediaCrypto.MediaType.VIDEO
+                : MediaCrypto.MediaType.IMAGE;
             futures.add(encryptAndUpload(in.mediaBytes(), type).thenApply(u -> {
                 if (isVideo) {
-                    id.jawa.proto.Wa.Message inner = MessageEncoder.videoMessage(
+                    Wa.Message inner = MessageEncoder.videoMessage(
                         u.upload().url(), u.upload().directPath(),
                         u.mediaKey(),
                         u.enc().fileSha256(), u.enc().fileEncSha256(),
@@ -1360,7 +1439,7 @@ public final class JaWaClient implements AutoCloseable {
                         in.title(), in.caption(), null, inner.getVideoMessage(),
                         in.footer(), in.buttons());
                 }
-                id.jawa.proto.Wa.Message inner = MessageEncoder.imageMessage(
+                Wa.Message inner = MessageEncoder.imageMessage(
                     u.upload().url(), u.upload().directPath(),
                     u.mediaKey(),
                     u.enc().fileSha256(), u.enc().fileEncSha256(),
@@ -1370,12 +1449,12 @@ public final class JaWaClient implements AutoCloseable {
                     in.footer(), in.buttons());
             }));
         }
-        java.util.concurrent.CompletableFuture<Void> all = java.util.concurrent.CompletableFuture
-            .allOf(futures.toArray(new java.util.concurrent.CompletableFuture<?>[0]));
+        CompletableFuture<Void> all = CompletableFuture
+            .allOf(futures.toArray(new CompletableFuture<?>[0]));
         return all.thenCompose(v -> {
-            java.util.List<MessageEncoder.CarouselCard> cards = new java.util.ArrayList<>();
+            List<MessageEncoder.CarouselCard> cards = new ArrayList<>();
             for (var f : futures) cards.add(f.join());
-            id.jawa.proto.Wa.Message msg = MessageEncoder.interactiveCarousel(body, footer, cards);
+            Wa.Message msg = MessageEncoder.interactiveCarousel(body, footer, cards);
             if (quoted != null) {
                 msg = msg.toBuilder()
                     .setInteractiveMessage(msg.getInteractiveMessage().toBuilder().setContextInfo(quoted))
@@ -1385,23 +1464,23 @@ public final class JaWaClient implements AutoCloseable {
         });
     }
 
-    public java.util.concurrent.CompletableFuture<String> sendButtonsMessage(
+    public CompletableFuture<String> sendButtonsMessage(
             String chatJid,
             String body,
             String footer,
-            java.util.List<MessageEncoder.QuickReplyButton> buttons) {
-        id.jawa.proto.Wa.Message msg = MessageEncoder.buttonsMessage(body, footer, buttons);
+            List<MessageEncoder.QuickReplyButton> buttons) {
+        Wa.Message msg = MessageEncoder.buttonsMessage(body, footer, buttons);
         return chatJid.endsWith("@g.us")
             ? sendGroupMessage(chatJid, msg)
             : sendDmMessage(chatJid, msg);
     }
 
-    public java.util.concurrent.CompletableFuture<String> sendEdit(
+    public CompletableFuture<String> sendEdit(
             String chatJid,
             String targetMsgId,
             String newText) {
-        id.jawa.proto.Wa.Message inner = MessageEncoder.text(newText);
-        id.jawa.proto.Wa.Message msg = MessageEncoder.edit(
+        Wa.Message inner = MessageEncoder.text(newText);
+        Wa.Message msg = MessageEncoder.edit(
             chatJid, targetMsgId, inner, System.currentTimeMillis());
         if (chatJid.endsWith("@g.us")) {
             return sendGroupMessage(chatJid, msg);
@@ -1409,72 +1488,72 @@ public final class JaWaClient implements AutoCloseable {
         return sendDmMessage(chatJid, msg);
     }
 
-    public java.util.concurrent.CompletableFuture<String> sendEdit(
-            id.jawa.feature.messaging.MessageReceiver.Decoded target, String newText) {
+    public CompletableFuture<String> sendEdit(
+            MessageReceiver.Decoded target, String newText) {
         String chatJid = target.groupJid() != null ? target.groupJid() : target.senderJid();
         if (!chatJid.endsWith("@g.us")) {
-            id.jawa.domain.model.Jid j = id.jawa.domain.model.Jid.parse(chatJid);
+            Jid j = Jid.parse(chatJid);
             if (j != null) chatJid = j.user() + "@" + j.server();
         }
         return sendEdit(chatJid, target.msgId(), newText);
     }
 
-    public java.util.concurrent.CompletableFuture<byte[]> downloadMedia(
+    public CompletableFuture<byte[]> downloadMedia(
             String url,
             String directPath,
             byte[] mediaKey,
             byte[] fileEncSha256,
-            id.jawa.feature.media.MediaCrypto.MediaType type) {
+            MediaCrypto.MediaType type) {
         if (url != null && !url.isEmpty()) {
-            return java.util.concurrent.CompletableFuture.supplyAsync(() -> {
+            return CompletableFuture.supplyAsync(() -> {
                 try {
-                    return id.jawa.feature.media.MediaDownloader.downloadByUrl(url, mediaKey, fileEncSha256, type);
+                    return MediaDownloader.downloadByUrl(url, mediaKey, fileEncSha256, type);
                 } catch (java.io.IOException | InterruptedException e) {
-                    throw new java.util.concurrent.CompletionException(e);
+                    throw new CompletionException(e);
                 }
             });
         }
         if (directPath == null || directPath.isEmpty()) {
-            return java.util.concurrent.CompletableFuture.failedFuture(
+            return CompletableFuture.failedFuture(
                 new IllegalArgumentException("both url and directPath are empty"));
         }
         return refreshMediaConn().thenCompose(mc ->
-            java.util.concurrent.CompletableFuture.supplyAsync(() -> {
+            CompletableFuture.supplyAsync(() -> {
                 try {
-                    return id.jawa.feature.media.MediaDownloader.downloadByDirectPath(
+                    return MediaDownloader.downloadByDirectPath(
                         mc, directPath, mediaKey, fileEncSha256, type);
                 } catch (java.io.IOException | InterruptedException e) {
-                    throw new java.util.concurrent.CompletionException(e);
+                    throw new CompletionException(e);
                 }
             }));
     }
 
     private record MediaUpload(
         byte[] mediaKey,
-        id.jawa.feature.media.MediaCrypto.EncryptedMedia enc,
-        id.jawa.feature.media.MediaUploader.Result upload
+        MediaCrypto.EncryptedMedia enc,
+        MediaUploader.Result upload
     ) {}
 
-    private java.util.concurrent.CompletableFuture<MediaUpload> encryptAndUpload(
+    private CompletableFuture<MediaUpload> encryptAndUpload(
             byte[] bytes,
-            id.jawa.feature.media.MediaCrypto.MediaType type) {
-        byte[] mediaKey = id.jawa.protocol.crypto.Bytes.random(32);
-        id.jawa.feature.media.MediaCrypto.EncryptedMedia enc =
-            id.jawa.feature.media.MediaCrypto.encrypt(bytes, mediaKey, type);
+            MediaCrypto.MediaType type) {
+        byte[] mediaKey = Bytes.random(32);
+        MediaCrypto.EncryptedMedia enc =
+            MediaCrypto.encrypt(bytes, mediaKey, type);
         return refreshMediaConn().thenCompose(mc -> {
             try {
-                id.jawa.feature.media.MediaUploader.Result up =
-                    id.jawa.feature.media.MediaUploader.upload(mc, enc, type);
-                return java.util.concurrent.CompletableFuture.completedFuture(
+                MediaUploader.Result up =
+                    MediaUploader.upload(mc, enc, type);
+                return CompletableFuture.completedFuture(
                     new MediaUpload(mediaKey, enc, up));
             } catch (java.io.IOException | InterruptedException e) {
-                return java.util.concurrent.CompletableFuture.failedFuture(e);
+                return CompletableFuture.failedFuture(e);
             }
         });
     }
 
-    private java.util.concurrent.CompletableFuture<String> sendBuiltMessage(
-            String chatJid, id.jawa.proto.Wa.Message msg) {
+    private CompletableFuture<String> sendBuiltMessage(
+            String chatJid, Wa.Message msg) {
         if (chatJid.endsWith("@newsletter")) {
             return sendNewsletterMessage(chatJid, msg);
         }
@@ -1483,12 +1562,12 @@ public final class JaWaClient implements AutoCloseable {
             : sendDmMessage(chatJid, msg);
     }
 
-    public java.util.concurrent.CompletableFuture<String> sendImage(
+    public CompletableFuture<String> sendImage(
             String chatJid,
             byte[] imageBytes,
             String mimetype,
             String caption) {
-        return encryptAndUpload(imageBytes, id.jawa.feature.media.MediaCrypto.MediaType.IMAGE)
+        return encryptAndUpload(imageBytes, MediaCrypto.MediaType.IMAGE)
             .thenCompose(u -> sendBuiltMessage(chatJid,
                 MessageEncoder.imageMessage(
                     u.upload().url(), u.upload().directPath(),
@@ -1497,11 +1576,11 @@ public final class JaWaClient implements AutoCloseable {
                     imageBytes.length, mimetype, caption)));
     }
 
-    public java.util.concurrent.CompletableFuture<String> sendImageViewOnce(
+    public CompletableFuture<String> sendImageViewOnce(
             String chatJid, byte[] imageBytes, String mimetype, String caption) {
-        return encryptAndUpload(imageBytes, id.jawa.feature.media.MediaCrypto.MediaType.IMAGE)
+        return encryptAndUpload(imageBytes, MediaCrypto.MediaType.IMAGE)
             .thenCompose(u -> {
-                id.jawa.proto.Wa.Message inner = MessageEncoder.imageMessage(
+                Wa.Message inner = MessageEncoder.imageMessage(
                     u.upload().url(), u.upload().directPath(),
                     u.mediaKey(),
                     u.enc().fileSha256(), u.enc().fileEncSha256(),
@@ -1510,12 +1589,12 @@ public final class JaWaClient implements AutoCloseable {
             });
     }
 
-    public java.util.concurrent.CompletableFuture<String> sendVideoViewOnce(
+    public CompletableFuture<String> sendVideoViewOnce(
             String chatJid, byte[] videoBytes, String mimetype, String caption,
             int seconds, int width, int height) {
-        return encryptAndUpload(videoBytes, id.jawa.feature.media.MediaCrypto.MediaType.VIDEO)
+        return encryptAndUpload(videoBytes, MediaCrypto.MediaType.VIDEO)
             .thenCompose(u -> {
-                id.jawa.proto.Wa.Message inner = MessageEncoder.videoMessage(
+                Wa.Message inner = MessageEncoder.videoMessage(
                     u.upload().url(), u.upload().directPath(),
                     u.mediaKey(),
                     u.enc().fileSha256(), u.enc().fileEncSha256(),
@@ -1524,11 +1603,11 @@ public final class JaWaClient implements AutoCloseable {
             });
     }
 
-    public java.util.concurrent.CompletableFuture<String> sendAudioViewOnce(
+    public CompletableFuture<String> sendAudioViewOnce(
             String chatJid, byte[] audioBytes, String mimetype, int seconds, boolean ptt) {
-        return encryptAndUpload(audioBytes, id.jawa.feature.media.MediaCrypto.MediaType.AUDIO)
+        return encryptAndUpload(audioBytes, MediaCrypto.MediaType.AUDIO)
             .thenCompose(u -> {
-                id.jawa.proto.Wa.Message inner = MessageEncoder.audioMessage(
+                Wa.Message inner = MessageEncoder.audioMessage(
                     u.upload().url(), u.upload().directPath(),
                     u.mediaKey(),
                     u.enc().fileSha256(), u.enc().fileEncSha256(),
@@ -1537,7 +1616,7 @@ public final class JaWaClient implements AutoCloseable {
             });
     }
 
-    public java.util.concurrent.CompletableFuture<String> sendVideo(
+    public CompletableFuture<String> sendVideo(
             String chatJid,
             byte[] videoBytes,
             String mimetype,
@@ -1545,7 +1624,7 @@ public final class JaWaClient implements AutoCloseable {
             int seconds,
             int width,
             int height) {
-        return encryptAndUpload(videoBytes, id.jawa.feature.media.MediaCrypto.MediaType.VIDEO)
+        return encryptAndUpload(videoBytes, MediaCrypto.MediaType.VIDEO)
             .thenCompose(u -> sendBuiltMessage(chatJid,
                 MessageEncoder.videoMessage(
                     u.upload().url(), u.upload().directPath(),
@@ -1555,13 +1634,13 @@ public final class JaWaClient implements AutoCloseable {
                     caption, seconds, width, height)));
     }
 
-    public java.util.concurrent.CompletableFuture<String> sendAudio(
+    public CompletableFuture<String> sendAudio(
             String chatJid,
             byte[] audioBytes,
             String mimetype,
             int seconds,
             boolean ptt) {
-        return encryptAndUpload(audioBytes, id.jawa.feature.media.MediaCrypto.MediaType.AUDIO)
+        return encryptAndUpload(audioBytes, MediaCrypto.MediaType.AUDIO)
             .thenCompose(u -> sendBuiltMessage(chatJid,
                 MessageEncoder.audioMessage(
                     u.upload().url(), u.upload().directPath(),
@@ -1570,13 +1649,13 @@ public final class JaWaClient implements AutoCloseable {
                     audioBytes.length, mimetype, seconds, ptt)));
     }
 
-    public java.util.concurrent.CompletableFuture<String> sendDocument(
+    public CompletableFuture<String> sendDocument(
             String chatJid,
             byte[] documentBytes,
             String mimetype,
             String fileName,
             String title) {
-        return encryptAndUpload(documentBytes, id.jawa.feature.media.MediaCrypto.MediaType.DOCUMENT)
+        return encryptAndUpload(documentBytes, MediaCrypto.MediaType.DOCUMENT)
             .thenCompose(u -> sendBuiltMessage(chatJid,
                 MessageEncoder.documentMessage(
                     u.upload().url(), u.upload().directPath(),
@@ -1585,11 +1664,11 @@ public final class JaWaClient implements AutoCloseable {
                     documentBytes.length, mimetype, fileName, title)));
     }
 
-    public java.util.concurrent.CompletableFuture<String> sendSticker(
+    public CompletableFuture<String> sendSticker(
             String chatJid,
             byte[] webpBytes,
             boolean isAnimated) {
-        return encryptAndUpload(webpBytes, id.jawa.feature.media.MediaCrypto.MediaType.IMAGE)
+        return encryptAndUpload(webpBytes, MediaCrypto.MediaType.IMAGE)
             .thenCompose(u -> sendBuiltMessage(chatJid,
                 MessageEncoder.stickerMessage(
                     u.upload().url(), u.upload().directPath(),
@@ -1598,27 +1677,27 @@ public final class JaWaClient implements AutoCloseable {
                     webpBytes.length, isAnimated)));
     }
 
-    public java.util.concurrent.CompletableFuture<String> sendSticker(String chatJid, byte[] webpBytes) {
+    public CompletableFuture<String> sendSticker(String chatJid, byte[] webpBytes) {
         return sendSticker(chatJid, webpBytes, false);
     }
 
-    public java.util.concurrent.CompletableFuture<Void> deleteMedia(
-            String directPath, byte[] encFileHash, id.jawa.feature.media.MediaCrypto.MediaType type) {
+    public CompletableFuture<Void> deleteMedia(
+            String directPath, byte[] encFileHash, MediaCrypto.MediaType type) {
         return refreshMediaConn().thenAcceptAsync(conn -> {
             try {
-                id.jawa.feature.media.MediaUploader.delete(conn, directPath, encFileHash, type);
+                MediaUploader.delete(conn, directPath, encFileHash, type);
             } catch (Exception e) {
                 LOG.warn("Failed deleting media: {}", e.toString());
             }
         });
     }
 
-    public java.util.concurrent.CompletableFuture<String> sendRevoke(
+    public CompletableFuture<String> sendRevoke(
             String chatJid,
             String targetMsgId,
             String targetParticipant,
             boolean fromMe) {
-        id.jawa.proto.Wa.Message msg = MessageEncoder.revoke(
+        Wa.Message msg = MessageEncoder.revoke(
             chatJid, targetMsgId, targetParticipant, fromMe);
         if (chatJid.endsWith("@g.us")) {
             return sendGroupMessage(chatJid, msg);
@@ -1626,39 +1705,39 @@ public final class JaWaClient implements AutoCloseable {
         return sendDmMessage(chatJid, msg);
     }
 
-    public java.util.concurrent.CompletableFuture<String> sendRevoke(
-            id.jawa.feature.messaging.MessageReceiver.Decoded target) {
+    public CompletableFuture<String> sendRevoke(
+            MessageReceiver.Decoded target) {
         String chatJid = target.groupJid() != null ? target.groupJid() : target.senderJid();
         if (!chatJid.endsWith("@g.us")) {
-            id.jawa.domain.model.Jid j = id.jawa.domain.model.Jid.parse(chatJid);
+            Jid j = Jid.parse(chatJid);
             if (j != null) chatJid = j.user() + "@" + j.server();
         }
-        id.jawa.domain.model.Jid myJid = id.jawa.domain.model.Jid.parse(creds.meJid);
-        id.jawa.domain.model.Jid senderJid = id.jawa.domain.model.Jid.parse(target.senderJid());
+        Jid myJid = Jid.parse(creds.meJid);
+        Jid senderJid = Jid.parse(target.senderJid());
         boolean fromMe = myJid != null && senderJid != null && myJid.user().equals(senderJid.user());
         String targetParticipant = target.groupJid() != null ? target.senderJid() : null;
         return sendRevoke(chatJid, target.msgId(), targetParticipant, fromMe);
     }
 
-    private volatile id.jawa.feature.media.MediaConn mediaConnCache;
+    private volatile MediaConn mediaConnCache;
     private final Object mediaConnLock = new Object();
 
-    public java.util.concurrent.CompletableFuture<id.jawa.feature.media.MediaConn> refreshMediaConn() {
+    public CompletableFuture<MediaConn> refreshMediaConn() {
         synchronized (mediaConnLock) {
-            id.jawa.feature.media.MediaConn cached = mediaConnCache;
+            MediaConn cached = mediaConnCache;
             if (cached != null && !cached.isExpired(java.time.Instant.now())) {
-                return java.util.concurrent.CompletableFuture.completedFuture(cached);
+                return CompletableFuture.completedFuture(cached);
             }
         }
         String iqId = newIqId();
-        BinaryNode iq = id.jawa.feature.media.MediaConn.buildQuery(iqId);
+        BinaryNode iq = MediaConn.buildQuery(iqId);
         LOG.debug("Sent mediaConn IQ id={}", iqId);
         return sendIqAsync(iq).thenApply(resp -> {
             if ("error".equals(resp.attr("type"))) {
                 LOG.warn("mediaConn IQ rejected: {}", resp);
                 throw new IllegalStateException("mediaConn IQ rejected");
             }
-            id.jawa.feature.media.MediaConn fresh = id.jawa.feature.media.MediaConn.parseResponse(resp);
+            MediaConn fresh = MediaConn.parseResponse(resp);
             if (fresh == null) {
                 throw new IllegalStateException("malformed mediaConn response: " + resp);
             }
@@ -1670,11 +1749,11 @@ public final class JaWaClient implements AutoCloseable {
         });
     }
 
-    public java.util.concurrent.CompletableFuture<String> createGroup(
-            String name, java.util.List<String> participantBareJids) {
+    public CompletableFuture<String> createGroup(
+            String name, List<String> participantBareJids) {
         String iqId = newIqId();
         String createKey = newIqId().toUpperCase();
-        BinaryNode iq = id.jawa.feature.messaging.GroupAction.buildCreate(
+        BinaryNode iq = GroupAction.buildCreate(
             iqId, name, participantBareJids, createKey);
         return sendIqAsync(iq).thenApply(resp -> {
             if ("error".equals(resp.attr("type"))) {
@@ -1683,14 +1762,14 @@ public final class JaWaClient implements AutoCloseable {
             BinaryNode group = resp.child("group");
             if (group == null) throw new IllegalStateException("createGroup response missing <group>: " + resp);
             String jid = group.attr("id");
-            if (jid != null && !jid.contains("@")) jid = jid + "@" + id.jawa.domain.model.Jid.SERVER_GROUP;
+            if (jid != null && !jid.contains("@")) jid = jid + "@" + Jid.SERVER_GROUP;
             return jid;
         });
     }
 
-    public java.util.concurrent.CompletableFuture<Void> leaveGroup(String groupJid) {
+    public CompletableFuture<Void> leaveGroup(String groupJid) {
         String iqId = newIqId();
-        BinaryNode iq = id.jawa.feature.messaging.GroupAction.buildLeave(iqId, groupJid);
+        BinaryNode iq = GroupAction.buildLeave(iqId, groupJid);
         return sendIqAsync(iq).thenAccept(resp -> {
             if ("error".equals(resp.attr("type"))) {
                 throw new IllegalStateException("leaveGroup rejected: " + resp);
@@ -1698,12 +1777,12 @@ public final class JaWaClient implements AutoCloseable {
         });
     }
 
-    public java.util.concurrent.CompletableFuture<Void> updateGroupParticipants(
+    public CompletableFuture<Void> updateGroupParticipants(
             String groupJid,
-            id.jawa.feature.messaging.GroupAction.ParticipantChange action,
-            java.util.List<String> participantBareJids) {
+            GroupAction.ParticipantChange action,
+            List<String> participantBareJids) {
         String iqId = newIqId();
-        BinaryNode iq = id.jawa.feature.messaging.GroupAction.buildParticipantChange(
+        BinaryNode iq = GroupAction.buildParticipantChange(
             iqId, groupJid, action, participantBareJids);
         return sendIqAsync(iq).thenAccept(resp -> {
             if ("error".equals(resp.attr("type"))) {
@@ -1712,9 +1791,9 @@ public final class JaWaClient implements AutoCloseable {
         });
     }
 
-    public java.util.concurrent.CompletableFuture<Void> setGroupSubject(String groupJid, String name) {
+    public CompletableFuture<Void> setGroupSubject(String groupJid, String name) {
         String iqId = newIqId();
-        BinaryNode iq = id.jawa.feature.messaging.GroupAction.buildSetSubject(iqId, groupJid, name);
+        BinaryNode iq = GroupAction.buildSetSubject(iqId, groupJid, name);
         return sendIqAsync(iq).thenAccept(resp -> {
             if ("error".equals(resp.attr("type"))) {
                 throw new IllegalStateException("setGroupSubject rejected: " + resp);
@@ -1722,11 +1801,11 @@ public final class JaWaClient implements AutoCloseable {
         });
     }
 
-    public java.util.concurrent.CompletableFuture<Void> setGroupDescription(
+    public CompletableFuture<Void> setGroupDescription(
             String groupJid, String body, String previousId) {
         String iqId = newIqId();
         String newId = newIqId().toUpperCase();
-        BinaryNode iq = id.jawa.feature.messaging.GroupAction.buildSetDescription(
+        BinaryNode iq = GroupAction.buildSetDescription(
             iqId, groupJid, body, previousId, newId);
         return sendIqAsync(iq).thenAccept(resp -> {
             if ("error".equals(resp.attr("type"))) {
@@ -1735,9 +1814,9 @@ public final class JaWaClient implements AutoCloseable {
         });
     }
 
-    public java.util.concurrent.CompletableFuture<String> getGroupInviteLink(String groupJid, boolean reset) {
+    public CompletableFuture<String> getGroupInviteLink(String groupJid, boolean reset) {
         String iqId = newIqId();
-        BinaryNode iq = id.jawa.feature.messaging.GroupAction.buildInviteLink(iqId, groupJid, reset);
+        BinaryNode iq = GroupAction.buildInviteLink(iqId, groupJid, reset);
         return sendIqAsync(iq).thenApply(resp -> {
             if ("error".equals(resp.attr("type"))) {
                 throw new IllegalStateException("getGroupInviteLink rejected: " + resp);
@@ -1750,18 +1829,18 @@ public final class JaWaClient implements AutoCloseable {
         });
     }
 
-    public java.util.concurrent.CompletableFuture<String> getGroupInviteLink(String groupJid) {
+    public CompletableFuture<String> getGroupInviteLink(String groupJid) {
         return getGroupInviteLink(groupJid, false);
     }
 
-    public java.util.concurrent.CompletableFuture<String> revokeGroupInviteLink(String groupJid) {
+    public CompletableFuture<String> revokeGroupInviteLink(String groupJid) {
         return getGroupInviteLink(groupJid, true);
     }
 
-    public java.util.concurrent.CompletableFuture<BinaryNode> getGroupInfoFromLink(String code) {
+    public CompletableFuture<BinaryNode> getGroupInfoFromLink(String code) {
         String cleanCode = cleanInviteCode(code);
         String iqId = newIqId();
-        BinaryNode iq = id.jawa.feature.messaging.GroupAction.buildLinkInfo(iqId, cleanCode);
+        BinaryNode iq = GroupAction.buildLinkInfo(iqId, cleanCode);
         return sendIqAsync(iq).thenApply(resp -> {
             if ("error".equals(resp.attr("type"))) {
                 throw new IllegalStateException("getGroupInfoFromLink rejected: " + resp);
@@ -1770,10 +1849,10 @@ public final class JaWaClient implements AutoCloseable {
         });
     }
 
-    public java.util.concurrent.CompletableFuture<String> joinGroupWithLink(String code) {
+    public CompletableFuture<String> joinGroupWithLink(String code) {
         String cleanCode = cleanInviteCode(code);
         String iqId = newIqId();
-        BinaryNode iq = id.jawa.feature.messaging.GroupAction.buildJoinWithLink(iqId, cleanCode);
+        BinaryNode iq = GroupAction.buildJoinWithLink(iqId, cleanCode);
         return sendIqAsync(iq).thenApply(resp -> {
             if ("error".equals(resp.attr("type"))) {
                 throw new IllegalStateException("joinGroupWithLink rejected: " + resp);
@@ -1790,9 +1869,9 @@ public final class JaWaClient implements AutoCloseable {
         });
     }
 
-    public java.util.concurrent.CompletableFuture<Void> setGroupLocked(String groupJid, boolean locked) {
+    public CompletableFuture<Void> setGroupLocked(String groupJid, boolean locked) {
         String iqId = newIqId();
-        BinaryNode iq = id.jawa.feature.messaging.GroupAction.buildSetLocked(iqId, groupJid, locked);
+        BinaryNode iq = GroupAction.buildSetLocked(iqId, groupJid, locked);
         return sendIqAsync(iq).thenAccept(resp -> {
             if ("error".equals(resp.attr("type"))) {
                 throw new IllegalStateException("setGroupLocked rejected: " + resp);
@@ -1800,9 +1879,9 @@ public final class JaWaClient implements AutoCloseable {
         });
     }
 
-    public java.util.concurrent.CompletableFuture<Void> setGroupAnnounce(String groupJid, boolean announce) {
+    public CompletableFuture<Void> setGroupAnnounce(String groupJid, boolean announce) {
         String iqId = newIqId();
-        BinaryNode iq = id.jawa.feature.messaging.GroupAction.buildSetAnnounce(iqId, groupJid, announce);
+        BinaryNode iq = GroupAction.buildSetAnnounce(iqId, groupJid, announce);
         return sendIqAsync(iq).thenAccept(resp -> {
             if ("error".equals(resp.attr("type"))) {
                 throw new IllegalStateException("setGroupAnnounce rejected: " + resp);
@@ -1825,26 +1904,26 @@ public final class JaWaClient implements AutoCloseable {
         return s;
     }
 
-    public java.util.concurrent.CompletableFuture<java.util.List<id.jawa.feature.messaging.GroupListQuery.GroupInfo>>
+    public CompletableFuture<List<GroupListQuery.GroupInfo>>
             queryJoinedGroups() {
         return queryJoinedGroups(false);
     }
 
-    public java.util.concurrent.CompletableFuture<java.util.List<id.jawa.feature.messaging.GroupListQuery.GroupInfo>>
+    public CompletableFuture<List<GroupListQuery.GroupInfo>>
             queryJoinedGroups(boolean forceRefresh) {
         if (!forceRefresh && !groupCache.isEmpty()) {
-            return java.util.concurrent.CompletableFuture.completedFuture(
-                new java.util.ArrayList<>(groupCache.values()));
+            return CompletableFuture.completedFuture(
+                new ArrayList<>(groupCache.values()));
         }
         String iqId = newIqId();
-        BinaryNode iq = id.jawa.feature.messaging.GroupListQuery.buildQuery(iqId);
+        BinaryNode iq = GroupListQuery.buildQuery(iqId);
         LOG.debug("Sent joined-groups query id={}", iqId);
         return sendIqAsync(iq).thenApply(resp -> {
             if ("error".equals(resp.attr("type"))) {
                 LOG.warn("Group list query rejected: {}", resp);
-                return java.util.List.of();
+                return List.of();
             }
-            var list = id.jawa.feature.messaging.GroupListQuery.parseResponse(resp);
+            var list = GroupListQuery.parseResponse(resp);
             for (var g : list) {
                 groupCache.put(g.jid(), g);
                 if (g.isEphemeral() && g.ephemeralExpiration() > 0) {
@@ -1857,10 +1936,10 @@ public final class JaWaClient implements AutoCloseable {
         });
     }
 
-    public java.util.concurrent.CompletableFuture<id.jawa.feature.messaging.GroupListQuery.GroupInfo>
+    public CompletableFuture<GroupListQuery.GroupInfo>
             queryGroupInfo(String groupJid) {
         String iqId = newIqId();
-        BinaryNode iq = id.jawa.feature.messaging.GroupListQuery.buildGroupInfoQuery(iqId, groupJid);
+        BinaryNode iq = GroupListQuery.buildGroupInfoQuery(iqId, groupJid);
         LOG.debug("Sent group info query id={} to={}", iqId, groupJid);
         return sendIqAsync(iq).thenApply(resp -> {
             if ("error".equals(resp.attr("type"))) {
@@ -1869,8 +1948,8 @@ public final class JaWaClient implements AutoCloseable {
             }
             BinaryNode groupNode = resp.child("group");
             if (groupNode == null) return null;
-            id.jawa.feature.messaging.GroupListQuery.GroupInfo info =
-                id.jawa.feature.messaging.GroupListQuery.parseSingleGroup(groupNode);
+            GroupListQuery.GroupInfo info =
+                GroupListQuery.parseSingleGroup(groupNode);
             if (info != null) {
                 groupCache.put(info.jid(), info);
                 if (info.isEphemeral() && info.ephemeralExpiration() > 0) {
@@ -1881,28 +1960,28 @@ public final class JaWaClient implements AutoCloseable {
         });
     }
 
-    public java.util.concurrent.CompletableFuture<java.util.List<org.whispersystems.libsignal.SignalProtocolAddress>>
+    public CompletableFuture<List<SignalProtocolAddress>>
             bootstrapSessions(String targetUser) {
-        return queryDevices(java.util.List.of(targetUser))
+        return queryDevices(List.of(targetUser))
             .thenCompose(devicesMap -> {
-                var devices = devicesMap.getOrDefault(targetUser, java.util.List.of());
+                var devices = devicesMap.getOrDefault(targetUser, List.of());
                 if (devices.isEmpty()) {
-                    java.util.List<org.whispersystems.libsignal.SignalProtocolAddress> empty = java.util.List.of();
-                    return java.util.concurrent.CompletableFuture.completedFuture(empty);
+                    List<SignalProtocolAddress> empty = List.of();
+                    return CompletableFuture.completedFuture(empty);
                 }
-                id.jawa.domain.model.Jid base = id.jawa.domain.model.Jid.parse(targetUser);
+                Jid base = Jid.parse(targetUser);
                 String user = base.user();
                 String server = base.server();
-                java.util.List<String> deviceJids = new java.util.ArrayList<>(devices.size());
+                List<String> deviceJids = new ArrayList<>(devices.size());
                 for (var d : devices) deviceJids.add(d.asJid(user, server).asString());
                 return fetchBundlesAndInstallSessions(deviceJids);
             });
     }
 
-    public java.util.concurrent.CompletableFuture<java.util.Map<String, java.util.List<id.jawa.domain.model.DeviceInfo>>>
-            queryDevices(java.util.Collection<String> targetJids) {
-        java.util.Map<String, java.util.List<id.jawa.domain.model.DeviceInfo>> result = new java.util.HashMap<>();
-        java.util.List<String> missing = new java.util.ArrayList<>();
+    public CompletableFuture<Map<String, List<DeviceInfo>>>
+            queryDevices(Collection<String> targetJids) {
+        Map<String, List<DeviceInfo>> result = new HashMap<>();
+        List<String> missing = new ArrayList<>();
         for (String tj : targetJids) {
             var cached = deviceCache.get(tj);
             if (cached != null) {
@@ -1912,15 +1991,15 @@ public final class JaWaClient implements AutoCloseable {
             }
         }
         if (missing.isEmpty()) {
-            return java.util.concurrent.CompletableFuture.completedFuture(result);
+            return CompletableFuture.completedFuture(result);
         }
         String iqId = newIqId();
         String sid = "jawa-" + Bytes.toHex(Bytes.random(4));
-        BinaryNode q = id.jawa.feature.messaging.UsyncQuery.buildDeviceListQuery(iqId, sid, missing);
+        BinaryNode q = UsyncQuery.buildDeviceListQuery(iqId, sid, missing);
         LOG.debug("Sent USync device-list query id={} sid={} for {}", iqId, sid, missing);
         return sendIqAsync(q).thenApply(resp -> {
             LOG.debug("USync response: {}", resp);
-            var parsed = id.jawa.feature.messaging.UsyncQuery.parseDeviceListResult(resp);
+            var parsed = UsyncQuery.parseDeviceListResult(resp);
             for (var entry : parsed.entrySet()) {
                 deviceCache.put(entry.getKey(), entry.getValue());
                 result.put(entry.getKey(), entry.getValue());
@@ -1932,13 +2011,13 @@ public final class JaWaClient implements AutoCloseable {
     private void sendActivePassive() {
         String iqId = newIqId();
         BinaryNode iq = new BinaryNode("iq",
-            java.util.Map.of(
-                "to",    id.jawa.domain.model.Jid.SERVER_WHATSAPP,
+            Map.of(
+                "to",    Jid.SERVER_WHATSAPP,
                 "xmlns", "passive",
                 "type",  "set",
                 "id",    iqId
             ),
-            java.util.List.of(new BinaryNode("active", java.util.Map.of(), null)));
+            List.of(new BinaryNode("active", Map.of(), null)));
         sendIq(iq, resp -> {
             if ("error".equals(resp.attr("type"))) {
                 LOG.warn("active/passive IQ rejected: {}", resp);
@@ -1953,7 +2032,7 @@ public final class JaWaClient implements AutoCloseable {
             ? creds.pushName
             : "JaWa";
         try {
-            send(new BinaryNode("presence", java.util.Map.of(
+            send(new BinaryNode("presence", Map.of(
                 "type", "available",
                 "name", name
             ), null));
@@ -1973,13 +2052,13 @@ public final class JaWaClient implements AutoCloseable {
         for (var entry : preKeys.entrySet()) {
             try {
                 byte[] prefixedPub = Curve25519.prependType(entry.getValue().publicKey());
-                org.whispersystems.libsignal.ecc.ECKeyPair kp =
-                    new org.whispersystems.libsignal.ecc.ECKeyPair(
-                        org.whispersystems.libsignal.ecc.Curve.decodePoint(prefixedPub, 0),
-                        org.whispersystems.libsignal.ecc.Curve.decodePrivatePoint(entry.getValue().privateKey()));
+                ECKeyPair kp =
+                    new ECKeyPair(
+                        Curve.decodePoint(prefixedPub, 0),
+                        Curve.decodePrivatePoint(entry.getValue().privateKey()));
                 protocolStore.storePreKey(entry.getKey(),
-                    new org.whispersystems.libsignal.state.PreKeyRecord(entry.getKey(), kp));
-            } catch (org.whispersystems.libsignal.InvalidKeyException e) {
+                    new PreKeyRecord(entry.getKey(), kp));
+            } catch (InvalidKeyException e) {
                 LOG.warn("Failed to seed pre-key {} into protocolStore", entry.getKey(), e);
             }
         }
@@ -2085,7 +2164,7 @@ public final class JaWaClient implements AutoCloseable {
                 String from = node.attr("from");
                 if ("devices".equals(type) && from != null) {
                     deviceCache.remove(from);
-                    id.jawa.domain.model.Jid j = id.jawa.domain.model.Jid.parse(from);
+                    Jid j = Jid.parse(from);
                     if (j != null) {
                         deviceCache.remove(j.user() + "@" + j.server());
                     }
@@ -2110,7 +2189,7 @@ public final class JaWaClient implements AutoCloseable {
                 }
             } else if ("receipt".equals(node.tag())) {
                 try {
-                    id.jawa.domain.model.Receipt parsed = id.jawa.domain.model.Receipt.parse(node);
+                    Receipt parsed = Receipt.parse(node);
                     if (parsed != null) listener.onReceipt(parsed);
                 } catch (Throwable t) {
                     LOG.warn("Failed to dispatch onReceipt", t);
@@ -2158,7 +2237,7 @@ public final class JaWaClient implements AutoCloseable {
             String pid = node.attr("id");
             if (pid != null) {
                 send(new BinaryNode("iq",
-                    java.util.Map.of("to", id.jawa.domain.model.Jid.SERVER_WHATSAPP,
+                    Map.of("to", Jid.SERVER_WHATSAPP,
                                      "type", "result",
                                      "id", pid),
                     null));
@@ -2182,12 +2261,12 @@ public final class JaWaClient implements AutoCloseable {
 
     private void handleInboundMessage(BinaryNode message) {
         try {
-            id.jawa.feature.messaging.MessageReceiver.Decoded decoded =
-                id.jawa.feature.messaging.MessageReceiver.decode(message, protocolStore, senderKeyStore);
+            MessageReceiver.Decoded decoded =
+                MessageReceiver.decode(message, protocolStore, senderKeyStore);
             if (decoded.message() != null) {
                 if (decoded.message().hasProtocolMessage()) {
                     var proto = decoded.message().getProtocolMessage();
-                    if (proto.getType() == id.jawa.proto.Wa.Message.ProtocolMessage.Type.EPHEMERAL_SETTING) {
+                    if (proto.getType() == Wa.Message.ProtocolMessage.Type.EPHEMERAL_SETTING) {
                         String chat = decoded.groupJid() != null ? decoded.groupJid() : decoded.senderJid();
                         int exp = proto.getEphemeralExpiration();
                         if (chat != null) {
@@ -2217,7 +2296,7 @@ public final class JaWaClient implements AutoCloseable {
 
             try { listener.onMessage(decoded); }
             catch (Throwable t) { LOG.warn("listener.onMessage threw", t); }
-        } catch (id.jawa.feature.messaging.MessageReceiver.DecryptException de) {
+        } catch (MessageReceiver.DecryptException de) {
             LOG.warn("Decrypt failed for message id={} from={}: {}",
                 message.attr("id"), message.attr("from"), de.getMessage());
             sendAck(message);
@@ -2225,7 +2304,7 @@ public final class JaWaClient implements AutoCloseable {
         }
     }
 
-    private static int extractExpiration(id.jawa.proto.Wa.Message msg) {
+    private static int extractExpiration(Wa.Message msg) {
         if (msg == null) return 0;
         if (msg.hasExtendedTextMessage() && msg.getExtendedTextMessage().hasContextInfo()) {
             return msg.getExtendedTextMessage().getContextInfo().getExpiration();
@@ -2252,7 +2331,7 @@ public final class JaWaClient implements AutoCloseable {
         String id = original.attr("id");
         String from = original.attr("from");
         if (id == null || from == null) return;
-        java.util.Map<String, String> attrs = new java.util.LinkedHashMap<>();
+        Map<String, String> attrs = new LinkedHashMap<>();
         attrs.put("class", original.tag());
         attrs.put("id", id);
         attrs.put("to", from);
@@ -2272,8 +2351,8 @@ public final class JaWaClient implements AutoCloseable {
         sendReceipt(message, null);
     }
 
-    private final java.util.concurrent.ConcurrentMap<String, Integer> messageRetries
-        = new java.util.concurrent.ConcurrentHashMap<>();
+    private final ConcurrentMap<String, Integer> messageRetries
+        = new ConcurrentHashMap<>();
     private static final int MAX_RETRY_COUNT = 5;
 
     private void sendRetryReceipt(BinaryNode message) {
@@ -2287,7 +2366,7 @@ public final class JaWaClient implements AutoCloseable {
             return;
         }
 
-        java.util.Map<String, String> attrs = new java.util.LinkedHashMap<>();
+        Map<String, String> attrs = new LinkedHashMap<>();
         attrs.put("id", id);
         attrs.put("to", from);
         attrs.put("type", "retry");
@@ -2296,16 +2375,16 @@ public final class JaWaClient implements AutoCloseable {
         String recipient = message.attr("recipient");
         if (recipient != null) attrs.put("recipient", recipient);
 
-        BinaryNode retry = new BinaryNode("retry", java.util.Map.of(
+        BinaryNode retry = new BinaryNode("retry", Map.of(
             "count", Integer.toString(retryCount),
             "id",    id,
             "t",     message.attr("t", "0"),
             "v",     "1"
         ), null);
-        BinaryNode registration = new BinaryNode("registration", java.util.Map.of(),
+        BinaryNode registration = new BinaryNode("registration", Map.of(),
             encodeUintBE(creds.registrationId, 4));
 
-        send(new BinaryNode("receipt", attrs, java.util.List.of(retry, registration)));
+        send(new BinaryNode("receipt", attrs, List.of(retry, registration)));
         LOG.debug("Sent retry receipt id={} count={}", id, retryCount);
     }
 
@@ -2319,7 +2398,7 @@ public final class JaWaClient implements AutoCloseable {
         sendStateReceipt(chatJid, msgId, senderJid, "read");
     }
 
-    public void sendReadReceipt(id.jawa.feature.messaging.MessageReceiver.Decoded target) {
+    public void sendReadReceipt(MessageReceiver.Decoded target) {
         String chatJid = target.groupJid() != null ? target.groupJid() : target.senderJid();
         String senderJid = target.groupJid() != null ? target.senderJid() : null;
         sendReadReceipt(chatJid, target.msgId(), senderJid);
@@ -2329,13 +2408,13 @@ public final class JaWaClient implements AutoCloseable {
         sendStateReceipt(chatJid, msgId, senderJid, "played");
     }
 
-    public void sendPlayedReceipt(id.jawa.feature.messaging.MessageReceiver.Decoded target) {
+    public void sendPlayedReceipt(MessageReceiver.Decoded target) {
         String chatJid = target.groupJid() != null ? target.groupJid() : target.senderJid();
         String senderJid = target.groupJid() != null ? target.senderJid() : null;
         sendPlayedReceipt(chatJid, target.msgId(), senderJid);
     }
 
-    public void sendReadReceiptBatch(String chatJid, java.util.List<String> msgIds, String senderJid) {
+    public void sendReadReceiptBatch(String chatJid, List<String> msgIds, String senderJid) {
         sendStateReceiptBatch(chatJid, msgIds, senderJid, "read");
     }
 
@@ -2347,46 +2426,46 @@ public final class JaWaClient implements AutoCloseable {
         sendStateReceipt(chatJid, msgId, null, "played-self");
     }
 
-    public java.util.concurrent.CompletableFuture<Void> sendMediaRetryReceipt(
+    public CompletableFuture<Void> sendMediaRetryReceipt(
             String messageId, String chatJid, String senderJid,
             boolean isFromMe, boolean isGroup, byte[] mediaKey) {
-        return java.util.concurrent.CompletableFuture.runAsync(() -> {
+        return CompletableFuture.runAsync(() -> {
             try {
                 if (creds == null || creds.meJid == null) {
                     throw new IllegalStateException("Not logged in");
                 }
-                String ownJid = id.jawa.domain.model.Jid.bare(creds.meJid);
-                byte[] retryKey = id.jawa.protocol.crypto.Hkdf.derive(
-                    mediaKey, null, "WhatsApp Media Retry Notification".getBytes(java.nio.charset.StandardCharsets.UTF_8), 32);
-                id.jawa.proto.Wa.ServerErrorReceipt receipt = id.jawa.proto.Wa.ServerErrorReceipt.newBuilder()
+                String ownJid = Jid.bare(creds.meJid);
+                byte[] retryKey = Hkdf.derive(
+                    mediaKey, null, "WhatsApp Media Retry Notification".getBytes(StandardCharsets.UTF_8), 32);
+                Wa.ServerErrorReceipt receipt = Wa.ServerErrorReceipt.newBuilder()
                     .setStanzaId(messageId)
                     .build();
                 byte[] plaintext = receipt.toByteArray();
-                byte[] iv = id.jawa.protocol.crypto.Bytes.random(12);
-                byte[] ciphertext = id.jawa.protocol.crypto.AesGcm.encrypt(
-                    retryKey, iv, plaintext, messageId.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                byte[] iv = Bytes.random(12);
+                byte[] ciphertext = AesGcm.encrypt(
+                    retryKey, iv, plaintext, messageId.getBytes(StandardCharsets.UTF_8));
 
-                java.util.Map<String, String> rmrAttrs = new java.util.LinkedHashMap<>();
+                Map<String, String> rmrAttrs = new LinkedHashMap<>();
                 rmrAttrs.put("jid", chatJid);
                 rmrAttrs.put("from_me", String.valueOf(isFromMe));
                 if (isGroup && senderJid != null && !senderJid.isBlank()) {
                     rmrAttrs.put("participant", senderJid);
                 }
 
-                java.util.List<BinaryNode> encryptChildren = java.util.List.of(
-                    new BinaryNode("enc_p", java.util.Map.of(), ciphertext),
-                    new BinaryNode("enc_iv", java.util.Map.of(), iv)
+                List<BinaryNode> encryptChildren = List.of(
+                    new BinaryNode("enc_p", Map.of(), ciphertext),
+                    new BinaryNode("enc_iv", Map.of(), iv)
                 );
 
-                BinaryNode encryptNode = new BinaryNode("encrypt", java.util.Map.of(), encryptChildren);
+                BinaryNode encryptNode = new BinaryNode("encrypt", Map.of(), encryptChildren);
                 BinaryNode rmrNode = new BinaryNode("rmr", rmrAttrs, null);
 
-                java.util.Map<String, String> receiptAttrs = new java.util.LinkedHashMap<>();
+                Map<String, String> receiptAttrs = new LinkedHashMap<>();
                 receiptAttrs.put("id", messageId);
                 receiptAttrs.put("to", ownJid);
                 receiptAttrs.put("type", "server-error");
 
-                BinaryNode receiptStanza = new BinaryNode("receipt", receiptAttrs, java.util.List.of(encryptNode, rmrNode));
+                BinaryNode receiptStanza = new BinaryNode("receipt", receiptAttrs, List.of(encryptNode, rmrNode));
                 send(receiptStanza);
             } catch (Exception e) {
                 LOG.error("Failed to send media retry receipt: {}", e.getMessage(), e);
@@ -2395,36 +2474,36 @@ public final class JaWaClient implements AutoCloseable {
         });
     }
 
-    public java.util.concurrent.CompletableFuture<Void> sendMediaRetryReceipt(
-            id.jawa.feature.messaging.MessageReceiver.Decoded target, byte[] mediaKey) {
+    public CompletableFuture<Void> sendMediaRetryReceipt(
+            MessageReceiver.Decoded target, byte[] mediaKey) {
         boolean isGroup = target.groupJid() != null && !target.groupJid().isBlank();
         String chatJid = isGroup ? target.groupJid() : target.senderJid();
-        String ownJid = creds != null && creds.meJid != null ? id.jawa.domain.model.Jid.bare(creds.meJid) : "";
-        boolean isFromMe = !ownJid.isBlank() && ownJid.equals(id.jawa.domain.model.Jid.bare(target.senderJid()));
+        String ownJid = creds != null && creds.meJid != null ? Jid.bare(creds.meJid) : "";
+        boolean isFromMe = !ownJid.isBlank() && ownJid.equals(Jid.bare(target.senderJid()));
         return sendMediaRetryReceipt(target.msgId(), chatJid, target.senderJid(), isFromMe, isGroup, mediaKey);
     }
 
-    public static id.jawa.proto.Wa.MediaRetryNotification decryptMediaRetryNotification(
+    public static Wa.MediaRetryNotification decryptMediaRetryNotification(
             byte[] ciphertext, byte[] iv, String messageId, byte[] mediaKey) {
-        byte[] retryKey = id.jawa.protocol.crypto.Hkdf.derive(
-            mediaKey, null, "WhatsApp Media Retry Notification".getBytes(java.nio.charset.StandardCharsets.UTF_8), 32);
-        byte[] plaintext = id.jawa.protocol.crypto.AesGcm.decrypt(
-            retryKey, iv, ciphertext, messageId.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        byte[] retryKey = Hkdf.derive(
+            mediaKey, null, "WhatsApp Media Retry Notification".getBytes(StandardCharsets.UTF_8), 32);
+        byte[] plaintext = AesGcm.decrypt(
+            retryKey, iv, ciphertext, messageId.getBytes(StandardCharsets.UTF_8));
         try {
-            return id.jawa.proto.Wa.MediaRetryNotification.parseFrom(plaintext);
+            return Wa.MediaRetryNotification.parseFrom(plaintext);
         } catch (Exception e) {
             throw new IllegalStateException("Failed to parse MediaRetryNotification", e);
         }
     }
 
     private void sendStateReceipt(String chatJid, String msgId, String senderJid, String type) {
-        sendStateReceiptBatch(chatJid, java.util.List.of(msgId), senderJid, type);
+        sendStateReceiptBatch(chatJid, List.of(msgId), senderJid, type);
     }
 
-    private void sendStateReceiptBatch(String chatJid, java.util.List<String> msgIds,
+    private void sendStateReceiptBatch(String chatJid, List<String> msgIds,
                                        String senderJid, String type) {
         if (msgIds.isEmpty()) return;
-        java.util.Map<String, String> attrs = new java.util.LinkedHashMap<>();
+        Map<String, String> attrs = new LinkedHashMap<>();
         attrs.put("id", msgIds.get(0));
         attrs.put("type", type);
         attrs.put("to", chatJid);
@@ -2436,12 +2515,12 @@ public final class JaWaClient implements AutoCloseable {
         if (msgIds.size() == 1) {
             receipt = new BinaryNode("receipt", attrs, null);
         } else {
-            java.util.List<BinaryNode> items = new java.util.ArrayList<>();
+            List<BinaryNode> items = new ArrayList<>();
             for (int i = 1; i < msgIds.size(); i++) {
-                items.add(BinaryNode.of("item", java.util.Map.of("id", msgIds.get(i))));
+                items.add(BinaryNode.of("item", Map.of("id", msgIds.get(i))));
             }
-            BinaryNode list = new BinaryNode("list", java.util.Map.of(), items);
-            receipt = new BinaryNode("receipt", attrs, java.util.List.of(list));
+            BinaryNode list = new BinaryNode("list", Map.of(), items);
+            receipt = new BinaryNode("receipt", attrs, List.of(list));
         }
         send(receipt);
     }
@@ -2450,7 +2529,7 @@ public final class JaWaClient implements AutoCloseable {
         String id = message.attr("id");
         String from = message.attr("from");
         if (id == null || from == null) return;
-        java.util.Map<String, String> attrs = new java.util.LinkedHashMap<>();
+        Map<String, String> attrs = new LinkedHashMap<>();
         attrs.put("id", id);
         attrs.put("to", from);
         if (type != null) attrs.put("type", type);
@@ -2470,31 +2549,31 @@ public final class JaWaClient implements AutoCloseable {
         closeLatch.countDown();
     }
 
-    public java.util.concurrent.CompletableFuture<java.util.Map<String, id.jawa.domain.model.ContactStatus>> isOnWhatsApp(
-            java.util.Collection<String> phones) {
+    public CompletableFuture<Map<String, ContactStatus>> isOnWhatsApp(
+            Collection<String> phones) {
         String iqId = newIqId();
         String sid = newIqId();
-        BinaryNode q = id.jawa.feature.messaging.UsyncQuery.buildContactQuery(iqId, sid, phones);
+        BinaryNode q = UsyncQuery.buildContactQuery(iqId, sid, phones);
         LOG.debug("Sent contact check USync IQ id={} for {} phones", iqId, phones.size());
-        return sendIqAsync(q).thenApply(id.jawa.feature.messaging.UsyncQuery::parseContactResult);
+        return sendIqAsync(q).thenApply(UsyncQuery::parseContactResult);
     }
 
     public void sendChatPresence(String chatJid, ChatPresence state) {
         BinaryNode child;
         if (state == ChatPresence.COMPOSING) {
-            child = new BinaryNode("composing", java.util.Map.of("media", "text"), null);
+            child = new BinaryNode("composing", Map.of("media", "text"), null);
         } else if (state == ChatPresence.RECORDING) {
-            child = new BinaryNode("composing", java.util.Map.of("media", "audio"), null);
+            child = new BinaryNode("composing", Map.of("media", "audio"), null);
         } else {
-            child = new BinaryNode("paused", java.util.Map.of(), null);
+            child = new BinaryNode("paused", Map.of(), null);
         }
-        BinaryNode stanza = new BinaryNode("chatstate", java.util.Map.of("to", chatJid), java.util.List.of(child));
+        BinaryNode stanza = new BinaryNode("chatstate", Map.of("to", chatJid), List.of(child));
         send(stanza);
         LOG.debug("Sent chat presence state={} to={}", state, chatJid);
     }
 
     public void sendPresence(boolean available) {
-        BinaryNode stanza = new BinaryNode("presence", java.util.Map.of(
+        BinaryNode stanza = new BinaryNode("presence", Map.of(
             "type", available ? "available" : "unavailable"
         ), null);
         send(stanza);
@@ -2503,7 +2582,7 @@ public final class JaWaClient implements AutoCloseable {
 
     public void subscribePresence(String jid) {
         if (jid == null) return;
-        BinaryNode stanza = new BinaryNode("presence", java.util.Map.of(
+        BinaryNode stanza = new BinaryNode("presence", Map.of(
             "type", "subscribe",
             "to", jid
         ), null);
@@ -2511,12 +2590,12 @@ public final class JaWaClient implements AutoCloseable {
         LOG.debug("Sent presence subscribe to={}", jid);
     }
 
-    public java.util.concurrent.CompletableFuture<id.jawa.domain.model.ProfilePictureInfo> getProfilePictureInfo(String targetJid, boolean preview) {
+    public CompletableFuture<ProfilePictureInfo> getProfilePictureInfo(String targetJid, boolean preview) {
         String iqId = newIqId();
         String type = preview ? "preview" : "image";
         BinaryNode iq = new BinaryNode("iq",
-            java.util.Map.of("to", targetJid, "type", "get", "xmlns", "w:profile:picture", "id", iqId),
-            java.util.List.of(new BinaryNode("picture", java.util.Map.of("type", type, "query", "url"), null)));
+            Map.of("to", targetJid, "type", "get", "xmlns", "w:profile:picture", "id", iqId),
+            List.of(new BinaryNode("picture", Map.of("type", type, "query", "url"), null)));
         return sendIqAsync(iq).thenApply(resp -> {
             BinaryNode pic = resp.child("picture");
             if (pic == null) return null;
@@ -2524,23 +2603,23 @@ public final class JaWaClient implements AutoCloseable {
             String url = pic.attr("url");
             String picType = pic.attr("type");
             String directPath = pic.attr("direct_path");
-            return new id.jawa.domain.model.ProfilePictureInfo(id, url, picType, directPath);
+            return new ProfilePictureInfo(id, url, picType, directPath);
         });
     }
 
-    public java.util.concurrent.CompletableFuture<id.jawa.domain.model.ProfilePictureInfo> getProfilePictureInfo(String targetJid) {
+    public CompletableFuture<ProfilePictureInfo> getProfilePictureInfo(String targetJid) {
         return getProfilePictureInfo(targetJid, false);
     }
 
-    public java.util.concurrent.CompletableFuture<java.util.List<id.jawa.domain.model.BotListInfo>> getBotList() {
+    public CompletableFuture<List<BotListInfo>> getBotList() {
         String iqId = newIqId();
         BinaryNode iq = new BinaryNode("iq",
-            java.util.Map.of("to", id.jawa.domain.model.Jid.SERVER_WHATSAPP, "type", "get", "xmlns", "bot", "id", iqId),
-            java.util.List.of(new BinaryNode("bot", java.util.Map.of("v", "2"), null)));
+            Map.of("to", Jid.SERVER_WHATSAPP, "type", "get", "xmlns", "bot", "id", iqId),
+            List.of(new BinaryNode("bot", Map.of("v", "2"), null)));
         return sendIqAsync(iq).thenApply(resp -> {
             BinaryNode bot = resp.child("bot");
-            if (bot == null) return java.util.List.of();
-            java.util.List<id.jawa.domain.model.BotListInfo> list = new java.util.ArrayList<>();
+            if (bot == null) return List.of();
+            List<BotListInfo> list = new ArrayList<>();
             for (BinaryNode section : bot.childrenList()) {
                 if (!"section".equals(section.tag())) continue;
                 for (BinaryNode b : section.childrenList()) {
@@ -2548,7 +2627,7 @@ public final class JaWaClient implements AutoCloseable {
                         String personaId = b.attr("persona_id");
                         String jid = b.attr("jid");
                         if (personaId != null || jid != null) {
-                            list.add(new id.jawa.domain.model.BotListInfo(personaId, jid));
+                            list.add(new BotListInfo(personaId, jid));
                         }
                     }
                 }
@@ -2557,17 +2636,17 @@ public final class JaWaClient implements AutoCloseable {
         });
     }
 
-    public java.util.concurrent.CompletableFuture<id.jawa.domain.model.PrivacySettings> getPrivacySettings() {
+    public CompletableFuture<PrivacySettings> getPrivacySettings() {
         String iqId = newIqId();
-        BinaryNode iq = new BinaryNode("iq", java.util.Map.of(
+        BinaryNode iq = new BinaryNode("iq", Map.of(
             "id", iqId,
-            "to", id.jawa.domain.model.Jid.SERVER_WHATSAPP,
+            "to", Jid.SERVER_WHATSAPP,
             "type", "get",
             "xmlns", "privacy"
-        ), java.util.List.of(new BinaryNode("privacy", java.util.Map.of(), null)));
+        ), List.of(new BinaryNode("privacy", Map.of(), null)));
         return sendIqAsync(iq).thenApply(resp -> {
             BinaryNode privacy = resp.child("privacy");
-            java.util.Map<String, String> map = new java.util.LinkedHashMap<>();
+            Map<String, String> map = new LinkedHashMap<>();
             if (privacy != null) {
                 for (BinaryNode child : privacy.childrenList()) {
                     if ("category".equals(child.tag())) {
@@ -2577,7 +2656,7 @@ public final class JaWaClient implements AutoCloseable {
                     }
                 }
             }
-            return new id.jawa.domain.model.PrivacySettings(
+            return new PrivacySettings(
                 map.getOrDefault("groupadd", ""),
                 map.getOrDefault("last", ""),
                 map.getOrDefault("status", ""),
@@ -2590,19 +2669,19 @@ public final class JaWaClient implements AutoCloseable {
         });
     }
 
-    public java.util.concurrent.CompletableFuture<Void> setPrivacySetting(String category, String value) {
+    public CompletableFuture<Void> setPrivacySetting(String category, String value) {
         String iqId = newIqId();
-        BinaryNode catNode = new BinaryNode("category", java.util.Map.of(
+        BinaryNode catNode = new BinaryNode("category", Map.of(
             "name", category,
             "value", value
         ), null);
-        BinaryNode privacyNode = new BinaryNode("privacy", java.util.Map.of(), java.util.List.of(catNode));
-        BinaryNode iq = new BinaryNode("iq", java.util.Map.of(
+        BinaryNode privacyNode = new BinaryNode("privacy", Map.of(), List.of(catNode));
+        BinaryNode iq = new BinaryNode("iq", Map.of(
             "id", iqId,
-            "to", id.jawa.domain.model.Jid.SERVER_WHATSAPP,
+            "to", Jid.SERVER_WHATSAPP,
             "type", "set",
             "xmlns", "privacy"
-        ), java.util.List.of(privacyNode));
+        ), List.of(privacyNode));
         return sendIqAsync(iq).thenAccept(resp -> {
             if ("error".equals(resp.attr("type"))) {
                 throw new IllegalStateException("Failed to set privacy setting: " + resp);
@@ -2610,17 +2689,17 @@ public final class JaWaClient implements AutoCloseable {
         });
     }
 
-    public java.util.concurrent.CompletableFuture<Void> setDefaultDisappearingTimer(int seconds) {
+    public CompletableFuture<Void> setDefaultDisappearingTimer(int seconds) {
         String iqId = newIqId();
-        BinaryNode node = new BinaryNode("disappearing_mode", java.util.Map.of(
+        BinaryNode node = new BinaryNode("disappearing_mode", Map.of(
             "duration", String.valueOf(seconds)
         ), null);
-        BinaryNode iq = new BinaryNode("iq", java.util.Map.of(
+        BinaryNode iq = new BinaryNode("iq", Map.of(
             "id", iqId,
-            "to", id.jawa.domain.model.Jid.SERVER_WHATSAPP,
+            "to", Jid.SERVER_WHATSAPP,
             "type", "set",
             "xmlns", "disappearing_mode"
-        ), java.util.List.of(node));
+        ), List.of(node));
         return sendIqAsync(iq).thenAccept(resp -> {
             if ("error".equals(resp.attr("type"))) {
                 throw new IllegalStateException("Failed to set default disappearing timer: " + resp);
@@ -2628,17 +2707,17 @@ public final class JaWaClient implements AutoCloseable {
         });
     }
 
-    public java.util.concurrent.CompletableFuture<String> getContactQrLink(boolean revoke) {
+    public CompletableFuture<String> getContactQrLink(boolean revoke) {
         String iqId = newIqId();
-        BinaryNode qrNode = new BinaryNode("qr", java.util.Map.of(
+        BinaryNode qrNode = new BinaryNode("qr", Map.of(
             "type", "contact",
             "action", revoke ? "revoke" : "get"
         ), null);
-        BinaryNode iq = new BinaryNode("iq", java.util.Map.of(
+        BinaryNode iq = new BinaryNode("iq", Map.of(
             "id", iqId,
             "type", "set",
             "xmlns", "w:qr"
-        ), java.util.List.of(qrNode));
+        ), List.of(qrNode));
         return sendIqAsync(iq).thenApply(resp -> {
             BinaryNode qr = resp.child("qr");
             if (qr == null) throw new IllegalStateException("no qr node in response: " + resp);
@@ -2648,23 +2727,23 @@ public final class JaWaClient implements AutoCloseable {
         });
     }
 
-    public java.util.concurrent.CompletableFuture<id.jawa.domain.model.ContactQrTarget> resolveContactQrLink(String codeOrUrl) {
+    public CompletableFuture<ContactQrTarget> resolveContactQrLink(String codeOrUrl) {
         String code = codeOrUrl;
         if (code.contains("/")) code = code.substring(code.lastIndexOf('/') + 1);
         if (code.contains("?")) code = code.substring(0, code.indexOf('?'));
         String iqId = newIqId();
-        BinaryNode qrNode = new BinaryNode("qr", java.util.Map.of(
+        BinaryNode qrNode = new BinaryNode("qr", Map.of(
             "code", code
         ), null);
-        BinaryNode iq = new BinaryNode("iq", java.util.Map.of(
+        BinaryNode iq = new BinaryNode("iq", Map.of(
             "id", iqId,
             "type", "get",
             "xmlns", "w:qr"
-        ), java.util.List.of(qrNode));
+        ), List.of(qrNode));
         return sendIqAsync(iq).thenApply(resp -> {
             BinaryNode qr = resp.child("qr");
             if (qr == null) throw new IllegalStateException("contact qr link not found: " + resp);
-            return new id.jawa.domain.model.ContactQrTarget(
+            return new ContactQrTarget(
                 qr.attr("jid"),
                 qr.attr("notify"),
                 qr.attr("type")
@@ -2672,14 +2751,14 @@ public final class JaWaClient implements AutoCloseable {
         });
     }
 
-    public java.util.concurrent.CompletableFuture<java.util.Map<String, id.jawa.domain.model.UserInfo>>
-            getUserInfo(java.util.Collection<String> targetJids) {
+    public CompletableFuture<Map<String, UserInfo>>
+            getUserInfo(Collection<String> targetJids) {
         String iqId = newIqId();
         String sid = newIqId();
-        BinaryNode q = id.jawa.feature.messaging.UsyncQuery.buildUserInfoQuery(iqId, sid, targetJids);
+        BinaryNode q = UsyncQuery.buildUserInfoQuery(iqId, sid, targetJids);
         LOG.debug("Sent user-info query id={} for {} jids", iqId, targetJids.size());
         return sendIqAsync(q).thenApply(resp -> {
-            var map = id.jawa.feature.messaging.UsyncQuery.parseUserInfoResult(resp);
+            var map = UsyncQuery.parseUserInfoResult(resp);
             for (var entry : map.entrySet()) {
                 if (entry.getValue().lid() != null && !entry.getValue().lid().isEmpty()) {
                     LID_TO_PN_MAP.put(entry.getValue().lid(), entry.getKey());
@@ -2689,20 +2768,20 @@ public final class JaWaClient implements AutoCloseable {
         });
     }
 
-    public java.util.concurrent.CompletableFuture<id.jawa.domain.model.UserInfo>
+    public CompletableFuture<UserInfo>
             getUserInfo(String targetJid) {
-        return getUserInfo(java.util.List.of(targetJid))
+        return getUserInfo(List.of(targetJid))
             .thenApply(map -> map.get(targetJid));
     }
 
-    public java.util.concurrent.CompletableFuture<id.jawa.domain.model.BusinessProfile> getBusinessProfile(String jid) {
+    public CompletableFuture<BusinessProfile> getBusinessProfile(String jid) {
         String iqId = newIqId();
         String targetJid = jid.contains("@") ? jid : jid + "@s.whatsapp.net";
-        BinaryNode profileNode = new BinaryNode("profile", java.util.Map.of("jid", targetJid), null);
-        BinaryNode bizNode = new BinaryNode("business_profile", java.util.Map.of("v", "244"), java.util.List.of(profileNode));
+        BinaryNode profileNode = new BinaryNode("profile", Map.of("jid", targetJid), null);
+        BinaryNode bizNode = new BinaryNode("business_profile", Map.of("v", "244"), List.of(profileNode));
         BinaryNode iq = new BinaryNode("iq",
-            java.util.Map.of("to", id.jawa.domain.model.Jid.SERVER_WHATSAPP, "type", "get", "xmlns", "w:biz", "id", iqId),
-            java.util.List.of(bizNode));
+            Map.of("to", Jid.SERVER_WHATSAPP, "type", "get", "xmlns", "w:biz", "id", iqId),
+            List.of(bizNode));
         return sendIqAsync(iq).thenApply(resp -> {
             BinaryNode bp = resp.child("business_profile");
             if (bp == null) {
@@ -2715,25 +2794,25 @@ public final class JaWaClient implements AutoCloseable {
             String address = prof.child("address") != null ? prof.child("address").textContent() : null;
             String email = prof.child("email") != null ? prof.child("email").textContent() : null;
             String description = prof.child("description") != null ? prof.child("description").textContent() : null;
-            java.util.List<String> websites = new java.util.ArrayList<>();
+            List<String> websites = new ArrayList<>();
             for (BinaryNode w : prof.children("website")) {
                 if (w.textContent() != null && !w.textContent().isEmpty()) {
                     websites.add(w.textContent());
                 }
             }
-            java.util.List<id.jawa.domain.model.BusinessProfile.Category> categories = new java.util.ArrayList<>();
+            List<BusinessProfile.Category> categories = new ArrayList<>();
             BinaryNode catNode = prof.child("categories");
             if (catNode != null) {
                 for (BinaryNode c : catNode.children("category")) {
-                    categories.add(new id.jawa.domain.model.BusinessProfile.Category(c.attr("id"), c.textContent()));
+                    categories.add(new BusinessProfile.Category(c.attr("id"), c.textContent()));
                 }
             }
             BinaryNode bhNode = prof.child("business_hours");
             String timezone = bhNode != null ? bhNode.attr("timezone") : null;
-            java.util.List<id.jawa.domain.model.BusinessProfile.BusinessHourConfig> hours = new java.util.ArrayList<>();
+            List<BusinessProfile.BusinessHourConfig> hours = new ArrayList<>();
             if (bhNode != null) {
                 for (BinaryNode h : bhNode.children("business_hours_config")) {
-                    hours.add(new id.jawa.domain.model.BusinessProfile.BusinessHourConfig(
+                    hours.add(new BusinessProfile.BusinessHourConfig(
                         h.attr("day_of_week"),
                         h.attr("mode"),
                         h.attr("open_time"),
@@ -2741,7 +2820,7 @@ public final class JaWaClient implements AutoCloseable {
                     ));
                 }
             }
-            java.util.Map<String, String> options = new java.util.HashMap<>();
+            Map<String, String> options = new HashMap<>();
             BinaryNode poNode = prof.child("profile_options");
             if (poNode != null) {
                 for (BinaryNode opt : poNode.childrenList()) {
@@ -2750,7 +2829,7 @@ public final class JaWaClient implements AutoCloseable {
                     }
                 }
             }
-            return new id.jawa.domain.model.BusinessProfile(
+            return new BusinessProfile(
                 prof.attr("jid"),
                 address,
                 email,
@@ -2764,15 +2843,15 @@ public final class JaWaClient implements AutoCloseable {
         });
     }
 
-    public java.util.concurrent.CompletableFuture<id.jawa.domain.model.BusinessMessageLinkTarget> resolveBusinessMessageLink(String codeOrUrl) {
+    public CompletableFuture<BusinessMessageLinkTarget> resolveBusinessMessageLink(String codeOrUrl) {
         String code = codeOrUrl;
         if (code.contains("/")) code = code.substring(code.lastIndexOf('/') + 1);
         if (code.contains("?")) code = code.substring(0, code.indexOf('?'));
         String iqId = newIqId();
-        BinaryNode qrNode = new BinaryNode("qr", java.util.Map.of("code", code), null);
+        BinaryNode qrNode = new BinaryNode("qr", Map.of("code", code), null);
         BinaryNode iq = new BinaryNode("iq",
-            java.util.Map.of("type", "get", "xmlns", "w:qr", "id", iqId),
-            java.util.List.of(qrNode));
+            Map.of("type", "get", "xmlns", "w:qr", "id", iqId),
+            List.of(qrNode));
         return sendIqAsync(iq).thenApply(resp -> {
             BinaryNode child = resp.child("qr");
             if (child == null) {
@@ -2790,7 +2869,7 @@ public final class JaWaClient implements AutoCloseable {
                 verifiedName = biz.attr("verified_name");
                 verifiedLevel = biz.attr("verified_level");
             }
-            return new id.jawa.domain.model.BusinessMessageLinkTarget(
+            return new BusinessMessageLinkTarget(
                 jid,
                 pushName,
                 message,
@@ -2801,51 +2880,51 @@ public final class JaWaClient implements AutoCloseable {
         });
     }
 
-    public java.util.concurrent.CompletableFuture<String> getStatus(String targetJid) {
+    public CompletableFuture<String> getStatus(String targetJid) {
         String iqId = newIqId();
-        java.util.Map<String, String> attrs = new java.util.HashMap<>();
+        Map<String, String> attrs = new HashMap<>();
         if (targetJid != null && !targetJid.isBlank()) {
             attrs.put("jid", targetJid.contains("@") ? targetJid : targetJid + "@s.whatsapp.net");
         }
         BinaryNode statusNode = new BinaryNode("status", attrs, null);
         BinaryNode iq = new BinaryNode("iq",
-            java.util.Map.of("to", id.jawa.domain.model.Jid.SERVER_WHATSAPP, "type", "get", "xmlns", "status", "id", iqId),
-            java.util.List.of(statusNode));
+            Map.of("to", Jid.SERVER_WHATSAPP, "type", "get", "xmlns", "status", "id", iqId),
+            List.of(statusNode));
         return sendIqAsync(iq).thenApply(resp -> {
             BinaryNode s = resp.child("status");
             return s != null ? s.textContent() : null;
         });
     }
 
-    public java.util.concurrent.CompletableFuture<Void> setGroupJoinApprovalMode(String groupJid, boolean approvalRequired) {
+    public CompletableFuture<Void> setGroupJoinApprovalMode(String groupJid, boolean approvalRequired) {
         String iqId = newIqId();
-        BinaryNode groupJoin = new BinaryNode("group_join", java.util.Map.of("state", approvalRequired ? "on" : "off"), null);
-        BinaryNode approvalNode = new BinaryNode("membership_approval_mode", java.util.Map.of(), java.util.List.of(groupJoin));
+        BinaryNode groupJoin = new BinaryNode("group_join", Map.of("state", approvalRequired ? "on" : "off"), null);
+        BinaryNode approvalNode = new BinaryNode("membership_approval_mode", Map.of(), List.of(groupJoin));
         BinaryNode iq = new BinaryNode("iq",
-            java.util.Map.of("to", groupJid, "type", "set", "xmlns", "w:g2", "id", iqId),
-            java.util.List.of(approvalNode));
+            Map.of("to", groupJid, "type", "set", "xmlns", "w:g2", "id", iqId),
+            List.of(approvalNode));
         return sendIqAsync(iq).thenApply(resp -> null);
     }
 
-    public java.util.concurrent.CompletableFuture<Void> setGroupMemberAddMode(String groupJid, boolean adminOnly) {
+    public CompletableFuture<Void> setGroupMemberAddMode(String groupJid, boolean adminOnly) {
         String iqId = newIqId();
         String modeStr = adminOnly ? "admin_add" : "all_member_add";
-        BinaryNode modeNode = new BinaryNode("member_add_mode", java.util.Map.of(), modeStr.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        BinaryNode modeNode = new BinaryNode("member_add_mode", Map.of(), modeStr.getBytes(StandardCharsets.UTF_8));
         BinaryNode iq = new BinaryNode("iq",
-            java.util.Map.of("to", groupJid, "type", "set", "xmlns", "w:g2", "id", iqId),
-            java.util.List.of(modeNode));
+            Map.of("to", groupJid, "type", "set", "xmlns", "w:g2", "id", iqId),
+            List.of(modeNode));
         return sendIqAsync(iq).thenApply(resp -> null);
     }
 
-    public java.util.concurrent.CompletableFuture<java.util.List<id.jawa.domain.model.GroupJoinRequest>> getGroupRequestParticipants(String groupJid) {
+    public CompletableFuture<List<GroupJoinRequest>> getGroupRequestParticipants(String groupJid) {
         String iqId = newIqId();
-        BinaryNode reqNode = new BinaryNode("membership_approval_requests", java.util.Map.of(), null);
+        BinaryNode reqNode = new BinaryNode("membership_approval_requests", Map.of(), null);
         BinaryNode iq = new BinaryNode("iq",
-            java.util.Map.of("to", groupJid, "type", "get", "xmlns", "w:g2", "id", iqId),
-            java.util.List.of(reqNode));
+            Map.of("to", groupJid, "type", "get", "xmlns", "w:g2", "id", iqId),
+            List.of(reqNode));
         return sendIqAsync(iq).thenApply(resp -> {
             BinaryNode reqs = resp.child("membership_approval_requests");
-            java.util.List<id.jawa.domain.model.GroupJoinRequest> list = new java.util.ArrayList<>();
+            List<GroupJoinRequest> list = new ArrayList<>();
             if (reqs != null) {
                 for (BinaryNode item : reqs.children("membership_approval_request")) {
                     String jid = item.attr("jid");
@@ -2857,7 +2936,7 @@ public final class JaWaClient implements AutoCloseable {
                         }
                     } catch (Exception ignored) {}
                     if (jid != null) {
-                        list.add(new id.jawa.domain.model.GroupJoinRequest(jid, time));
+                        list.add(new GroupJoinRequest(jid, time));
                     }
                 }
             }
@@ -2865,37 +2944,37 @@ public final class JaWaClient implements AutoCloseable {
         });
     }
 
-    public java.util.concurrent.CompletableFuture<Void> updateGroupRequestParticipants(
-            String groupJid, java.util.List<String> userJids, boolean approve) {
+    public CompletableFuture<Void> updateGroupRequestParticipants(
+            String groupJid, List<String> userJids, boolean approve) {
         String iqId = newIqId();
         String action = approve ? "approve" : "reject";
-        java.util.List<BinaryNode> participants = new java.util.ArrayList<>();
+        List<BinaryNode> participants = new ArrayList<>();
         for (String jid : userJids) {
-            participants.add(new BinaryNode("participant", java.util.Map.of("jid", jid), null));
+            participants.add(new BinaryNode("participant", Map.of("jid", jid), null));
         }
-        BinaryNode actionNode = new BinaryNode(action, java.util.Map.of(), participants);
-        BinaryNode reqAction = new BinaryNode("membership_requests_action", java.util.Map.of(), java.util.List.of(actionNode));
+        BinaryNode actionNode = new BinaryNode(action, Map.of(), participants);
+        BinaryNode reqAction = new BinaryNode("membership_requests_action", Map.of(), List.of(actionNode));
         BinaryNode iq = new BinaryNode("iq",
-            java.util.Map.of("to", groupJid, "type", "set", "xmlns", "w:g2", "id", iqId),
-            java.util.List.of(reqAction));
+            Map.of("to", groupJid, "type", "set", "xmlns", "w:g2", "id", iqId),
+            List.of(reqAction));
         return sendIqAsync(iq).thenApply(resp -> null);
     }
 
-    public java.util.concurrent.CompletableFuture<java.util.List<id.jawa.domain.model.CommunitySubGroup>> getSubGroups(String communityJid) {
+    public CompletableFuture<List<CommunitySubGroup>> getSubGroups(String communityJid) {
         String iqId = newIqId();
         BinaryNode iq = new BinaryNode("iq",
-            java.util.Map.of("to", communityJid, "type", "get", "xmlns", "w:g2", "id", iqId),
-            java.util.List.of(new BinaryNode("sub_groups", java.util.Map.of(), null)));
+            Map.of("to", communityJid, "type", "get", "xmlns", "w:g2", "id", iqId),
+            List.of(new BinaryNode("sub_groups", Map.of(), null)));
         return sendIqAsync(iq).thenApply(resp -> {
             BinaryNode subGroupsNode = resp.child("sub_groups");
-            if (subGroupsNode == null) return java.util.List.of();
-            java.util.List<id.jawa.domain.model.CommunitySubGroup> result = new java.util.ArrayList<>();
+            if (subGroupsNode == null) return List.of();
+            List<CommunitySubGroup> result = new ArrayList<>();
             for (BinaryNode child : subGroupsNode.childrenList()) {
                 if (!"group".equals(child.tag())) continue;
                 String jid = child.attr("jid");
                 if (jid == null) {
                     String gId = child.attr("id");
-                    if (gId != null) jid = gId + "@" + id.jawa.domain.model.Jid.SERVER_GROUP;
+                    if (gId != null) jid = gId + "@" + Jid.SERVER_GROUP;
                 }
                 String subject = child.attr("subject");
                 long nameSetAt = 0L;
@@ -2904,21 +2983,21 @@ public final class JaWaClient implements AutoCloseable {
                     try { nameSetAt = Long.parseLong(st); } catch (NumberFormatException ignored) {}
                 }
                 boolean defaultSub = child.child("default_sub_group") != null;
-                result.add(new id.jawa.domain.model.CommunitySubGroup(jid, subject, nameSetAt, defaultSub));
+                result.add(new CommunitySubGroup(jid, subject, nameSetAt, defaultSub));
             }
             return result;
         });
     }
 
-    public java.util.concurrent.CompletableFuture<java.util.List<String>> getLinkedGroupsParticipants(String communityJid) {
+    public CompletableFuture<List<String>> getLinkedGroupsParticipants(String communityJid) {
         String iqId = newIqId();
         BinaryNode iq = new BinaryNode("iq",
-            java.util.Map.of("to", communityJid, "type", "get", "xmlns", "w:g2", "id", iqId),
-            java.util.List.of(new BinaryNode("linked_groups_participants", java.util.Map.of(), null)));
+            Map.of("to", communityJid, "type", "get", "xmlns", "w:g2", "id", iqId),
+            List.of(new BinaryNode("linked_groups_participants", Map.of(), null)));
         return sendIqAsync(iq).thenApply(resp -> {
             BinaryNode node = resp.child("linked_groups_participants");
-            if (node == null) return java.util.List.of();
-            java.util.List<String> list = new java.util.ArrayList<>();
+            if (node == null) return List.of();
+            List<String> list = new ArrayList<>();
             for (BinaryNode child : node.childrenList()) {
                 if ("participant".equals(child.tag()) && child.attr("jid") != null) {
                     list.add(child.attr("jid"));
@@ -2928,68 +3007,68 @@ public final class JaWaClient implements AutoCloseable {
         });
     }
 
-    public java.util.concurrent.CompletableFuture<Void> linkGroup(String communityJid, String childGroupJid) {
+    public CompletableFuture<Void> linkGroup(String communityJid, String childGroupJid) {
         String iqId = newIqId();
-        BinaryNode groupNode = new BinaryNode("group", java.util.Map.of("jid", childGroupJid), null);
-        BinaryNode linkNode = new BinaryNode("link", java.util.Map.of("link_type", "sub_group"), java.util.List.of(groupNode));
-        BinaryNode linksNode = new BinaryNode("links", java.util.Map.of(), java.util.List.of(linkNode));
+        BinaryNode groupNode = new BinaryNode("group", Map.of("jid", childGroupJid), null);
+        BinaryNode linkNode = new BinaryNode("link", Map.of("link_type", "sub_group"), List.of(groupNode));
+        BinaryNode linksNode = new BinaryNode("links", Map.of(), List.of(linkNode));
         BinaryNode iq = new BinaryNode("iq",
-            java.util.Map.of("to", communityJid, "type", "set", "xmlns", "w:g2", "id", iqId),
-            java.util.List.of(linksNode));
+            Map.of("to", communityJid, "type", "set", "xmlns", "w:g2", "id", iqId),
+            List.of(linksNode));
         return sendIqAsync(iq).thenApply(resp -> null);
     }
 
-    public java.util.concurrent.CompletableFuture<Void> unlinkGroup(String communityJid, String childGroupJid) {
+    public CompletableFuture<Void> unlinkGroup(String communityJid, String childGroupJid) {
         String iqId = newIqId();
-        BinaryNode groupNode = new BinaryNode("group", java.util.Map.of("jid", childGroupJid), null);
-        BinaryNode unlinkNode = new BinaryNode("unlink", java.util.Map.of("unlink_type", "sub_group"), java.util.List.of(groupNode));
+        BinaryNode groupNode = new BinaryNode("group", Map.of("jid", childGroupJid), null);
+        BinaryNode unlinkNode = new BinaryNode("unlink", Map.of("unlink_type", "sub_group"), List.of(groupNode));
         BinaryNode iq = new BinaryNode("iq",
-            java.util.Map.of("to", communityJid, "type", "set", "xmlns", "w:g2", "id", iqId),
-            java.util.List.of(unlinkNode));
+            Map.of("to", communityJid, "type", "set", "xmlns", "w:g2", "id", iqId),
+            List.of(unlinkNode));
         return sendIqAsync(iq).thenApply(resp -> null);
     }
 
-    public java.util.concurrent.CompletableFuture<BinaryNode> getGroupInfoFromInvite(String groupJid, String inviterJid, String code, long expiration) {
+    public CompletableFuture<BinaryNode> getGroupInfoFromInvite(String groupJid, String inviterJid, String code, long expiration) {
         String iqId = newIqId();
-        BinaryNode addReq = new BinaryNode("add_request", java.util.Map.of("code", code, "expiration", String.valueOf(expiration), "admin", inviterJid), null);
-        BinaryNode query = new BinaryNode("query", java.util.Map.of(), java.util.List.of(addReq));
+        BinaryNode addReq = new BinaryNode("add_request", Map.of("code", code, "expiration", String.valueOf(expiration), "admin", inviterJid), null);
+        BinaryNode query = new BinaryNode("query", Map.of(), List.of(addReq));
         BinaryNode iq = new BinaryNode("iq",
-            java.util.Map.of("to", groupJid, "type", "get", "xmlns", "w:g2", "id", iqId),
-            java.util.List.of(query));
+            Map.of("to", groupJid, "type", "get", "xmlns", "w:g2", "id", iqId),
+            List.of(query));
         return sendIqAsync(iq);
     }
 
-    public java.util.concurrent.CompletableFuture<Void> joinGroupWithInvite(String groupJid, String inviterJid, String code, long expiration) {
+    public CompletableFuture<Void> joinGroupWithInvite(String groupJid, String inviterJid, String code, long expiration) {
         String iqId = newIqId();
-        BinaryNode acceptNode = new BinaryNode("accept", java.util.Map.of("code", code, "expiration", String.valueOf(expiration), "admin", inviterJid), null);
+        BinaryNode acceptNode = new BinaryNode("accept", Map.of("code", code, "expiration", String.valueOf(expiration), "admin", inviterJid), null);
         BinaryNode iq = new BinaryNode("iq",
-            java.util.Map.of("to", groupJid, "type", "set", "xmlns", "w:g2", "id", iqId),
-            java.util.List.of(acceptNode));
+            Map.of("to", groupJid, "type", "set", "xmlns", "w:g2", "id", iqId),
+            List.of(acceptNode));
         return sendIqAsync(iq).thenApply(resp -> null);
     }
 
-    public java.util.concurrent.CompletableFuture<Void> rejectCall(String callFrom, String callId) {
+    public CompletableFuture<Void> rejectCall(String callFrom, String callId) {
         if (creds == null || creds.meJid == null) {
-            return java.util.concurrent.CompletableFuture.failedFuture(new IllegalStateException("Not logged in"));
+            return CompletableFuture.failedFuture(new IllegalStateException("Not logged in"));
         }
-        String ownJid = id.jawa.domain.model.Jid.bare(creds.meJid);
-        String cleanFrom = id.jawa.domain.model.Jid.bare(callFrom);
+        String ownJid = Jid.bare(creds.meJid);
+        String cleanFrom = Jid.bare(callFrom);
         BinaryNode rejectNode = new BinaryNode("reject",
-            java.util.Map.of("call-id", callId, "call-creator", cleanFrom, "count", "0"),
+            Map.of("call-id", callId, "call-creator", cleanFrom, "count", "0"),
             null);
         BinaryNode callNode = new BinaryNode("call",
-            java.util.Map.of("id", generateMessageId(), "from", ownJid, "to", cleanFrom),
-            java.util.List.of(rejectNode));
+            Map.of("id", generateMessageId(), "from", ownJid, "to", cleanFrom),
+            List.of(rejectNode));
         send(callNode);
-        return java.util.concurrent.CompletableFuture.completedFuture(null);
+        return CompletableFuture.completedFuture(null);
     }
 
-    public java.util.concurrent.CompletableFuture<Long> subscribeNewsletterLiveUpdates(String newsletterJid) {
+    public CompletableFuture<Long> subscribeNewsletterLiveUpdates(String newsletterJid) {
         String iqId = newIqId();
-        BinaryNode liveNode = new BinaryNode("live_updates", java.util.Map.of(), null);
+        BinaryNode liveNode = new BinaryNode("live_updates", Map.of(), null);
         BinaryNode iq = new BinaryNode("iq",
-            java.util.Map.of("to", newsletterJid, "type", "set", "xmlns", "newsletter", "id", iqId),
-            java.util.List.of(liveNode));
+            Map.of("to", newsletterJid, "type", "set", "xmlns", "newsletter", "id", iqId),
+            List.of(liveNode));
         return sendIqAsync(iq).thenApply(resp -> {
             BinaryNode child = resp.child("live_updates");
             if (child != null) {
@@ -3004,23 +3083,23 @@ public final class JaWaClient implements AutoCloseable {
         });
     }
 
-    public java.util.concurrent.CompletableFuture<Void> markNewsletterViewed(String newsletterJid, java.util.List<Long> serverIds) {
-        java.util.List<BinaryNode> items = new java.util.ArrayList<>();
+    public CompletableFuture<Void> markNewsletterViewed(String newsletterJid, List<Long> serverIds) {
+        List<BinaryNode> items = new ArrayList<>();
         for (Long id : serverIds) {
-            items.add(new BinaryNode("item", java.util.Map.of("server_id", String.valueOf(id)), null));
+            items.add(new BinaryNode("item", Map.of("server_id", String.valueOf(id)), null));
         }
-        BinaryNode listNode = new BinaryNode("list", java.util.Map.of(), items);
+        BinaryNode listNode = new BinaryNode("list", Map.of(), items);
         BinaryNode receiptNode = new BinaryNode("receipt",
-            java.util.Map.of("to", newsletterJid, "type", "view", "id", generateMessageId()),
-            java.util.List.of(listNode));
+            Map.of("to", newsletterJid, "type", "view", "id", generateMessageId()),
+            List.of(listNode));
         send(receiptNode);
-        return java.util.concurrent.CompletableFuture.completedFuture(null);
+        return CompletableFuture.completedFuture(null);
     }
 
-    public java.util.concurrent.CompletableFuture<java.util.List<id.jawa.domain.model.NewsletterMessage>>
+    public CompletableFuture<List<NewsletterMessage>>
             getNewsletterMessages(String newsletterJid, int count, Long beforeServerId) {
         String iqId = newIqId();
-        java.util.Map<String, String> attrs = new java.util.HashMap<>();
+        Map<String, String> attrs = new HashMap<>();
         attrs.put("type", "jid");
         attrs.put("jid", newsletterJid);
         if (count > 0) {
@@ -3031,10 +3110,10 @@ public final class JaWaClient implements AutoCloseable {
         }
         BinaryNode q = new BinaryNode("messages", attrs, null);
         BinaryNode iq = new BinaryNode("iq",
-            java.util.Map.of("to", id.jawa.domain.model.Jid.SERVER_WHATSAPP, "type", "get", "xmlns", "newsletter", "id", iqId),
-            java.util.List.of(q));
+            Map.of("to", Jid.SERVER_WHATSAPP, "type", "get", "xmlns", "newsletter", "id", iqId),
+            List.of(q));
         return sendIqAsync(iq).thenApply(resp -> {
-            java.util.List<id.jawa.domain.model.NewsletterMessage> list = new java.util.ArrayList<>();
+            List<NewsletterMessage> list = new ArrayList<>();
             BinaryNode msgsNode = resp.child("messages");
             if (msgsNode == null) return list;
             for (BinaryNode msgNode : msgsNode.children("message")) {
@@ -3058,7 +3137,7 @@ public final class JaWaClient implements AutoCloseable {
                         if (c != null) viewsCount = Integer.parseInt(c);
                     } catch (Exception ignored) {}
                 }
-                java.util.Map<String, Integer> reactions = new java.util.HashMap<>();
+                Map<String, Integer> reactions = new HashMap<>();
                 BinaryNode reactsNode = msgNode.child("reactions");
                 if (reactsNode != null) {
                     for (BinaryNode r : reactsNode.children("reaction")) {
@@ -3071,14 +3150,14 @@ public final class JaWaClient implements AutoCloseable {
                         if (code != null) reactions.put(code, rCount);
                     }
                 }
-                id.jawa.proto.Wa.Message protoMsg = null;
+                Wa.Message protoMsg = null;
                 BinaryNode pt = msgNode.child("plaintext");
                 if (pt != null && pt.bytesContent() != null) {
                     try {
-                        protoMsg = id.jawa.proto.Wa.Message.parseFrom(pt.bytesContent());
+                        protoMsg = Wa.Message.parseFrom(pt.bytesContent());
                     } catch (Exception ignored) {}
                 }
-                list.add(new id.jawa.domain.model.NewsletterMessage(
+                list.add(new NewsletterMessage(
                     serverId, msgId, type, timestamp, viewsCount, reactions, protoMsg
                 ));
             }
@@ -3090,21 +3169,21 @@ public final class JaWaClient implements AutoCloseable {
         close();
     }
 
-    public java.util.concurrent.CompletableFuture<Void> logout() {
+    public CompletableFuture<Void> logout() {
         if (creds == null || creds.meJid == null) {
-            return java.util.concurrent.CompletableFuture.failedFuture(new IllegalStateException("Not logged in"));
+            return CompletableFuture.failedFuture(new IllegalStateException("Not logged in"));
         }
         String iqId = newIqId();
-        BinaryNode rmDevice = new BinaryNode("remove-companion-device", java.util.Map.of(
+        BinaryNode rmDevice = new BinaryNode("remove-companion-device", Map.of(
             "jid", creds.meJid,
             "reason", "user_initiated"
         ), null);
-        BinaryNode iq = new BinaryNode("iq", java.util.Map.of(
-            "to", id.jawa.domain.model.Jid.SERVER_WHATSAPP,
+        BinaryNode iq = new BinaryNode("iq", Map.of(
+            "to", Jid.SERVER_WHATSAPP,
             "type", "set",
             "xmlns", "md",
             "id", iqId
-        ), java.util.List.of(rmDevice));
+        ), List.of(rmDevice));
         return sendIqAsync(iq).handle((resp, err) -> {
             try {
                 store.clear();
@@ -3114,60 +3193,60 @@ public final class JaWaClient implements AutoCloseable {
         });
     }
 
-    public java.util.concurrent.CompletableFuture<Void> updatePushName(String newPushName) {
+    public CompletableFuture<Void> updatePushName(String newPushName) {
         if (creds == null) {
-            return java.util.concurrent.CompletableFuture.failedFuture(new IllegalStateException("Not logged in"));
+            return CompletableFuture.failedFuture(new IllegalStateException("Not logged in"));
         }
         creds.pushName = newPushName;
         try {
             store.save(creds);
         } catch (Exception e) {
-            return java.util.concurrent.CompletableFuture.failedFuture(e);
+            return CompletableFuture.failedFuture(e);
         }
-        send(new BinaryNode("presence", java.util.Map.of(
+        send(new BinaryNode("presence", Map.of(
             "type", "available",
             "name", newPushName
         ), null));
-        return java.util.concurrent.CompletableFuture.completedFuture(null);
+        return CompletableFuture.completedFuture(null);
     }
 
-    public java.util.concurrent.CompletableFuture<String> sendMexQuery(String queryId, String jsonVariables) {
+    public CompletableFuture<String> sendMexQuery(String queryId, String jsonVariables) {
         String iqId = newIqId();
         String payload = "{\"variables\":" + (jsonVariables != null && !jsonVariables.isBlank() ? jsonVariables : "{}") + "}";
         BinaryNode queryNode = new BinaryNode("query",
-            java.util.Map.of("query_id", queryId),
-            payload.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            Map.of("query_id", queryId),
+            payload.getBytes(StandardCharsets.UTF_8));
         BinaryNode iq = new BinaryNode("iq",
-            java.util.Map.of("to", id.jawa.domain.model.Jid.SERVER_WHATSAPP, "type", "get", "xmlns", "w:mex", "id", iqId),
-            java.util.List.of(queryNode));
+            Map.of("to", Jid.SERVER_WHATSAPP, "type", "get", "xmlns", "w:mex", "id", iqId),
+            List.of(queryNode));
         return sendIqAsync(iq).thenApply(resp -> {
             BinaryNode res = resp.child("result");
             return res != null ? res.textContent() : null;
         });
     }
 
-    public java.util.concurrent.CompletableFuture<Void> followNewsletter(String newsletterJid) {
+    public CompletableFuture<Void> followNewsletter(String newsletterJid) {
         String vars = "{\"newsletter_id\":\"" + newsletterJid + "\"}";
         return sendMexQuery("9926858900719341", vars).thenApply(resp -> null);
     }
 
-    public java.util.concurrent.CompletableFuture<Void> unfollowNewsletter(String newsletterJid) {
+    public CompletableFuture<Void> unfollowNewsletter(String newsletterJid) {
         String vars = "{\"newsletter_id\":\"" + newsletterJid + "\"}";
         return sendMexQuery("6392786840836363", vars).thenApply(resp -> null);
     }
 
-    public java.util.concurrent.CompletableFuture<Void> toggleMuteNewsletter(String newsletterJid, boolean mute) {
+    public CompletableFuture<Void> toggleMuteNewsletter(String newsletterJid, boolean mute) {
         String queryId = mute ? "6274038279359549" : "6068417879924485";
         String vars = "{\"newsletter_id\":\"" + newsletterJid + "\"}";
         return sendMexQuery(queryId, vars).thenApply(resp -> null);
     }
 
-    public java.util.concurrent.CompletableFuture<id.jawa.domain.model.NewsletterMetadata> getNewsletterInfo(String newsletterJid) {
+    public CompletableFuture<NewsletterMetadata> getNewsletterInfo(String newsletterJid) {
         String vars = "{\"fetch_creation_time\":true,\"fetch_full_image\":true,\"fetch_viewer_metadata\":true,\"input\":{\"key\":\"" + newsletterJid + "\",\"type\":\"JID\"}}";
         return sendMexQuery("6563316087068696", vars).thenApply(json -> parseNewsletterJson(json, newsletterJid));
     }
 
-    public java.util.concurrent.CompletableFuture<id.jawa.domain.model.NewsletterMetadata> getNewsletterInfoWithInvite(String inviteCodeOrUrl) {
+    public CompletableFuture<NewsletterMetadata> getNewsletterInfoWithInvite(String inviteCodeOrUrl) {
         String code = inviteCodeOrUrl;
         if (code.contains("/")) code = code.substring(code.lastIndexOf('/') + 1);
         if (code.contains("?")) code = code.substring(0, code.indexOf('?'));
@@ -3175,7 +3254,7 @@ public final class JaWaClient implements AutoCloseable {
         return sendMexQuery("6563316087068696", vars).thenApply(json -> parseNewsletterJson(json, null));
     }
 
-    private static id.jawa.domain.model.NewsletterMetadata parseNewsletterJson(String json, String fallbackJid) {
+    private static NewsletterMetadata parseNewsletterJson(String json, String fallbackJid) {
         if (json == null || json.isBlank()) return null;
         String id = extractJsonField(json, "id");
         if (id == null) id = fallbackJid;
@@ -3200,7 +3279,7 @@ public final class JaWaClient implements AutoCloseable {
             try { subCount = Integer.parseInt(sc.replaceAll("[^0-9]", "")); } catch (Exception ignored) {}
         }
 
-        return new id.jawa.domain.model.NewsletterMetadata(
+        return new NewsletterMetadata(
             id, name, desc, invite, creationTime, subCount, role, muted, picUrl
         );
     }
@@ -3237,24 +3316,24 @@ public final class JaWaClient implements AutoCloseable {
         return extractJsonField(block, childField);
     }
 
-    public java.util.concurrent.CompletableFuture<id.jawa.domain.model.OrderDetails> getOrderDetails(String orderId, String tokenBase64) {
+    public CompletableFuture<OrderDetails> getOrderDetails(String orderId, String tokenBase64) {
         String iqId = newIqId();
-        BinaryNode widthNode = new BinaryNode("width", java.util.Map.of(), "100".getBytes(java.nio.charset.StandardCharsets.UTF_8));
-        BinaryNode heightNode = new BinaryNode("height", java.util.Map.of(), "100".getBytes(java.nio.charset.StandardCharsets.UTF_8));
-        BinaryNode dimsNode = new BinaryNode("image_dimensions", java.util.Map.of(), java.util.List.of(widthNode, heightNode));
-        BinaryNode tokenNode = new BinaryNode("token", java.util.Map.of(), tokenBase64.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        BinaryNode widthNode = new BinaryNode("width", Map.of(), "100".getBytes(StandardCharsets.UTF_8));
+        BinaryNode heightNode = new BinaryNode("height", Map.of(), "100".getBytes(StandardCharsets.UTF_8));
+        BinaryNode dimsNode = new BinaryNode("image_dimensions", Map.of(), List.of(widthNode, heightNode));
+        BinaryNode tokenNode = new BinaryNode("token", Map.of(), tokenBase64.getBytes(StandardCharsets.UTF_8));
         BinaryNode orderNode = new BinaryNode("order",
-            java.util.Map.of("op", "get", "id", orderId),
-            java.util.List.of(dimsNode, tokenNode));
+            Map.of("op", "get", "id", orderId),
+            List.of(dimsNode, tokenNode));
         BinaryNode iq = new BinaryNode("iq",
-            java.util.Map.of(
-                "to", id.jawa.domain.model.Jid.SERVER_WHATSAPP,
+            Map.of(
+                "to", Jid.SERVER_WHATSAPP,
                 "type", "get",
                 "xmlns", "fb:thrift_iq",
                 "smax_id", "5",
                 "id", iqId
             ),
-            java.util.List.of(orderNode));
+            List.of(orderNode));
         return sendIqAsync(iq).thenApply(resp -> {
             BinaryNode ord = resp.child("order");
             if (ord == null) return null;
@@ -3272,7 +3351,7 @@ public final class JaWaClient implements AutoCloseable {
                 if (catIdNode != null) catalogId = catIdNode.textContent();
             }
 
-            id.jawa.domain.model.OrderDetails.OrderPrice price = null;
+            OrderDetails.OrderPrice price = null;
             BinaryNode priceNode = ord.child("price");
             if (priceNode != null) {
                 long subtotal = 0L;
@@ -3287,10 +3366,10 @@ public final class JaWaClient implements AutoCloseable {
                 } catch (Exception ignored) {}
                 String currency = priceNode.child("currency") != null ? priceNode.child("currency").textContent() : null;
                 String status = priceNode.child("price_status") != null ? priceNode.child("price_status").textContent() : null;
-                price = new id.jawa.domain.model.OrderDetails.OrderPrice(subtotal, total, currency, status);
+                price = new OrderDetails.OrderPrice(subtotal, total, currency, status);
             }
 
-            java.util.List<id.jawa.domain.model.OrderDetails.OrderProduct> products = new java.util.ArrayList<>();
+            List<OrderDetails.OrderProduct> products = new ArrayList<>();
             for (BinaryNode pNode : ord.children("product")) {
                 String pId = pNode.child("id") != null ? pNode.child("id").textContent() : null;
                 String pName = pNode.child("name") != null ? pNode.child("name").textContent() : null;
@@ -3312,12 +3391,12 @@ public final class JaWaClient implements AutoCloseable {
                     if (imgNode.child("id") != null) imgId = imgNode.child("id").textContent();
                     if (imgNode.child("url") != null) imgUrl = imgNode.child("url").textContent();
                 }
-                products.add(new id.jawa.domain.model.OrderDetails.OrderProduct(
+                products.add(new OrderDetails.OrderProduct(
                     pId, pName, pPrice, pCurrency, pQuantity, imgId, imgUrl
                 ));
             }
 
-            return new id.jawa.domain.model.OrderDetails(id, createdAt, catalogId, price, products);
+            return new OrderDetails(id, createdAt, catalogId, price, products);
         });
     }
 

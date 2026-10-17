@@ -1,6 +1,7 @@
 package id.jawa.feature.appstate;
 
 
+import com.google.protobuf.InvalidProtocolBufferException;
 import id.jawa.proto.Wa;
 import id.jawa.protocol.crypto.AesCbc;
 import org.slf4j.Logger;
@@ -65,7 +66,7 @@ public final class AppStateProcessor {
         Wa.SyncActionData action;
         try {
             action = Wa.SyncActionData.parseFrom(plaintext);
-        } catch (com.google.protobuf.InvalidProtocolBufferException e) {
+        } catch (InvalidProtocolBufferException e) {
             throw new IllegalStateException("malformed SyncActionData", e);
         }
 
