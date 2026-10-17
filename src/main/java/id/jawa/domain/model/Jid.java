@@ -1,8 +1,16 @@
 package id.jawa.domain.model;
 
-
 import java.util.Objects;
 
+/**
+ * Parsed WhatsApp Jabber Identifier (JID) representing users, groups, channels, or companion devices.
+ *
+ * @param user Phone number or entity unique identifier string
+ * @param server Domain server address (e.g. "s.whatsapp.net", "g.us", "lid", "newsletter")
+ * @param device Multi-device companion device index (0 for primary device)
+ * @param agent Multi-agent index
+ * @param domainType Binary protocol integer domain categorization
+ */
 public record Jid(String user, String server, int device, int agent, int domainType) {
 
     public static final String SERVER_WHATSAPP = "s.whatsapp.net";
@@ -28,17 +36,49 @@ public record Jid(String user, String server, int device, int agent, int domainT
         Objects.requireNonNull(server, "server");
     }
 
+    /**
+     * Constructs a Jid for a user and server domain with default device 0.
+     *
+     * @param user Account phone number or username
+     * @param server Target server domain
+     * @return Created Jid instance
+     */
     public static Jid of(String user, String server) {
         return new Jid(user, server, 0, 0, domainTypeFor(server, 0));
     }
 
+    /**
+     * Constructs a multi-device Jid with explicit device index.
+     *
+     * @param user Account phone number or username
+     * @param server Target server domain
+     * @param device Companion device index
+     * @return Created Jid instance
+     */
     public static Jid of(String user, String server, int device) {
         return new Jid(user, server, device, 0, domainTypeFor(server, 0));
     }
 
+    /**
+     * Checks whether this JID targets a specific companion device index (> 0).
+     *
+     * @return True if device index is non-zero
+     */
     public boolean hasDevice() { return device != 0; }
+
+    /**
+     * Checks whether this JID targets an explicit agent index (> 0).
+     *
+     * @return True if agent index is non-zero
+     */
     public boolean hasAgent()  { return agent  != 0; }
 
+    /**
+     * Parses a string formatted as user[:device][_agent]@server into a Jid instance.
+     *
+     * @param s String representation of the WhatsApp JID
+     * @return Parsed Jid object, or null if string format is invalid
+     */
     public static Jid parse(String s) {
         if (s == null) return null;
         int at = s.indexOf('@');
@@ -78,6 +118,13 @@ public record Jid(String user, String server, int device, int agent, int domainT
         };
     }
 
+    /**
+     * Resolves the server domain name corresponding to a binary domain type code.
+     *
+     * @param domainType Binary protocol domain code
+     * @param fallback Default server name to return if domain type is unmapped
+     * @return Resolved server domain string
+     */
     public static String serverForDomain(int domainType, String fallback) {
         return switch (domainType) {
             case DOMAIN_LID         -> SERVER_LID;
@@ -87,6 +134,11 @@ public record Jid(String user, String server, int device, int agent, int domainT
         };
     }
 
+    /**
+     * Formats this JID into a canonical string representation.
+     *
+     * @return Full string representation including device and agent components
+     */
     public String asString() {
         StringBuilder sb = new StringBuilder(user.length() + server.length() + 8);
         sb.append(user);
@@ -96,6 +148,12 @@ public record Jid(String user, String server, int device, int agent, int domainT
         return sb.toString();
     }
 
+    /**
+     * Strips device and agent components from a string JID to yield bare user@server.
+     *
+     * @param s String representation of JID
+     * @return Normalized bare JID string
+     */
     public static String bare(String s) {
         if (s == null) return null;
         int at = s.indexOf('@');
@@ -106,6 +164,11 @@ public record Jid(String user, String server, int device, int agent, int domainT
         return user + "@" + s.substring(at + 1);
     }
 
+    /**
+     * Returns the normalized bare user@server representation of this JID.
+     *
+     * @return Bare JID string
+     */
     public String toBareString() {
         return user + "@" + server;
     }

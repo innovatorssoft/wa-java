@@ -1,6 +1,8 @@
 package id.jawa.protocol.codec;
 
-
+/**
+ * Protocol byte tags and control tokens used in WhatsApp binary XML framing.
+ */
 public final class WaTags {
 
     public static final int LIST_EMPTY = 0;

@@ -1,11 +1,20 @@
 package id.jawa.domain.model;
 
-
 import id.jawa.protocol.codec.BinaryNode;
 
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * Message delivery, read, or playback acknowledgment receipt received from WhatsApp servers.
+ *
+ * @param type The receipt classification string (null for delivery, "read", "played", "server")
+ * @param chatJid Originating conversation JID
+ * @param senderJid Message participant JID in group context
+ * @param recipientJid Destination recipient JID if specified
+ * @param msgIds List of message IDs acknowledged by this receipt
+ * @param timestamp Server epoch timestamp seconds
+ */
 public record Receipt(
     String type,
     String chatJid,
@@ -15,6 +24,12 @@ public record Receipt(
     long timestamp
 ) {
 
+    /**
+     * Parses an incoming stanza node into a structured Receipt instance.
+     *
+     * @param node The raw BinaryNode representing a receipt stanza
+     * @return Parsed Receipt object, or null if essential attributes are absent
+     */
     public static Receipt parse(BinaryNode node) {
         String id = node.attr("id");
         String from = node.attr("from");

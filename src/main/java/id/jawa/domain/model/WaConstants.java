@@ -1,8 +1,10 @@
 package id.jawa.domain.model;
 
-
 import id.jawa.protocol.crypto.Bytes;
 
+/**
+ * Protocol constants, magic headers, noise parameters, and web client version specifications.
+ */
 public final class WaConstants {
 
     public static final String ORIGIN = "https://web.whatsapp.com";
@@ -31,10 +33,22 @@ public final class WaConstants {
 
     public static final int[] WA_VERSION = new int[] { 2, 3000, 1044834443 };
 
+    /**
+     * Gets a defensive copy of the current WhatsApp Web protocol version array.
+     *
+     * @return Clone of the version triplet [primary, secondary, tertiary]
+     */
     public static int[] getVersion() {
         return WA_VERSION.clone();
     }
 
+    /**
+     * Overrides the WhatsApp Web protocol version reported during noise handshake.
+     *
+     * @param primary Primary version number
+     * @param secondary Secondary version number
+     * @param tertiary Tertiary revision number
+     */
     public static void setVersion(int primary, int secondary, int tertiary) {
         WA_VERSION[0] = primary;
         WA_VERSION[1] = secondary;

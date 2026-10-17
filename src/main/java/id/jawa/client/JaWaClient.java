@@ -113,49 +113,131 @@ import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 
+/**
+ * Primary client and facade for interacting with the WhatsApp Web multi-device protocol.
+ * <p>
+ * Provides high-level domain namespaces for operations:
+ * <ul>
+ *   <li>{@link #messages()} - Core text, media, interactive messages, reactions, edits, and receipts</li>
+ *   <li>{@link #groups()} - Group creation, administration, permissions, and communities</li>
+ *   <li>{@link #media()} - Encrypted file upload, download, and stickers</li>
+ *   <li>{@link #newsletters()} - Channel broadcasts, followers, and MEX GraphQL queries</li>
+ *   <li>{@link #profile()} - Status bio, avatars, business catalogs, and contact QR</li>
+ *   <li>{@link #chats()} - Presence, pinning, archiving, muting, and clearing</li>
+ *   <li>{@link #privacy()} - Privacy controls, disappearing timers, and blocklist</li>
+ * </ul>
+ */
 public final class JaWaClient implements AutoCloseable {
 
     private static final Logger LOG = LoggerFactory.getLogger(JaWaClient.class);
 
+    /**
+     * Shared cache mapping Linked Identity (LID) JIDs to standard Phone Number (PN) JIDs.
+     */
     public static final ConcurrentHashMap<String, String> LID_TO_PN_MAP =
         new ConcurrentHashMap<>();
 
+    /**
+     * Categorization of connection closure or account session invalidation reasons.
+     */
     public enum TerminationReason {
-
+        /** Companion device authorization was explicitly revoked from primary phone. */
         REVOKED,
-
+        /** Account phone number was banned by WhatsApp. */
         BANNED,
-
+        /** Connection was replaced by another active session for this client. */
         REPLACED,
-
+        /** Web client protocol version is obsolete and must be updated. */
         VERSION_OBSOLETE,
-
+        /** Network drop or transient disconnection. */
         TRANSIENT,
-
+        /** Unknown or unclassified termination reason. */
         UNKNOWN
     }
 
+    /**
+     * Event listener interface for receiving connection state, QR codes, incoming messages, and receipts.
+     */
     public interface Listener {
-
+        /**
+         * Called when a new pairing QR code string is generated.
+         *
+         * @param qrStrings Raw QR code payload strings
+         */
         default void onQr(List<String> qrStrings) {}
 
+        /**
+         * Called upon successful pairing and registration with the primary account.
+         *
+         * @param jid Authenticated account phone number JID
+         * @param pushName Configured display push name
+         * @param platform Primary phone OS platform
+         */
         default void onPaired(String jid, String pushName, String platform) {}
 
+        /**
+         * Called when the encrypted Noise transport handshake finishes and connection is established.
+         */
         default void onConnected() {}
 
+        /**
+         * Called when an incoming encrypted message is received and successfully decrypted.
+         *
+         * @param decoded Decoded message details and protobuf payload
+         */
         default void onMessage(MessageReceiver.Decoded decoded) {}
 
+        /**
+         * Called when a delivery, read, or playback receipt is received.
+         *
+         * @param receipt Parsed receipt information
+         */
         default void onReceipt(Receipt receipt) {}
 
+        /**
+         * Called when app state synchronization keys are received.
+         *
+         * @param count Number of app state keys downloaded
+         */
         default void onAppStateKeysReceived(int count) {}
 
+        /**
+         * Called when app state mutations are processed (e.g. contact sync, chat history sync).
+         *
+         * @param name Name of the app state collection patch
+         * @param mutations List of mutations applied
+         */
         default void onAppStateMutations(PatchName name,
                                          List<AppStateProcessor.Mutation> mutations) {}
 
+        /**
+         * Called when the connection or session is terminated.
+         *
+         * @param reason Termination classification
+         * @param detail Additional diagnostic message
+         * @param permanent True if session credentials are permanently invalid (e.g. revoked or banned)
+         */
         default void onTerminated(TerminationReason reason, String detail, boolean permanent) {}
 
+        /**
+         * Called when a server ack stanza is received.
+         *
+         * @param ack Server ack BinaryNode
+         */
         default void onAck(BinaryNode ack) {}
+
+        /**
+         * Called for every incoming raw binary protocol stanza.
+         *
+         * @param node Incoming BinaryNode stanza
+         */
         default void onStanza(BinaryNode node) {}
+
+        /**
+         * Called when an uncaught protocol or network exception occurs.
+         *
+         * @param t Cause exception
+         */
         default void onError(Throwable t) {}
     }
 
@@ -218,70 +300,196 @@ public final class JaWaClient implements AutoCloseable {
     private final ReentrantLock messageSendLock =
         new ReentrantLock();
 
+    /**
+     * Constructs a JaWaClient instance using the provided credential store.
+     *
+     * @param store Persistent storage implementation for authentication credentials
+     */
     public JaWaClient(AuthStore store) {
         this(store, null);
     }
 
+    /**
+     * Constructs a JaWaClient instance with custom credential store and file-based Signal key directory.
+     *
+     * @param store Persistent storage implementation for authentication credentials
+     * @param signalDir File system directory for SQLite or file-based Signal protocol keys, or null for in-memory
+     */
     public JaWaClient(AuthStore store, Path signalDir) {
         this.store = store;
         this.signalDir = signalDir;
     }
 
+    /**
+     * Registers an event listener callback for connection events, QR codes, incoming messages, and receipts.
+     *
+     * @param l Listener implementation
+     * @return This client instance for method chaining
+     */
     public JaWaClient listener(Listener l) { this.listener = l != null ? l : new Listener() {}; return this; }
 
+    /**
+     * Enables or disables automatic reconnection with exponential backoff upon unexpected disconnection.
+     *
+     * @param enabled True to automatically reconnect, false to terminate immediately on disconnect
+     * @return This client instance for method chaining
+     */
     public JaWaClient autoReconnect(boolean enabled) {
         this.autoReconnect = enabled;
         return this;
     }
 
+    /**
+     * Enables or disables automatic read receipt transmission upon message decryption.
+     *
+     * @param enabled True to automatically send read receipts
+     * @return This client instance for method chaining
+     */
     public JaWaClient autoReadReceipt(boolean enabled) {
         this.autoReadReceipt = enabled;
         return this;
     }
 
+    /**
+     * Enables or disables automatic typing presence indicator while encrypting and sending messages.
+     *
+     * @param enabled True to automatically broadcast composing presence
+     * @return This client instance for method chaining
+     */
     public JaWaClient autoComposingPresence(boolean enabled) {
         this.autoComposingPresence = enabled;
         return this;
     }
 
+    /**
+     * Enables or disables automatic upload of new signed Signal prekeys when server reserves run low.
+     *
+     * @param enabled True to auto-upload prekeys
+     * @return This client instance for method chaining
+     */
     public JaWaClient autoPreKeyUpload(boolean enabled) {
         this.autoPreKeyUpload = enabled;
         return this;
     }
 
+    /**
+     * Checks if automatic reconnection is enabled.
+     *
+     * @return True if auto-reconnect is active
+     */
     public boolean autoReconnect() { return autoReconnect; }
+
+    /**
+     * Checks if automatic read receipt transmission is enabled.
+     *
+     * @return True if auto-read-receipt is active
+     */
     public boolean autoReadReceipt() { return autoReadReceipt; }
+
+    /**
+     * Checks if automatic typing presence is enabled.
+     *
+     * @return True if auto-composing-presence is active
+     */
     public boolean autoComposingPresence() { return autoComposingPresence; }
+
+    /**
+     * Checks if automatic prekey replenishment is enabled.
+     *
+     * @return True if auto-prekey-upload is active
+     */
     public boolean autoPreKeyUpload() { return autoPreKeyUpload; }
+
+    /**
+     * Checks if automatic ephemeral wrapping is enabled.
+     *
+     * @return True if auto-ephemeral is active
+     */
     public boolean autoEphemeral() { return autoEphemeral; }
+
+    /**
+     * Checks if automatic ephemeral wrapping is enabled.
+     *
+     * @return True if auto-ephemeral is active
+     */
     public boolean isAutoEphemeral() { return autoEphemeral; }
 
+    /**
+     * Enables or disables automatic ephemeral message wrapper injection when conversation timers are active.
+     *
+     * @param enabled True to auto-wrap messages in ephemeral envelopes
+     * @return This client instance for method chaining
+     */
     public JaWaClient autoEphemeral(boolean enabled) {
         this.autoEphemeral = enabled;
         return this;
     }
 
+    /**
+     * Checks if offline message dropping is enabled.
+     *
+     * @return True if offline messages are filtered
+     */
     public boolean autoIgnoreOfflineMessages() { return autoIgnoreOfflineMessages; }
+
+    /**
+     * Checks if offline message dropping is enabled.
+     *
+     * @return True if offline messages are filtered
+     */
     public boolean isAutoIgnoreOfflineMessages() { return autoIgnoreOfflineMessages; }
 
+    /**
+     * Enables or disables dropping historical messages delivered during initial connection replay.
+     *
+     * @param enabled True to ignore offline messages
+     * @return This client instance for method chaining
+     */
     public JaWaClient autoIgnoreOfflineMessages(boolean enabled) {
         this.autoIgnoreOfflineMessages = enabled;
         return this;
     }
 
+    /**
+     * Gets the grace period in seconds after connection during which messages are treated as offline replay.
+     *
+     * @return Grace period in seconds
+     */
     public int offlineMessageGracePeriodSec() { return offlineMessageGracePeriodSec; }
 
+    /**
+     * Sets the grace period in seconds after connection during which messages are treated as offline replay.
+     *
+     * @param seconds Grace period duration
+     * @return This client instance for method chaining
+     */
     public JaWaClient offlineMessageGracePeriodSec(int seconds) {
         this.offlineMessageGracePeriodSec = Math.max(0, seconds);
         return this;
     }
 
+    /**
+     * Returns the epoch timestamp seconds when the current connection established.
+     *
+     * @return Connected epoch seconds, or 0 if not connected
+     */
     public long getConnectedAtEpochSec() { return connectedAtEpochSec; }
 
+    /**
+     * Returns a map of cached per-chat disappearing message timers.
+     *
+     * @return Map of chat JID to timer in seconds
+     */
     public Map<String, Integer> getChatEphemeralTimers() {
         return chatEphemeralTimers;
     }
 
+    /**
+     * Sets or clears the local ephemeral message expiration timer for a chat.
+     *
+     * @param chatJid Target conversation JID
+     * @param timerSeconds Expiration duration in seconds (0 to disable)
+     */
     public void setChatEphemeralTimer(String chatJid, int timerSeconds) {
         if (chatJid == null) return;
         if (timerSeconds > 0) {
@@ -291,11 +499,24 @@ public final class JaWaClient implements AutoCloseable {
         }
     }
 
+    /**
+     * Returns the configured ephemeral message expiration timer in seconds for a chat.
+     *
+     * @param chatJid Target conversation JID
+     * @return Expiration seconds, or 0 if disabled
+     */
     public int getChatEphemeralTimer(String chatJid) {
         if (chatJid == null) return 0;
         return chatEphemeralTimers.getOrDefault(chatJid, 0);
     }
 
+    /**
+     * Wraps a message payload into an ephemeral container if the conversation timer is active.
+     *
+     * @param chatJid Target conversation JID
+     * @param msg Raw Protobuf message
+     * @return Ephemeral-wrapped message, or original message if no timer is active
+     */
     public Wa.Message wrapEphemeralIfNeeded(String chatJid, Wa.Message msg) {
         if (!autoEphemeral || msg == null || chatJid == null) {
             return msg;
@@ -321,20 +542,78 @@ public final class JaWaClient implements AutoCloseable {
         return msg;
     }
 
+    /**
+     * Overrides the target WhatsApp Web WebSocket endpoint URL.
+     *
+     * @param url WebSocket endpoint URI string
+     * @return This client instance for method chaining
+     */
     public JaWaClient wsUrl(String url) {
         this.wsUrl = (url == null || url.isBlank()) ? WaConstants.WS_URL : url;
         return this;
     }
+
+    /**
+     * Gets the configured WhatsApp Web WebSocket endpoint URL.
+     *
+     * @return WebSocket URI string
+     */
     public String wsUrl() { return wsUrl; }
 
+    /**
+     * Accesses the messaging service namespace for sending text, media, interactive elements, reactions, and receipts.
+     *
+     * @return MessagingService domain instance
+     */
     public MessagingService messages() { return messagingService; }
+
+    /**
+     * Accesses the group service namespace for group creation, membership administration, and communities.
+     *
+     * @return GroupService domain instance
+     */
     public GroupService groups() { return groupService; }
+
+    /**
+     * Accesses the media service namespace for uploading, encrypted downloading, voice notes, and stickers.
+     *
+     * @return MediaService domain instance
+     */
     public MediaService media() { return mediaService; }
+
+    /**
+     * Accesses the newsletter service namespace for channel broadcasts, subscriptions, and MEX queries.
+     *
+     * @return NewsletterService domain instance
+     */
     public NewsletterService newsletters() { return newsletterService; }
+
+    /**
+     * Accesses the profile service namespace for status bio, avatars, business catalogs, and contact QR links.
+     *
+     * @return ProfileService domain instance
+     */
     public ProfileService profile() { return profileService; }
+
+    /**
+     * Accesses the chat service namespace for presence, archiving, pinning, muting, and clearing history.
+     *
+     * @return ChatService domain instance
+     */
     public ChatService chats() { return chatService; }
+
+    /**
+     * Accesses the privacy service namespace for privacy controls, disappearing timers, and blocklists.
+     *
+     * @return PrivacyService domain instance
+     */
     public PrivacyService privacy() { return privacyService; }
 
+    /**
+     * Establishes a WebSocket connection to WhatsApp servers and initiates the Noise cryptographic handshake.
+     *
+     * @throws Exception if network connection or cryptographic handshake fails
+     */
     public synchronized void connect() throws Exception {
         if (frame != null) throw new IllegalStateException("already connected");
 
