@@ -1,17 +1,14 @@
 package id.jawa;
 
-import id.jawa.protocol.connection.*;
-import id.jawa.protocol.codec.*;
-import id.jawa.protocol.crypto.*;
-import id.jawa.domain.model.*;
-import id.jawa.domain.store.*;
-import id.jawa.feature.pairing.*;
-import id.jawa.feature.messaging.*;
-import id.jawa.feature.media.*;
-import id.jawa.feature.appstate.*;
-import id.jawa.feature.signal.*;
-
+/**
+ * Global metadata and constants for the JaWa WhatsApp library.
+ */
 public final class JaWa {
+
+    /**
+     * Current release version of the JaWa library.
+     */
     public static final String VERSION = "0.0.4";
+
     private JaWa() {}
 }
