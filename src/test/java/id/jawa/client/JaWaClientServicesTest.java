@@ -383,6 +383,19 @@ class JaWaClientServicesTest {
 
         FileAuthStore store = new FileAuthStore(tempDir.resolve("test-store5.session"));
         JaWaClient client = new JaWaClient(store);
+        assertThat(client.syncVersion()).isTrue();
+        client.syncVersion(false);
+        assertThat(client.syncVersion()).isFalse();
+
+        int[] fetched = WaConstants.fetchLatestVersion();
+        assertThat(fetched).hasSize(3);
+        assertThat(fetched[0]).isEqualTo(2);
+        assertThat(fetched[1]).isEqualTo(3000);
+        assertThat(fetched[2]).isGreaterThan(1000000000);
+
+        int[] clientFetched = JaWaClient.fetchLatestVersion();
+        assertThat(clientFetched).containsExactly(fetched);
+
         assertThat(client.newsletters().acceptTOSNotice("20601218", "5")).isNotNull();
         assertThat(client.newsletters().acceptNewsletterTOSNotice()).isNotNull();
     }

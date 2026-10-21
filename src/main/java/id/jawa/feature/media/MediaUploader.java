@@ -69,7 +69,7 @@ public final class MediaUploader {
         HttpResponse<String> resp = HTTP.send(req, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
 
         if (resp.statusCode() != 200) {
-            throw new IOException("media upload failed: HTTP " + resp.statusCode() + " — " + resp.body());
+            throw new IOException("media upload failed: HTTP " + resp.statusCode() + ": " + resp.body());
         }
 
         String body = resp.body();
@@ -79,7 +79,7 @@ public final class MediaUploader {
         if (url == null || directPath == null) {
             throw new IOException("media upload response missing url/direct_path: " + body);
         }
-        LOG.info("Uploaded {} bytes — url=[host]{}", enc.uploadBytes().length,
+        LOG.info("Uploaded {} bytes: url=[host]{}", enc.uploadBytes().length,
             directPath != null ? directPath : "");
         return new Result(url, directPath, handle);
     }

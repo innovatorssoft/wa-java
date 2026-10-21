@@ -81,7 +81,7 @@ public final class PairingHandler {
 
         byte[] expectedHmac = HmacSha256.sign(creds.advSecretKey, hmacPrefix, details);
         if (!constantTimeEquals(expectedHmac, hmac)) {
-            throw new IllegalStateException("ADV identity HMAC mismatch — invalid pairing");
+            throw new IllegalStateException("ADV identity HMAC mismatch: invalid pairing");
         }
 
         final Wa.ADVSignedDeviceIdentity account;
@@ -137,7 +137,7 @@ public final class PairingHandler {
         creds.pushName = bizName;
         creds.platform = platform;
 
-        LOG.info("Paired — jid={} lid={} platform={} biz={}", jid, lid, platform, bizName);
+        LOG.info("Paired: jid={} lid={} platform={} biz={}", jid, lid, platform, bizName);
 
         BinaryNode deviceIdentityReply = new BinaryNode("device-identity",
             Map.of("key-index", Integer.toString(deviceIdentity.getKeyIndex())),
