@@ -92,7 +92,7 @@ public final class PairingCodeHandler {
             throw new IllegalStateException("missing primary_identity_pub or link_code_pairing_ref");
         }
         if (pairingCode == null || pairingEphemeralKey == null) {
-            throw new IllegalStateException("no pending pairing-code session — did you call buildCompanionHello?");
+            throw new IllegalStateException("no pending pairing-code session: did you call buildCompanionHello?");
         }
 
         byte[] primarySalt = Bytes.slice(wrappedPrimaryEph, 0, 32);
