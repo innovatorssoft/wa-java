@@ -69,7 +69,30 @@ public final class GroupListQuery {
         for (BinaryNode p : g.childrenList()) {
             if (!"participant".equals(p.tag())) continue;
             String pj = p.attr("jid");
+            String pnJid = p.attr("pn_jid");
+            String lid = p.attr("lid");
+            String phone = p.attr("phone_number");
+
+            if (pj != null && pj.endsWith("@lid") && pnJid != null && pnJid.endsWith("@s.whatsapp.net")) {
+                id.jawa.client.JaWaClient.LID_TO_PN_MAP.put(pj, pnJid);
+            } else if (pj != null && pj.endsWith("@s.whatsapp.net") && pnJid != null && pnJid.endsWith("@lid")) {
+                id.jawa.client.JaWaClient.LID_TO_PN_MAP.put(pnJid, pj);
+            }
+            if (lid != null && lid.endsWith("@lid") && pj != null && pj.endsWith("@s.whatsapp.net")) {
+                id.jawa.client.JaWaClient.LID_TO_PN_MAP.put(lid, pj);
+            }
+            if (pj != null && pj.endsWith("@lid") && phone != null && !phone.isBlank()) {
+                String digits = phone.replaceAll("[^0-9]", "");
+                if (!digits.isEmpty()) {
+                    id.jawa.client.JaWaClient.LID_TO_PN_MAP.put(pj, digits + "@s.whatsapp.net");
+                }
+            }
+
             if (pj != null) participants.add(pj);
+        }
+        String creatorPn = g.attr("creator_pn");
+        if (creator != null && creator.endsWith("@lid") && creatorPn != null && creatorPn.endsWith("@s.whatsapp.net")) {
+            id.jawa.client.JaWaClient.LID_TO_PN_MAP.put(creator, creatorPn);
         }
         boolean isEphemeral = false;
         int ephemeralExpiration = 0;

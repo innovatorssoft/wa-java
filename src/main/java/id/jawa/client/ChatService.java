@@ -114,6 +114,20 @@ public final class ChatService {
     }
 
     /**
+     * Resolves a LID JID to a phone number JID, checking cache first and falling back to USync query.
+     */
+    public CompletableFuture<String> resolveLidToPn(String lidJid) {
+        return client.resolveLidToPn(lidJid);
+    }
+
+    /**
+     * Returns cached phone number JID for a LID if known.
+     */
+    public String getCachedPnForLid(String lidJid) {
+        return JaWaClient.getCachedPnForLid(lidJid);
+    }
+
+    /**
      * Configures the disappearing messages expiration timer for a specific conversation.
      *
      * @param chatJid Conversation JID
@@ -142,4 +156,25 @@ public final class ChatService {
     public void subscribePresence(String jid) {
         client.subscribePresence(jid);
     }
+
+    /**
+     * Resolves a WhatsApp LID JID to a Phone Number JID asynchronously.
+     *
+     * @param lidJid The LID JID (e.g. "1234567890@lid")
+     * @return CompletableFuture resolving to the Phone Number JID (e.g. "62812345678@s.whatsapp.net") or null
+     */
+    public CompletableFuture<String> resolveLidToPn(String lidJid) {
+        return client.resolveLidToPn(lidJid);
+    }
+
+    /**
+     * Synchronously returns cached Phone Number JID for a given LID JID.
+     *
+     * @param lidJid The LID JID (e.g. "1234567890@lid")
+     * @return Cached Phone Number JID or null if not yet resolved
+     */
+    public String getCachedPnForLid(String lidJid) {
+        return JaWaClient.getCachedPnForLid(lidJid);
+    }
 }
+

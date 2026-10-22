@@ -2866,6 +2866,55 @@ public final class JaWaClient implements AutoCloseable {
         return sendIqAsync(q).thenApply(UsyncQuery::parseContactResult);
     }
 
+    /**
+     * Resolves a WhatsApp LID JID (e.g. "1234567890@lid") to a Phone Number JID (e.g. "62812345678@s.whatsapp.net").
+     * Returns cached resolution if available, or initiates an asynchronous USync contact query to WhatsApp.
+     */
+    public CompletableFuture<String> resolveLidToPn(String lidJid) {
+        if (lidJid == null || lidJid.isBlank()) {
+            return CompletableFuture.completedFuture(null);
+        }
+        String bareLid = lidJid.contains(":")
+            ? lidJid.substring(0, lidJid.indexOf(':')) + (lidJid.contains("@") ? lidJid.substring(lidJid.indexOf('@')) : "@lid")
+            : (lidJid.contains("@") ? lidJid : lidJid + "@lid");
+
+        if (!bareLid.endsWith("@lid")) {
+            return CompletableFuture.completedFuture(bareLid);
+        }
+
+        String cached = LID_TO_PN_MAP.get(bareLid);
+        if (cached != null && !cached.isBlank()) {
+            return CompletableFuture.completedFuture(cached);
+        }
+
+        return isOnWhatsApp(List.of(bareLid)).thenApply(map -> {
+            String mapped = LID_TO_PN_MAP.get(bareLid);
+            if (mapped != null && !mapped.isBlank()) {
+                return mapped;
+            }
+            ContactStatus status = map.get(bareLid);
+            if (status != null && status.jid() != null && status.jid().endsWith("@" + Jid.SERVER_WHATSAPP)) {
+                LID_TO_PN_MAP.put(bareLid, status.jid());
+                return status.jid();
+            }
+            return null;
+        }).exceptionally(ex -> {
+            LOG.warn("Failed to resolve LID {} to PN: {}", bareLid, ex.getMessage());
+            return null;
+        });
+    }
+
+    /**
+     * Synchronously looks up a cached Phone Number JID for a given LID JID.
+     */
+    public static String getCachedPnForLid(String lidJid) {
+        if (lidJid == null || lidJid.isBlank()) return null;
+        String bareLid = lidJid.contains(":")
+            ? lidJid.substring(0, lidJid.indexOf(':')) + (lidJid.contains("@") ? lidJid.substring(lidJid.indexOf('@')) : "@lid")
+            : (lidJid.contains("@") ? lidJid : lidJid + "@lid");
+        return LID_TO_PN_MAP.get(bareLid);
+    }
+
     public void sendChatPresence(String chatJid, ChatPresence state) {
         BinaryNode child;
         if (state == ChatPresence.COMPOSING) {

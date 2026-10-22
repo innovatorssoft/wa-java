@@ -169,9 +169,21 @@ public final class UsyncQuery {
             BinaryNode lidNode = user.child("lid");
             String lidVal = lidNode != null ? lidNode.attr("val") : null;
             if (userJid != null && userJid.endsWith("@lid") && pnJid != null && pnJid.endsWith("@s.whatsapp.net")) {
+                String bareLid = userJid.contains(":") ? userJid.substring(0, userJid.indexOf(':')) + "@lid" : userJid;
+                JaWaClient.LID_TO_PN_MAP.put(bareLid, pnJid);
                 JaWaClient.LID_TO_PN_MAP.put(userJid, pnJid);
             } else if (lidVal != null && lidVal.endsWith("@lid") && userJid != null && userJid.endsWith("@s.whatsapp.net")) {
+                String bareLid = lidVal.contains(":") ? lidVal.substring(0, lidVal.indexOf(':')) + "@lid" : lidVal;
+                JaWaClient.LID_TO_PN_MAP.put(bareLid, userJid);
                 JaWaClient.LID_TO_PN_MAP.put(lidVal, userJid);
+            } else if (userJid != null && userJid.endsWith("@lid") && contactPhone != null && !contactPhone.isBlank()) {
+                String digits = contactPhone.replaceAll("[^0-9]", "");
+                if (!digits.isEmpty()) {
+                    String derivedPn = digits + "@" + Jid.SERVER_WHATSAPP;
+                    String bareLid = userJid.contains(":") ? userJid.substring(0, userJid.indexOf(':')) + "@lid" : userJid;
+                    JaWaClient.LID_TO_PN_MAP.put(bareLid, derivedPn);
+                    JaWaClient.LID_TO_PN_MAP.put(userJid, derivedPn);
+                }
             }
 
             // Determine canonical JID
