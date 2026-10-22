@@ -23,6 +23,7 @@ import id.jawa.feature.messaging.MessageEncoder;
 import id.jawa.feature.messaging.MessageReceiver.Decoded;
 import id.jawa.feature.messaging.UsyncQuery;
 import id.jawa.proto.Wa;
+import id.jawa.protocol.codec.BinaryNode;
 import id.jawa.protocol.crypto.AesGcm;
 import id.jawa.protocol.crypto.Bytes;
 import id.jawa.protocol.crypto.Hkdf;
@@ -312,6 +313,81 @@ class JaWaClientServicesTest {
         JaWaClient client = new JaWaClient(store);
         assertThat(client.groups()).isNotNull();
         assertThat(client.profile()).isNotNull();
+    }
+
+    @Test
+    void testProfilePictureQueryConstruction() {
+        // Raw phone number without @
+        BinaryNode q1 = JaWaClient.buildProfilePictureQuery("iq1", "923224559543", true);
+        assertThat(q1.tag()).isEqualTo("iq");
+        assertThat(q1.attr("to")).isEqualTo("s.whatsapp.net");
+        assertThat(q1.attr("target")).isEqualTo("923224559543@s.whatsapp.net");
+        assertThat(q1.attr("type")).isEqualTo("get");
+        assertThat(q1.attr("xmlns")).isEqualTo("w:profile:picture");
+        assertThat(q1.attr("id")).isEqualTo("iq1");
+        BinaryNode pic1 = q1.child("picture");
+        assertThat(pic1).isNotNull();
+        assertThat(pic1.attr("type")).isEqualTo("preview");
+        assertThat(pic1.attr("query")).isEqualTo("url");
+
+        // Multi-device PN JID normalized to bare
+        BinaryNode q2 = JaWaClient.buildProfilePictureQuery("iq2", "923224559543:1@s.whatsapp.net", false);
+        assertThat(q2.attr("to")).isEqualTo("s.whatsapp.net");
+        assertThat(q2.attr("target")).isEqualTo("923224559543@s.whatsapp.net");
+        BinaryNode pic2 = q2.child("picture");
+        assertThat(pic2).isNotNull();
+        assertThat(pic2.attr("type")).isEqualTo("image");
+        assertThat(pic2.attr("query")).isEqualTo("url");
+
+        // Group JID
+        BinaryNode q3 = JaWaClient.buildProfilePictureQuery("iq3", "120363012345678901@g.us", true);
+        assertThat(q3.attr("to")).isEqualTo("s.whatsapp.net");
+        assertThat(q3.attr("target")).isEqualTo("120363012345678901@g.us");
+
+        // LID JID
+        BinaryNode q4 = JaWaClient.buildProfilePictureQuery("iq4", "1234567890:0@lid", true);
+        assertThat(q4.attr("to")).isEqualTo("s.whatsapp.net");
+        assertThat(q4.attr("target")).isEqualTo("1234567890@lid");
+    }
+
+    @Test
+    void testProfilePictureResponseParsing() {
+        // Success response
+        BinaryNode successResp = new BinaryNode("iq", Map.of("type", "result", "id", "iq1"), List.of(
+            new BinaryNode("picture", Map.of(
+                "id", "rev99",
+                "url", "https://pps.whatsapp.net/v/t61/example.jpg",
+                "type", "preview",
+                "direct_path", "/v/t61/example.jpg"
+            ), null)
+        ));
+        ProfilePictureInfo info = JaWaClient.parseProfilePictureResponse(successResp);
+        assertThat(info).isNotNull();
+        assertThat(info.id()).isEqualTo("rev99");
+        assertThat(info.url()).isEqualTo("https://pps.whatsapp.net/v/t61/example.jpg");
+        assertThat(info.type()).isEqualTo("preview");
+        assertThat(info.directPath()).isEqualTo("/v/t61/example.jpg");
+
+        // Error response (e.g. 404 item-not-found or 401 not-authorized)
+        BinaryNode err404 = new BinaryNode("iq", Map.of("type", "error", "id", "iq2"), List.of(
+            new BinaryNode("error", Map.of("code", "404", "text", "item-not-found"), null)
+        ));
+        assertThat(JaWaClient.parseProfilePictureResponse(err404)).isNull();
+
+        BinaryNode err401 = new BinaryNode("iq", Map.of("type", "error", "id", "iq3"), List.of(
+            new BinaryNode("error", Map.of("code", "401", "text", "not-authorized"), null)
+        ));
+        assertThat(JaWaClient.parseProfilePictureResponse(err401)).isNull();
+
+        // Status 204 (no picture set)
+        BinaryNode noPic204 = new BinaryNode("iq", Map.of("type", "result", "id", "iq4"), List.of(
+            new BinaryNode("picture", Map.of("status", "204"), null)
+        ));
+        assertThat(JaWaClient.parseProfilePictureResponse(noPic204)).isNull();
+
+        // Empty result stanza without picture child
+        BinaryNode emptyResult = new BinaryNode("iq", Map.of("type", "result", "id", "iq5"), List.of());
+        assertThat(JaWaClient.parseProfilePictureResponse(emptyResult)).isNull();
     }
 
     @Test

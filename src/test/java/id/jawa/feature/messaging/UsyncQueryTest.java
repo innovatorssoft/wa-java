@@ -90,7 +90,7 @@ class UsyncQueryTest {
     @Test
     void contactQueryHasExpectedShape() {
         BinaryNode iq = UsyncQuery.buildContactQuery("iq2", "sid2",
-            List.of("628111", "628222@s.whatsapp.net"));
+            List.of("628111", "628222@s.whatsapp.net", "12345@lid"));
 
         assertThat(iq.tag()).isEqualTo("iq");
         BinaryNode usync = iq.child("usync");
@@ -99,11 +99,25 @@ class UsyncQueryTest {
 
         BinaryNode query = usync.child("query");
         assertThat(query.child("contact")).isNotNull();
+        assertThat(query.child("lid")).isNotNull();
 
         BinaryNode list = usync.child("list");
-        assertThat(list.children("user")).hasSize(2);
-        assertThat(list.children("user").get(0).attr("jid")).isEqualTo("628111@s.whatsapp.net");
-        assertThat(list.children("user").get(1).attr("jid")).isEqualTo("628222@s.whatsapp.net");
+        assertThat(list.children("user")).hasSize(3);
+
+        // Phone numbers must be serialized as <user><contact>+number</contact></user> without jid attribute
+        BinaryNode u1 = list.children("user").get(0);
+        assertThat(u1.attr("jid")).isNull();
+        assertThat(u1.child("contact")).isNotNull();
+        assertThat(u1.child("contact").textContent()).isEqualTo("+628111");
+
+        BinaryNode u2 = list.children("user").get(1);
+        assertThat(u2.attr("jid")).isNull();
+        assertThat(u2.child("contact")).isNotNull();
+        assertThat(u2.child("contact").textContent()).isEqualTo("+628222");
+
+        // LID targets must be serialized as <user jid="..."><contact/></user>
+        BinaryNode u3 = list.children("user").get(2);
+        assertThat(u3.attr("jid")).isEqualTo("12345@lid");
     }
 
     @Test
@@ -111,20 +125,39 @@ class UsyncQueryTest {
         BinaryNode result = new BinaryNode("iq", Map.of("type", "result", "id", "x"), List.of(
             new BinaryNode("usync", Map.of("sid", "x", "mode", "query"), List.of(
                 new BinaryNode("list", Map.of(), List.of(
+                    // Registered user with jid attribute and type="in"
                     new BinaryNode("user", Map.of("jid", "628111@s.whatsapp.net"), List.of(
-                        new BinaryNode("contact", Map.of("type", "in"), null)
+                        BinaryNode.text("contact", Map.of("type", "in"), "+628111")
                     )),
-                    new BinaryNode("user", Map.of("jid", "628222@s.whatsapp.net"), List.of(
-                        new BinaryNode("contact", Map.of("type", "out"), null)
+                    // Unregistered user with NO jid attribute and type="out"
+                    new BinaryNode("user", Map.of(), List.of(
+                        BinaryNode.text("contact", Map.of("type", "out"), "+628222")
+                    )),
+                    // Registered user with LID and pn_jid
+                    new BinaryNode("user", Map.of("jid", "999999@lid", "pn_jid", "628333@s.whatsapp.net"), List.of(
+                        BinaryNode.text("contact", Map.of("type", "in"), "+628333")
                     ))
                 ))
             ))
         ));
 
         Map<String, ContactStatus> parsed = UsyncQuery.parseContactResult(result);
-        assertThat(parsed).containsKeys("628111@s.whatsapp.net", "628222@s.whatsapp.net");
+
+        // Check registered user 628111
+        assertThat(parsed).containsKeys("628111@s.whatsapp.net", "628111", "+628111");
         assertThat(parsed.get("628111@s.whatsapp.net").isOnWhatsApp()).isTrue();
+        assertThat(parsed.get("628111").isOnWhatsApp()).isTrue();
+
+        // Check unregistered user 628222 (verifying it is not dropped when jid attr is missing)
+        assertThat(parsed).containsKeys("628222@s.whatsapp.net", "628222", "+628222");
         assertThat(parsed.get("628222@s.whatsapp.net").isOnWhatsApp()).isFalse();
+        assertThat(parsed.get("628222").isOnWhatsApp()).isFalse();
+        assertThat(parsed.get("+628222").isOnWhatsApp()).isFalse();
+
+        // Check registered user with LID and pn_jid
+        assertThat(parsed).containsKeys("628333@s.whatsapp.net", "628333", "999999@lid");
+        assertThat(parsed.get("628333@s.whatsapp.net").isOnWhatsApp()).isTrue();
+        assertThat(parsed.get("999999@lid").isOnWhatsApp()).isTrue();
     }
 
     @Test

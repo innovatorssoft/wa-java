@@ -1140,14 +1140,7 @@ public final class JaWaClient implements AutoCloseable {
     }
 
     public CompletableFuture<String> fetchProfilePictureUrl(String targetJid) {
-        String iqId = newIqId();
-        BinaryNode iq = new BinaryNode("iq",
-            Map.of("to", targetJid, "type", "get", "xmlns", "w:profile:picture", "id", iqId),
-            List.of(new BinaryNode("picture", Map.of("type", "preview"), null)));
-        return sendIqAsync(iq).thenApply(resp -> {
-            var picNode = resp.child("picture");
-            return picNode != null ? picNode.attr("url") : null;
-        });
+        return getProfilePictureInfo(targetJid, true).thenApply(info -> info != null ? info.url() : null);
     }
 
     public CompletableFuture<BinaryNode> updateGroupPicture(
@@ -1160,7 +1153,13 @@ public final class JaWaClient implements AutoCloseable {
             Map.of("type", "image"),
             imageBytes);
         BinaryNode iq = new BinaryNode("iq",
-            Map.of("to", groupJid, "type", "set", "xmlns", "w:profile:picture", "id", iqId),
+            Map.of(
+                "to", Jid.SERVER_WHATSAPP,
+                "target", groupJid,
+                "type", "set",
+                "xmlns", "w:profile:picture",
+                "id", iqId
+            ),
             List.of(picNode));
         return sendIqAsync(iq);
     }
@@ -1171,21 +1170,50 @@ public final class JaWaClient implements AutoCloseable {
             Map.of("type", "delete"),
             null);
         BinaryNode iq = new BinaryNode("iq",
-            Map.of("to", groupJid, "type", "set", "xmlns", "w:profile:picture", "id", iqId),
+            Map.of(
+                "to", Jid.SERVER_WHATSAPP,
+                "target", groupJid,
+                "type", "set",
+                "xmlns", "w:profile:picture",
+                "id", iqId
+            ),
             List.of(picNode));
         return sendIqAsync(iq);
     }
 
     public CompletableFuture<BinaryNode> updateProfilePicture(byte[] imageBytes) {
-        Jid myJid = Jid.parse(creds.meJid);
-        String ownBareJid = myJid != null ? myJid.user() + "@s.whatsapp.net" : creds.meJid;
-        return updateGroupPicture(ownBareJid, imageBytes);
+        if (imageBytes == null || imageBytes.length == 0) {
+            return removeProfilePicture();
+        }
+        String iqId = newIqId();
+        BinaryNode picNode = new BinaryNode("picture",
+            Map.of("type", "image"),
+            imageBytes);
+        BinaryNode iq = new BinaryNode("iq",
+            Map.of(
+                "to", Jid.SERVER_WHATSAPP,
+                "type", "set",
+                "xmlns", "w:profile:picture",
+                "id", iqId
+            ),
+            List.of(picNode));
+        return sendIqAsync(iq);
     }
 
     public CompletableFuture<BinaryNode> removeProfilePicture() {
-        Jid myJid = Jid.parse(creds.meJid);
-        String ownBareJid = myJid != null ? myJid.user() + "@s.whatsapp.net" : creds.meJid;
-        return removeGroupPicture(ownBareJid);
+        String iqId = newIqId();
+        BinaryNode picNode = new BinaryNode("picture",
+            Map.of("type", "delete"),
+            null);
+        BinaryNode iq = new BinaryNode("iq",
+            Map.of(
+                "to", Jid.SERVER_WHATSAPP,
+                "type", "set",
+                "xmlns", "w:profile:picture",
+                "id", iqId
+            ),
+            List.of(picNode));
+        return sendIqAsync(iq);
     }
 
     public CompletableFuture<BinaryNode> updateBlockStatus(String targetJid, boolean block) {
@@ -2870,21 +2898,76 @@ public final class JaWaClient implements AutoCloseable {
         LOG.debug("Sent presence subscribe to={}", jid);
     }
 
-    public CompletableFuture<ProfilePictureInfo> getProfilePictureInfo(String targetJid, boolean preview) {
-        String iqId = newIqId();
+    public static BinaryNode buildProfilePictureQuery(String iqId, String targetJid, boolean preview) {
+        String normalizedJid = targetJid;
+        if (normalizedJid == null || normalizedJid.isBlank()) {
+            throw new IllegalArgumentException("targetJid cannot be empty");
+        }
+        if (normalizedJid.contains("@")) {
+            String bare = Jid.bare(normalizedJid);
+            if (bare != null) normalizedJid = bare;
+        } else {
+            String digits = normalizedJid.replaceAll("[^0-9]", "");
+            if (!digits.isEmpty()) {
+                normalizedJid = digits + "@" + Jid.SERVER_WHATSAPP;
+            } else {
+                throw new IllegalArgumentException("targetJid must contain digits or valid JID format");
+            }
+        }
+
         String type = preview ? "preview" : "image";
-        BinaryNode iq = new BinaryNode("iq",
-            Map.of("to", targetJid, "type", "get", "xmlns", "w:profile:picture", "id", iqId),
+        return new BinaryNode("iq",
+            Map.of(
+                "to", Jid.SERVER_WHATSAPP,
+                "target", normalizedJid,
+                "type", "get",
+                "xmlns", "w:profile:picture",
+                "id", iqId
+            ),
             List.of(new BinaryNode("picture", Map.of("type", type, "query", "url"), null)));
-        return sendIqAsync(iq).thenApply(resp -> {
-            BinaryNode pic = resp.child("picture");
-            if (pic == null) return null;
-            String id = pic.attr("id");
-            String url = pic.attr("url");
-            String picType = pic.attr("type");
-            String directPath = pic.attr("direct_path");
-            return new ProfilePictureInfo(id, url, picType, directPath);
-        });
+    }
+
+    public static ProfilePictureInfo parseProfilePictureResponse(BinaryNode resp) {
+        if (resp == null || "error".equals(resp.attr("type"))) {
+            return null;
+        }
+        BinaryNode pic = resp.child("picture");
+        if (pic == null) return null;
+        String status = pic.attr("status");
+        if ("204".equals(status) || "304".equals(status)) {
+            return null;
+        }
+        String id = pic.attr("id");
+        String url = pic.attr("url");
+        String picType = pic.attr("type");
+        String directPath = pic.attr("direct_path");
+        if (url == null || url.isBlank()) {
+            return null;
+        }
+        return new ProfilePictureInfo(id, url, picType, directPath);
+    }
+
+    public CompletableFuture<ProfilePictureInfo> getProfilePictureInfo(String targetJid, boolean preview) {
+        String resolvedJid = targetJid;
+        if (resolvedJid == null || resolvedJid.isBlank()) {
+            if (creds != null && creds.meJid != null) {
+                resolvedJid = creds.meJid;
+            } else {
+                return CompletableFuture.completedFuture(null);
+            }
+        }
+        try {
+            String iqId = newIqId();
+            BinaryNode iq = buildProfilePictureQuery(iqId, resolvedJid, preview);
+            return sendIqAsync(iq)
+                .thenApply(JaWaClient::parseProfilePictureResponse)
+                .exceptionally(ex -> {
+                    LOG.warn("Failed to get profile picture info for {}: {}", targetJid, ex.getMessage());
+                    return null;
+                });
+        } catch (IllegalArgumentException e) {
+            return CompletableFuture.completedFuture(null);
+        }
     }
 
     public CompletableFuture<ProfilePictureInfo> getProfilePictureInfo(String targetJid) {

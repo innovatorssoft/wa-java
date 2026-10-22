@@ -103,8 +103,19 @@ public final class UsyncQuery {
     public static BinaryNode buildContactQuery(String iqId, String sid, Collection<String> phones) {
         List<BinaryNode> userNodes = new ArrayList<>(phones.size());
         for (String phone : phones) {
-            String jid = phone.contains("@") ? phone : phone + "@" + Jid.SERVER_WHATSAPP;
-            userNodes.add(new BinaryNode("user", Map.of("jid", jid), null));
+            if (phone == null || phone.isBlank()) continue;
+            String trimmed = phone.trim();
+            if (trimmed.endsWith("@" + Jid.SERVER_LID) || trimmed.endsWith("@lid")) {
+                userNodes.add(new BinaryNode("user", Map.of("jid", trimmed), List.of(
+                    new BinaryNode("contact", Map.of(), null)
+                )));
+            } else {
+                String digitsOnly = trimmed.replaceAll("[^0-9]", "");
+                if (digitsOnly.isEmpty()) continue;
+                String formattedPhone = "+" + digitsOnly;
+                BinaryNode contactChild = BinaryNode.text("contact", Map.of(), formattedPhone);
+                userNodes.add(new BinaryNode("user", Map.of(), List.of(contactChild)));
+            }
         }
 
         BinaryNode usync = new BinaryNode("usync",
@@ -117,7 +128,8 @@ public final class UsyncQuery {
             ),
             List.of(
                 new BinaryNode("query", Map.of(), List.of(
-                    new BinaryNode("contact", Map.of(), null)
+                    new BinaryNode("contact", Map.of(), null),
+                    new BinaryNode("lid", Map.of(), null)
                 )),
                 new BinaryNode("list", Map.of(), userNodes)
             ));
@@ -143,11 +155,80 @@ public final class UsyncQuery {
 
         Map<String, ContactStatus> out = new LinkedHashMap<>();
         for (BinaryNode user : list.children("user")) {
-            String jid = user.attr("jid");
-            if (jid == null) continue;
             BinaryNode contactNode = user.child("contact");
-            boolean isIn = contactNode != null && "in".equals(contactNode.attr("type"));
-            out.put(jid, new ContactStatus(jid, isIn));
+            if (contactNode == null) continue;
+
+            String type = contactNode.attr("type");
+            boolean isIn = "in".equals(type);
+
+            String userJid = user.attr("jid");
+            String pnJid = user.attr("pn_jid");
+            String contactPhone = contactNode.textContent();
+
+            // Record LID to PN mapping if available
+            BinaryNode lidNode = user.child("lid");
+            String lidVal = lidNode != null ? lidNode.attr("val") : null;
+            if (userJid != null && userJid.endsWith("@lid") && pnJid != null && pnJid.endsWith("@s.whatsapp.net")) {
+                JaWaClient.LID_TO_PN_MAP.put(userJid, pnJid);
+            } else if (lidVal != null && lidVal.endsWith("@lid") && userJid != null && userJid.endsWith("@s.whatsapp.net")) {
+                JaWaClient.LID_TO_PN_MAP.put(lidVal, userJid);
+            }
+
+            // Determine canonical JID
+            String canonicalJid = null;
+            if (pnJid != null && !pnJid.isBlank()) {
+                canonicalJid = pnJid;
+            } else if (userJid != null && userJid.endsWith("@" + Jid.SERVER_WHATSAPP)) {
+                canonicalJid = userJid;
+            } else if (contactPhone != null && !contactPhone.isBlank()) {
+                String digits = contactPhone.replaceAll("[^0-9]", "");
+                if (!digits.isEmpty()) {
+                    canonicalJid = digits + "@" + Jid.SERVER_WHATSAPP;
+                }
+            } else if (userJid != null && !userJid.isBlank()) {
+                canonicalJid = userJid;
+            }
+
+            if (canonicalJid == null) {
+                continue;
+            }
+
+            ContactStatus status = new ContactStatus(canonicalJid, isIn);
+
+            // 1. Primary canonical JID
+            out.put(canonicalJid, status);
+
+            // 2. Pure digits from canonical JID
+            String digits = canonicalJid.contains("@")
+                ? canonicalJid.substring(0, canonicalJid.indexOf('@')).replaceAll("[^0-9]", "")
+                : canonicalJid.replaceAll("[^0-9]", "");
+            if (!digits.isEmpty()) {
+                out.put(digits, status);
+                out.put("+" + digits, status);
+                out.put(digits + "@" + Jid.SERVER_WHATSAPP, status);
+            }
+
+            // 3. User JID if different
+            if (userJid != null && !userJid.isBlank()) {
+                out.put(userJid, status);
+            }
+
+            // 4. PN JID if different
+            if (pnJid != null && !pnJid.isBlank()) {
+                out.put(pnJid, status);
+            }
+
+            // 5. Contact phone text if different
+            if (contactPhone != null && !contactPhone.isBlank()) {
+                String trimmedPhone = contactPhone.trim();
+                out.put(trimmedPhone, status);
+                String phoneDigits = trimmedPhone.replaceAll("[^0-9]", "");
+                if (!phoneDigits.isEmpty()) {
+                    out.put(phoneDigits, status);
+                    out.put("+" + phoneDigits, status);
+                    out.put(phoneDigits + "@" + Jid.SERVER_WHATSAPP, status);
+                }
+            }
         }
         return out;
     }
