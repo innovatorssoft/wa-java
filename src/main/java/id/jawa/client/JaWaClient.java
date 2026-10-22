@@ -81,6 +81,8 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -268,6 +270,7 @@ public final class JaWaClient implements AutoCloseable {
     private final AtomicInteger reconnectAttempts =
         new AtomicInteger(0);
     private boolean autoReconnect = true;
+    private boolean syncVersion = true;
     private boolean autoReadReceipt = false;
     private boolean autoComposingPresence = false;
     private boolean autoPreKeyUpload = true;
@@ -371,6 +374,37 @@ public final class JaWaClient implements AutoCloseable {
     public JaWaClient autoPreKeyUpload(boolean enabled) {
         this.autoPreKeyUpload = enabled;
         return this;
+    }
+
+    /**
+     * Enables or disables automatic synchronization with the latest WhatsApp Web client revision.
+     * When enabled and connecting to the official WhatsApp endpoint, JaWa checks for the active
+     * web revision dynamically before establishing the WebSocket connection.
+     *
+     * @param enabled True to automatically synchronize version before connecting
+     * @return This client instance for method chaining
+     */
+    public JaWaClient syncVersion(boolean enabled) {
+        this.syncVersion = enabled;
+        return this;
+    }
+
+    /**
+     * Checks if automatic version synchronization is enabled.
+     *
+     * @return True if sync-version is active
+     */
+    public boolean syncVersion() {
+        return syncVersion;
+    }
+
+    /**
+     * Fetches the latest WhatsApp Web client revision dynamically from the live service worker.
+     *
+     * @return Version triplet [primary, secondary, tertiary]
+     */
+    public static int[] fetchLatestVersion() {
+        return WaConstants.fetchLatestVersion();
     }
 
     /**
@@ -618,15 +652,23 @@ public final class JaWaClient implements AutoCloseable {
     public synchronized void connect() throws Exception {
         if (frame != null) throw new IllegalStateException("already connected");
 
+        if (syncVersion && WaConstants.WS_URL.equals(wsUrl)) {
+            try {
+                WaConstants.fetchLatestVersion(Duration.ofSeconds(3));
+            } catch (Exception t) {
+                LOG.debug("Could not fetch latest WA version dynamically, using fallback", t);
+            }
+        }
+
         creds = store.load();
         boolean isPairing = (creds == null || creds.account == null);
         if (creds == null) {
             creds = AuthCreds.generate();
-            LOG.info("No creds found — generated fresh pair: regId={}", creds.registrationId);
+            LOG.info("No creds found: generated fresh pair: regId={}", creds.registrationId);
         } else if (isPairing) {
-            LOG.info("Found unpaired creds (regId={}) — resuming QR pairing", creds.registrationId);
+            LOG.info("Found unpaired creds (regId={}): resuming QR pairing", creds.registrationId);
         } else {
-            LOG.info("Found paired creds — login mode (jid={})", creds.meJid);
+            LOG.info("Found paired creds: login mode (jid={})", creds.meJid);
         }
 
         frame = new FrameSocket(null, wsUrl);
@@ -705,7 +747,7 @@ public final class JaWaClient implements AutoCloseable {
             }
             LOG.info("Re-mirrored {} persisted pre-key(s) into protocolStore", preKeyStorage.size());
         }
-        LOG.info("Noise handshake complete — steady state {}", isPairing ? "(pairing)" : "(login)");
+        LOG.info("Noise handshake complete: steady state {}", isPairing ? "(pairing)" : "(login)");
 
         readerThread = Thread.ofVirtual().name("jawa-reader").start(this::readLoop);
         startKeepalive();
@@ -765,7 +807,7 @@ public final class JaWaClient implements AutoCloseable {
                     if (handleStanza(node, pair)) continue;
                     listener.onStanza(node);
                 } catch (Throwable per) {
-                    LOG.warn("Error handling stanza {} — continuing", node.tag(), per);
+                    LOG.warn("Error handling stanza {}: continuing", node.tag(), per);
                 }
             }
         } catch (Throwable t) {
@@ -807,7 +849,7 @@ public final class JaWaClient implements AutoCloseable {
             requestAppStateSync(PatchName name, long fromVersion) {
         if (appStateProcessor == null) {
             return CompletableFuture.failedFuture(
-                new IllegalStateException("signalDir not set — app-state sync requires persistent storage"));
+                new IllegalStateException("signalDir not set: app-state sync requires persistent storage"));
         }
         String iqId = newIqId();
         BinaryNode iq = fromVersion < 0
@@ -871,7 +913,7 @@ public final class JaWaClient implements AutoCloseable {
         BinaryNode conflict = node.child("conflict");
         if (conflict != null) {
             String type = conflict.attr("type", "");
-            LOG.warn("Stream error: conflict type={} — another session for this device is active", type);
+            LOG.warn("Stream error: conflict type={}: another session for this device is active", type);
 
             terminated.set(true);
             try { listener.onTerminated(TerminationReason.REPLACED, "conflict type=" + type, true); }
@@ -972,7 +1014,7 @@ public final class JaWaClient implements AutoCloseable {
 
     public CompletableFuture<String> requestPairingCode(String phoneNumber, String customCode) {
         if (creds.account != null) {
-            throw new IllegalStateException("already paired (creds.account is set) — cannot request a pairing code");
+            throw new IllegalStateException("already paired (creds.account is set): cannot request a pairing code");
         }
         pairCodeHandler = new PairingCodeHandler(creds);
         String iqId = newIqId();
@@ -2033,7 +2075,7 @@ public final class JaWaClient implements AutoCloseable {
     public CompletableFuture<MediaConn> refreshMediaConn() {
         synchronized (mediaConnLock) {
             MediaConn cached = mediaConnCache;
-            if (cached != null && !cached.isExpired(java.time.Instant.now())) {
+            if (cached != null && !cached.isExpired(Instant.now())) {
                 return CompletableFuture.completedFuture(cached);
             }
         }
@@ -2392,7 +2434,7 @@ public final class JaWaClient implements AutoCloseable {
             String code = node.attr("code");
             if ("515".equals(code)) {
 
-                LOG.info("Server requested restart (code=515) — expected after pairing; reconnect to enter steady state");
+                LOG.info("Server requested restart (code=515): expected after pairing; reconnect to enter steady state");
             } else {
                 handleStreamError(node);
             }
@@ -2416,7 +2458,7 @@ public final class JaWaClient implements AutoCloseable {
         }
         if ("success".equals(node.tag())) {
             connectedAtEpochSec = System.currentTimeMillis() / 1000L;
-            LOG.info("Login successful — meJid={} lid={} platform={}",
+            LOG.info("Login successful: meJid={} lid={} platform={}",
                 node.attr("jid", creds.meJid),
                 node.attr("lid", creds.meLid),
                 node.attr("platform", creds.platform));

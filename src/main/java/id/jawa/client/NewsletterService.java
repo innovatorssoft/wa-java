@@ -68,7 +68,6 @@ public final class NewsletterService {
      * Subscribes to real-time live stanza updates for a newsletter channel.
      *
      * @param newsletterJid Newsletter channel JID
-     * @param durationSeconds Subscription duration in seconds
      * @return CompletableFuture resolving to expiration timestamp
      */
     public CompletableFuture<Long> subscribeLiveUpdates(String newsletterJid) {
