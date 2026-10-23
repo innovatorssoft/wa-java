@@ -43,7 +43,7 @@ class PairingCodeHandlerTest {
         assertThat(reg.child("companion_server_auth_key_pub").bytesContent())
             .containsExactly(creds.noiseKey.publicKey());
         assertThat(reg.child("companion_platform_id").textContent()).isEqualTo("1");
-        assertThat(reg.child("companion_platform_display").textContent()).isEqualTo("Chrome (Linux)");
+        assertThat(reg.child("companion_platform_display").textContent()).isEqualTo("Chrome (JaWa)");
         assertThat(reg.child("link_code_pairing_nonce").textContent()).isEqualTo("0");
 
         assertThat(h.pairingCode()).hasSize(8);

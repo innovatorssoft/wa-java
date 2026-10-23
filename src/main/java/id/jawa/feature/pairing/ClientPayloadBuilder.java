@@ -14,7 +14,7 @@ import java.security.NoSuchAlgorithmException;
 
 public final class ClientPayloadBuilder {
 
-    public static final String[] DEFAULT_BROWSER = { "Linux", "Chrome", "128.0.0.0" };
+    public static final String[] DEFAULT_BROWSER = { "JaWa", "Chrome", "128.0.0.0" };
     public static final String DEFAULT_COUNTRY_CODE = "ID";
     public static final String DEFAULT_LANGUAGE_CODE = "id";
 
