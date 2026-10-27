@@ -1,7 +1,9 @@
 package id.jawa.client;
 
+import id.jawa.event.ConnectionUpdate;
 import id.jawa.feature.messaging.MessageEncoder;
 import id.jawa.feature.messaging.MessageReceiver;
+import id.jawa.feature.messaging.UsyncQuery;
 import id.jawa.proto.Wa;
 import id.jawa.protocol.codec.BinaryNode;
 
@@ -124,6 +126,110 @@ public final class MessagingService {
      */
     public CompletableFuture<String> sendPoll(String chatJid, String title, List<String> options, int selectableCount) {
         return client.sendPoll(chatJid, title, options, selectableCount);
+    }
+
+    /**
+     * Sends a quiz poll (Increment 2, Baileys fork V5 quiz). Baileys' send
+     * path allows quizzes only in newsletters; observe that restriction
+     * when choosing the destination.
+     *
+     * @param chatJid Target recipient conversation JID
+     * @param title Quiz question
+     * @param options Answer choices, at least two
+     * @param correctOptionIndex Index of the correct option
+     * @return CompletableFuture resolving to sent message ID
+     */
+    public CompletableFuture<String> sendQuiz(String chatJid, String title, List<String> options, int correctOptionIndex) {
+        return client.sendMessage(chatJid, MessageEncoder.quizMessage(title, options, correctOptionIndex));
+    }
+
+    /**
+     * Sends an album (Increment 2): an album declaration followed by its
+     * member media messages, associated to the declaration's key.
+     *
+     * @param chatJid Target recipient conversation JID
+     * @param mediaMembers Album member image/video messages, at least two
+     * @return CompletableFuture resolving to sent message ids, album first
+     */
+    public CompletableFuture<List<String>> sendAlbum(String chatJid, List<Wa.Message> mediaMembers) {
+        return client.sendAlbum(chatJid, mediaMembers);
+    }
+
+    /**
+     * Sends a text message mentioning every supplied participant
+     * (Increment 2, Baileys {@code mentionAll}).
+     *
+     * @param chatJid Target recipient conversation JID
+     * @param text Text body
+     * @param participantJids Every participant JID to mention
+     * @return CompletableFuture resolving to sent message ID
+     */
+    public CompletableFuture<String> sendMentionAll(String chatJid, String text, List<String> participantJids) {
+        return client.sendMessage(chatJid, MessageEncoder.mentionAllMessage(text, participantJids));
+    }
+
+    /**
+     * Sends a text message with group mentions (Increment 2).
+     *
+     * @param chatJid Target recipient conversation JID
+     * @param text Text body
+     * @param groups Group mentions to attach
+     * @return CompletableFuture resolving to sent message ID
+     */
+    public CompletableFuture<String> sendGroupMentions(String chatJid, String text, List<MessageEncoder.GroupMentionInput> groups) {
+        return client.sendMessage(chatJid, MessageEncoder.textWithGroupMentions(text, groups));
+    }
+
+    /**
+     * Sends a multi-contact message (Increment 2).
+     *
+     * @param chatJid Target recipient conversation JID
+     * @param displayName Array display name
+     * @param contacts Contact entries, at least one
+     * @return CompletableFuture resolving to sent message ID
+     */
+    public CompletableFuture<String> sendContactsArray(String chatJid, String displayName, List<MessageEncoder.ContactInput> contacts) {
+        return client.sendMessage(chatJid, MessageEncoder.contactsArrayMessage(displayName, contacts));
+    }
+
+    /**
+     * Sends an AI rich-response code message (Increment 2). See
+     * {@link MessageEncoder#richCodeMessage} for the Baileys bot-forward
+     * wrapper difference.
+     *
+     * @param chatJid Target recipient conversation JID
+     * @param language Code language
+     * @param codeBlocks Code block contents, at least one
+     * @return CompletableFuture resolving to sent message ID
+     */
+    public CompletableFuture<String> sendRichCode(String chatJid, String language, List<String> codeBlocks) {
+        return client.sendMessage(chatJid, MessageEncoder.richCodeMessage(language, codeBlocks));
+    }
+
+    /**
+     * Sends an AI rich-response table message (Increment 2).
+     *
+     * @param chatJid Target recipient conversation JID
+     * @param title Table title
+     * @param rows Table rows, at least one
+     * @return CompletableFuture resolving to sent message ID
+     */
+    public CompletableFuture<String> sendRichTable(String chatJid, String title, List<MessageEncoder.TableRowInput> rows) {
+        return client.sendMessage(chatJid, MessageEncoder.richTableMessage(title, rows));
+    }
+
+    /**
+     * Sends a poll-result snapshot (Increment 2, Baileys fork
+     * {@code pollResult}).
+     *
+     * @param chatJid Target recipient conversation JID
+     * @param name Poll question
+     * @param votes Per-option vote counts
+     * @param isQuiz True for a quiz result
+     * @return CompletableFuture resolving to sent message ID
+     */
+    public CompletableFuture<String> sendPollResult(String chatJid, String name, List<MessageEncoder.PollVoteInput> votes, boolean isQuiz) {
+        return client.sendMessage(chatJid, MessageEncoder.pollResultSnapshotMessage(name, votes, isQuiz));
     }
 
     /**
@@ -319,6 +425,36 @@ public final class MessagingService {
     }
 
     /**
+     * Increment 4: sends a status message mentioning an array of JIDs
+     * (Baileys {@code sendMessage} array-JID branch): the content is
+     * relayed to {@code status@broadcast} with the expanded participant
+     * list and a {@code mentioned_users} node, then one mention message
+     * per original target, with the default 1500ms delay between
+     * targets. See {@link JaWaClient#sendStatusMention(List, Wa.Message)}.
+     *
+     * @param targets original array-JID input (users and/or groups)
+     * @param content status content message
+     * @return CompletableFuture resolving to the status message ID
+     */
+    public CompletableFuture<String> sendStatusMention(List<String> targets, Wa.Message content) {
+        return client.sendStatusMention(targets, content);
+    }
+
+    /**
+     * Increment 4: {@link #sendStatusMention(List, Wa.Message)} with an
+     * injectable inter-target delay (pass 0 in tests to skip sleeping).
+     *
+     * @param targets original array-JID input (users and/or groups)
+     * @param content status content message
+     * @param delayMs delay between per-target mention relays, in milliseconds
+     * @return CompletableFuture resolving to the status message ID
+     */
+    public CompletableFuture<String> sendStatusMention(List<String> targets, Wa.Message content,
+            long delayMs) {
+        return client.sendStatusMention(targets, content, delayMs);
+    }
+
+    /**
      * Transmits a read receipt (blue double ticks) for a message.
      *
      * @param chatJid Conversation JID
@@ -461,6 +597,123 @@ public final class MessagingService {
      */
     public CompletableFuture<Void> sendMediaRetryReceipt(MessageReceiver.Decoded target, byte[] mediaKey) {
         return client.sendMediaRetryReceipt(target, mediaKey);
+    }
+
+    /**
+     * Increment 9: Baileys {@code updateMediaMessage} facade — asks
+     * the phone to re-upload a message's media and returns the
+     * re-uploaded location. See
+     * {@link JaWaClient#updateMediaMessage(String, String, boolean, String, Wa.Message, long)}
+     * for the full contract and divergences (caller-supplied media
+     * key, immutable-message return shape, null on timeout, and the
+     * unchanged disconnected no-op send).
+     *
+     * @param messageId message key id
+     * @param remoteJid message key remote JID (chat JID)
+     * @param fromMe message key fromMe
+     * @param participant group participant, or null for DMs
+     * @param message message whose media key is used
+     * @param timeoutMs non-negative media-update wait budget in milliseconds
+     * @return future of the phone's {@code MediaRetryNotification}, or null on timeout
+     */
+    public CompletableFuture<Wa.MediaRetryNotification> updateMediaMessage(
+            String messageId, String remoteJid, boolean fromMe, String participant,
+            Wa.Message message, long timeoutMs) {
+        return client.updateMediaMessage(messageId, remoteJid, fromMe, participant, message, timeoutMs);
+    }
+
+    /**
+     * Increment 9: {@link #updateMediaMessage(String, String, boolean, String, Wa.Message, long)}
+     * with the media key supplied directly.
+     *
+     * @param messageId message key id
+     * @param remoteJid message key remote JID (chat JID)
+     * @param fromMe message key fromMe
+     * @param participant group participant, or null for DMs
+     * @param mediaKey 32-byte media key
+     * @param timeoutMs non-negative media-update wait budget in milliseconds
+     * @return future of the phone's {@code MediaRetryNotification}, or null on timeout
+     */
+    public CompletableFuture<Wa.MediaRetryNotification> updateMediaMessage(
+            String messageId, String remoteJid, boolean fromMe, String participant,
+            byte[] mediaKey, long timeoutMs) {
+        return client.updateMediaMessage(messageId, remoteJid, fromMe, participant, mediaKey, timeoutMs);
+    }
+
+    /**
+     * Increment 9: {@link #updateMediaMessage(String, String, boolean, String, Wa.Message, long)}
+     * with the default wait budget.
+     */
+    public CompletableFuture<Wa.MediaRetryNotification> updateMediaMessage(
+            String messageId, String remoteJid, boolean fromMe, String participant,
+            Wa.Message message) {
+        return client.updateMediaMessage(messageId, remoteJid, fromMe, participant, message);
+    }
+
+    /**
+     * Increment 6: Baileys {@code sendPeerDataOperationMessage} — relays
+     * a caller-built PDO request to the account's own JID. See
+     * {@link JaWaClient#sendPeerDataOperationMessage} for the exact
+     * stanza shape and the peer-framing divergence.
+     *
+     * @param pdo caller-built PDO request
+     * @return CompletableFuture resolving to the sent message ID
+     */
+    public CompletableFuture<String> sendPeerDataOperationMessage(
+            Wa.Message.PeerDataOperationRequestMessage pdo) {
+        return client.sendPeerDataOperationMessage(pdo);
+    }
+
+    /**
+     * Increment 6: Baileys {@code requestPlaceholderResend} — claims
+     * the message id, waits 2 seconds, and sends a
+     * {@code PLACEHOLDER_MESSAGE_RESEND} PDO request when the claim
+     * survives. See {@link JaWaClient#requestPlaceholderResend}.
+     *
+     * @param messageKey key of the placeholder message
+     * @param msgData original message data, or null to store {@code true}
+     * @return CompletableFuture resolving to null (already requested),
+     *         {@code "RESOLVED"}, or the sent PDO message id
+     */
+    public CompletableFuture<String> requestPlaceholderResend(Wa.MessageKey messageKey, Object msgData) {
+        return client.requestPlaceholderResend(messageKey, msgData);
+    }
+
+    /**
+     * Increment 6: Baileys {@code updateMemberLabel} — relays a
+     * {@code GROUP_MEMBER_LABEL_CHANGE} protocol message to the
+     * caller-supplied JID. See {@link JaWaClient#updateMemberLabel}.
+     *
+     * @param jid destination JID
+     * @param label member label, truncated to 30 characters
+     * @return CompletableFuture resolving to the sent message ID
+     */
+    public CompletableFuture<String> updateMemberLabel(String jid, String label) {
+        return client.updateMemberLabel(jid, label);
+    }
+
+    /**
+     * Increment 6: Baileys {@code fetchAccountReachoutTimelock} — MEX
+     * fetch plus a partial {@code connection.update} carrying only
+     * {@code reachoutTimeLock}. See
+     * {@link JaWaClient#fetchAccountReachoutTimelock}.
+     *
+     * @return CompletableFuture resolving to the parsed timelock value
+     */
+    public CompletableFuture<ConnectionUpdate.ReachoutTimeLock> fetchAccountReachoutTimelock() {
+        return client.fetchAccountReachoutTimelock();
+    }
+
+    /**
+     * Increment 6: Baileys {@code executeUSyncQuery}, public — executes
+     * a caller-supplied arbitrary USync query. See
+     * {@link JaWaClient#executeUSyncQuery}.
+     *
+     * @param query caller-supplied USync query
+     * @return CompletableFuture resolving to the parsed result
+     */
+    public CompletableFuture<UsyncQuery.GenericResult> executeUSyncQuery(UsyncQuery.GenericQuery query) {
+        return client.executeUSyncQuery(query);
     }
 
     /**

@@ -77,6 +77,21 @@ public final class AuthCreds {
     public String platform;
 
     /**
+     * Increment 5: this account's app-state-sync key id, standard-base64
+     * encoded (Baileys {@code creds.myAppStateKeyId}, set from the last
+     * key id in an {@code AppStateSyncKeyShare} — see Baileys
+     * {@code lib/Utils/process-message.js:361}, which emits
+     * {@code creds.update} with the new id, and
+     * {@code lib/Socket/chats.js:714} {@code appPatch}, which throws
+     * when it is absent). Nullable; null means no app-state key has
+     * been shared yet, and {@code JaWaClient.appPatch} fails instead
+     * of sending. Persisted by both {@code FileAuthStore} and
+     * {@code SqliteAuthStore} (key {@code myAppStateKeyId}); older
+     * stored creds without the key load it as null.
+     */
+    public String myAppStateKeyId;
+
+    /**
      * Default constructor initializing empty credentials.
      */
     public AuthCreds() {}

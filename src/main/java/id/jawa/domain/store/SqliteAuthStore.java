@@ -89,6 +89,14 @@ public final class SqliteAuthStore implements AuthStore, AutoCloseable {
                     key_data BLOB
                 );
             """);
+            stmt.executeUpdate("""
+                CREATE TABLE IF NOT EXISTS appstate_versions (
+                    name TEXT PRIMARY KEY,
+                    version INTEGER NOT NULL,
+                    hash BLOB NOT NULL,
+                    index_map TEXT NOT NULL
+                );
+            """);
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to initialize SQLite database tables: " + jdbcUrl, e);
         }
@@ -119,6 +127,7 @@ public final class SqliteAuthStore implements AuthStore, AutoCloseable {
         c.meLid    = kv.get("meLid");
         c.pushName = kv.get("pushName");
         c.platform = kv.get("platform");
+        c.myAppStateKeyId = kv.get("myAppStateKeyId");
         return c;
     }
 
@@ -143,6 +152,7 @@ public final class SqliteAuthStore implements AuthStore, AutoCloseable {
         if (c.meLid    != null) kv.put("meLid",    c.meLid);
         if (c.pushName != null) kv.put("pushName", c.pushName);
         if (c.platform != null) kv.put("platform", c.platform);
+        if (c.myAppStateKeyId != null) kv.put("myAppStateKeyId", c.myAppStateKeyId);
         writeKv(kv);
     }
 
@@ -313,6 +323,68 @@ public final class SqliteAuthStore implements AuthStore, AutoCloseable {
         }
     }
 
+    /**
+     * Increment 5: loads every stored app-state-sync version state
+     * (Baileys {@code 'app-state-sync-version'}), as
+     * {@code name -> LtHashState}. The {@code index_map} column holds
+     * one {@code <standard-base64 indexMac>:<standard-base64 valueMac>}
+     * line per live index, the same text form
+     * {@link id.jawa.feature.appstate.FileAppStateVersionStore} writes
+     * to its per-collection files, so the two backends stay
+     * interchangeable. Rows whose hash is not 128 bytes or whose map
+     * does not parse are skipped, never returned half-decoded.
+     */
+    public synchronized Map<String, id.jawa.feature.appstate.LtHashState> loadAppStateVersions() throws IOException {
+        Map<String, id.jawa.feature.appstate.LtHashState> out = new HashMap<>();
+        try (Connection conn = getConnection();
+             Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery("SELECT name, version, hash, index_map FROM appstate_versions")) {
+            while (rs.next()) {
+                String name = rs.getString("name");
+                byte[] hash = rs.getBytes("hash");
+                String mapText = rs.getString("index_map");
+                if (name == null || hash == null || hash.length != 128 || mapText == null) continue;
+                Map<String, byte[]> map = id.jawa.feature.appstate.FileAppStateVersionStore.parseIndexMap(mapText);
+                if (map == null) continue;
+                out.put(name, new id.jawa.feature.appstate.LtHashState(rs.getLong("version"), hash, map));
+            }
+        } catch (SQLException e) {
+            throw new IOException("Failed to read app-state versions from SQLite: " + jdbcUrl, e);
+        }
+        return out;
+    }
+
+    /** Increment 5: upserts one collection's app-state-sync version state. */
+    public synchronized void saveAppStateVersion(String name,
+                                                 id.jawa.feature.appstate.LtHashState state) {
+        if (name == null || state == null) throw new IllegalArgumentException("name and state must not be null");
+        try (Connection conn = getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(
+                 "INSERT INTO appstate_versions (name, version, hash, index_map) VALUES (?, ?, ?, ?) "
+                     + "ON CONFLICT(name) DO UPDATE SET version = excluded.version, hash = excluded.hash, "
+                     + "index_map = excluded.index_map")) {
+            pstmt.setString(1, name);
+            pstmt.setLong(2, state.version());
+            pstmt.setBytes(3, state.hash());
+            pstmt.setString(4, id.jawa.feature.appstate.FileAppStateVersionStore.formatIndexMap(
+                state.indexValueMap()));
+            pstmt.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to save app-state version for " + name + " to SQLite", e);
+        }
+    }
+
+    /** Increment 5: deletes one collection's stored app-state-sync version state. */
+    public synchronized void deleteAppStateVersion(String name) {
+        try (Connection conn = getConnection();
+             PreparedStatement pstmt = conn.prepareStatement("DELETE FROM appstate_versions WHERE name = ?")) {
+            pstmt.setString(1, name);
+            pstmt.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to delete app-state version for " + name + " from SQLite", e);
+        }
+    }
+
     private Map<String, String> readKv() throws IOException {
         Map<String, String> kv = new LinkedHashMap<>();
         try (Connection conn = getConnection();
@@ -379,6 +451,7 @@ public final class SqliteAuthStore implements AuthStore, AutoCloseable {
             stmt.executeUpdate("DELETE FROM prekeys");
             stmt.executeUpdate("DELETE FROM sender_keys");
             stmt.executeUpdate("DELETE FROM appstate_keys");
+            stmt.executeUpdate("DELETE FROM appstate_versions");
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to clear SQLite tables", e);
         }
@@ -386,7 +459,7 @@ public final class SqliteAuthStore implements AuthStore, AutoCloseable {
 
     public synchronized Map<String, Integer> getStats() {
         Map<String, Integer> stats = new LinkedHashMap<>();
-        String[] tables = {"credentials", "sessions", "prekeys", "sender_keys", "appstate_keys"};
+        String[] tables = {"credentials", "sessions", "prekeys", "sender_keys", "appstate_keys", "appstate_versions"};
         try (Connection conn = getConnection(); Statement stmt = conn.createStatement()) {
             for (String table : tables) {
                 try (ResultSet rs = stmt.executeQuery("SELECT COUNT(*) FROM " + table)) {

@@ -1320,3 +1320,264 @@ public class PrivacyReceiptsExample {
 ## 📄 License
 
 This project is licensed under the terms of the **GNU General Public License v3.0** (GPL-3.0-or-later). See [LICENSE](LICENSE) for details.
+
+---
+
+## Baileys event compatibility (Increment 1)
+
+The new `id.jawa.event` package ports the Baileys event model to Java, alongside the
+existing single `JaWaClient.Listener` (which is unchanged). Register listeners with
+`client.addEventListener(...)` / `client.removeEventListener(...)`, or use
+`client.eventBus()` directly:
+
+```java
+client.addEventListener(new WaEventListener() {
+    @Override
+    public void onPresenceUpdate(PresenceUpdate update) {
+        System.out.println(update.id() + " -> " + update.presences());
+    }
+});
+```
+
+- `BaileysEventType` — one constant per Baileys event (33 user-facing + the internal
+  `event`), each carrying its exact Baileys string name; `fromName(String)` returns
+  `null` for unknown names.
+- `WaEventListener` — one default (no-op) method per event, plus the generic
+  `onEvent(BaileysEventType, Object)` fallback. Implement only the methods you need.
+- `WaEventBus` — multi-listener registry (`addListener` / `removeListener` /
+  `listenerCount` / `dispatch`). Dispatch is synchronous on the caller's thread; a
+  throwing listener is logged and never prevents delivery to the next listener.
+  It uses `java.util.logging` and adds no dependency.
+- Payload records (e.g. `ConnectionUpdate`, `CredsUpdate`, `PresenceUpdate`,
+  `CallEvent`, `MessageUpsert`, `MessageReceiptUpdate`) carry the Baileys payload
+  shapes, with per-field Javadoc stating the Baileys source and units. Where wa-java
+  already has a model (`Receipt`, `MessageReceiver.Decoded`), the bus payload wraps
+  or reuses it instead of duplicating it.
+- `PresenceEventParser` and `CallEventParser` implement the Baileys
+  `handlePresenceUpdate` / `handleCall` + `getCallStatusFromNode` stanza rules,
+  including the offer cache that backfills `isVideo` / `isGroup` / `callerPn`
+  into later events for the same call id.
+
+**Dispatched by `JaWaClient` today (6 events):** `connection.update` (`qr`, `open`,
+`close` + termination detail, `isNewLogin` partial), `creds.update` (paired `me`
+only), `messages.upsert` (single-element list, type `"notify"`, at the same point as
+`Listener.onMessage`), `message-receipt.update` (at the same point as
+`Listener.onReceipt`), `presence.update` (new `presence` branch in `handleStanza`),
+and `call` (new `call` branch in `handleStanza`). Presence and call stanzas are
+not acked by the new branches, and they still fall through to the legacy
+`onStanza` callback. App-state patches are not emitted as messaging-history events.
+
+**Defined but not yet dispatched (27 events):** `messaging-history.set`,
+`messaging-history.status`, `chats.upsert`, `chats.update`, `chats.delete`,
+`chats.lock`, `lid-mapping.update`, `contacts.upsert`, `contacts.update`,
+`messages.update`, `messages.delete`, `messages.media-update`, `messages.reaction`,
+`groups.upsert`, `groups.update`, `group-participants.update`, `group.join-request`,
+`group.member-tag.update`, `blocklist.update`, `labels.edit`, `labels.association`,
+`newsletter.reaction`, `newsletter.view`, `newsletter-participants.update`,
+`newsletter-settings.update`, `settings.update`, and `message-capping.update`
+(the last carries only a raw JSON string — no field list is derivable from Baileys).
+Each has a payload record and a listener method, documented as not yet dispatched,
+so subscribing to them today yields no emissions. The internal `event` fan-out is
+deliberately not re-emitted by the bus (that would double-deliver); use `onEvent`
+for a single catch-all method.
+
+For the full per-event payload semantics, Before/After status, and remaining gaps,
+see `EVENT_COMPATIBILITY_MATRIX.md` in the baileys-port workspace
+(`~/workspace/baileys-port/EVENT_COMPATIBILITY_MATRIX.md`).
+
+## Baileys event compatibility (Increment 2)
+
+Increment 2 adds the in-memory store, notification dispatch, message-content
+builders, and the newsletter upload path — all on top of Increment 1's event
+package, with no existing public API removed.
+
+### In-memory store (`id.jawa.feature.store.InMemoryStore`)
+
+The wa-java equivalent of Baileys' `makeInMemoryStore`, reachable as
+`client.store()`. It keeps chats, contacts, messages, groups, presences,
+labels and label associations, and LID→PN mappings in memory for the session
+(it is not persisted across restarts). Chat ordering matches Baileys'
+`KeyedDB` order: pinned first, then unarchived before archived, then most
+recently active first. Each chat's message history is capped at 500 messages
+by default (configurable in the constructor) — a wa-java adaptation, since
+Baileys' store grows until the caller evicts; the oldest messages are dropped
+first. `loadMessages(chatId, count, cursorMessageId)` mirrors Baileys'
+before-only pagination (there is no forward pagination, matching Baileys'
+empty `after` branch). Labels follow Baileys' 20-label cap.
+
+When bound to a bus with `store.bind(bus)`, mutations dispatch the matching
+Baileys events (chats upsert/update/delete, contacts upsert/update, messages
+delete/reaction, groups upsert/update, labels edit/association, lid-mapping
+on change, blocklist). The client's own store is deliberately *not* bound to
+the client's bus — the client dispatches events itself at its dispatch
+points, and binding both would double-emit. Use the store standalone with
+your own bus, or query `client.store()` for state.
+
+### Newly dispatched events (JaWaClient)
+
+On top of Increment 1's 6 dispatched events, JaWaClient now dispatches:
+
+- `chats.upsert` / `chats.update` — first / later messages in a chat (via the
+  store), and group-create notifications.
+- `messages.reaction` — inbound reaction messages, in addition to the existing
+  `messages.upsert` delivery of the raw reaction message (legacy behaviour
+  preserved).
+- `messages.update` — inbound edit and revoke protocol messages, as key-only
+  updates (target key + timestamp; edited content is not modelled in the
+  Increment 1 payload).
+- `messages.media-update` — `mediaretry` notifications (error code when the
+  notification carries an `error` child; the encrypted media payload Baileys
+  also carries is not modelled).
+- `groups.upsert` / `groups.update` / `group-participants.update` /
+  `group.join-request` — `w:gp2` notifications. `leave` is emitted as action
+  `remove`, matching Baileys' emitted action set. Group-change fields carried
+  are subject, description, announce, restrict, invite code, member-add mode
+  and join-approval mode.
+- `group.member-tag.update` — inbound `GROUP_MEMBER_LABEL_CHANGE` protocol
+  messages.
+- `contacts.update` — picture notifications (`imgUrl` `changed`/`removed`).
+- `lid-mapping.update` — `sender_pn`/`participant_pn` mappings on inbound
+  messages, and mappings newly learned by `resolveLidToPn`.
+- `blocklist.update` — `account_sync` blocklist notifications (one event per
+  item) and successful local block/unblock calls.
+- `newsletter.reaction` / `newsletter.view` /
+  `newsletter-participants.update` / `newsletter-settings.update` —
+  newsletter notifications (name/description settings only; the verbatim mex
+  settings object is not modelled, and the mex admin-promote path is not yet
+  wired).
+
+Still not dispatched: `messaging-history.set`, `messaging-history.status`,
+`chats.delete` (store-bound only), `chats.lock`, `contacts.upsert`
+(store-bound only), `messages.delete` (store-bound only), `labels.edit` /
+`labels.association` (store-bound only), `settings.update`, and
+`message-capping.update`. App-state sync actions are not yet mapped to
+labels/settings/history events, and inbound poll votes are not emitted as
+`messages.update` — Baileys' own receive branch for them is commented out.
+
+### Message-content builders (`MessageEncoder`)
+
+New builders, all producing genuine proto payloads (see `MessageEncoder`
+Javadoc for Baileys source notes and differences):
+
+- `albumMessage` + `withAlbumAssociation`, and `JaWaClient.sendAlbum` /
+  `messages().sendAlbum` (album declaration first, members associated to its
+  key, in order; image/video members only, at least two).
+- `quizMessage` (V5, as in the Baileys fork; Baileys allows quizzes only in
+  newsletters), `pollResultSnapshotMessage`, `pollUpdateMessage`
+  (caller-supplied encrypted vote).
+- `mentionAllMessage` (`nonJidMentions = 1`, caller-supplied participants),
+  `textWithGroupMentions`, `contactsArrayMessage`.
+- `lottieStickerMessage` / `wrapAsLottie` (FutureProof wrapper, as in the
+  Baileys fork; the `StickerMessage.isLottie` flag overload is also
+  available), `groupStatusWrap`, `interactiveAsTemplate` (with template id).
+- `richCodeMessage` / `richTableMessage` (core `richResponseMessage` only —
+  Baileys' fork wraps it in a `botForwardedMessage` with generated
+  verification proofs, which wa-java does not fabricate), and
+  `sendPaymentMessage` / `requestPaymentMessage`.
+- `messages()` facades: `sendQuiz`, `sendAlbum`, `sendMentionAll`,
+  `sendGroupMentions`, `sendContactsArray`, `sendRichCode`, `sendRichTable`,
+  `sendPollResult`.
+
+Not portable as builders: spoiler messages (wa.proto contains no spoiler
+field or wrapper at all), status mentions (a send-time broadcast path with
+stanza `<meta>` nodes, not a message builder), and newsletter admin /
+create / community-create / catalog / product APIs (no such Baileys-equivalent
+wire path exists in wa-java yet). Newsletter media uploads now use Baileys'
+newsletter path map: `MediaUploader.upload(..., newsletter=true)` uploads to
+`/newsletter/newsletter-<type>` with `server_thumb_gen=1` (see
+`MediaUploader.uploadUrl`, which is unit-testable). There is no `/m1/` or
+`/o1/` host logic in Baileys — the path map is the mechanism.
+
+## Baileys event compatibility (Increment 3)
+
+Increment 3 adds newsletter/community/catalog/contact/label server APIs, app-state sync-action mapping, store persistence, single-group metadata and profile-picture (tcToken) queries, status-mention builders, and spoiler messages via real proto regeneration.
+
+- **Events now dispatched from real client data (27 of 33 user-facing):** Increment 2's 23, plus `labels.edit`, `labels.association`, `settings.update`, and `chats.lock`, all dispatched from decoded app-state sync actions in `JaWaClient.requestAppStateSync` via `id.jawa.feature.appstate.AppStateEventMapper`. Still not dispatched from any path: `messaging-history.set`, `messaging-history.status`, and `message-capping.update` (see below). The store-bound set is unchanged.
+- **Newsletter:** `NewsletterMexQuery` builders (create/update/name/description/removePicture/subscribers/subscribed/adminCount/changeOwner/demote/delete/capping) and `NewsletterService` facades via `sendMexQuery`; `NewsletterMessageDecoder` for plaintext newsletter messages; `NewsletterLinkedProfiles` inbound parser. Newsletter promote does not exist as a Baileys query and was not invented.
+- **Community:** `CommunityQuery` (create, createGroup, metadata, leave, subject/description/settings/member-add/join-approval/ephemeral, invite, participants, request-participants) and `GroupService` facades; `GroupService.queryGroupMetadata` for full single-group metadata.
+- **Catalog/product/business:** `CatalogQuery` + `CatalogProduct` and `ProfileService` facades (catalog, collections, product create/update/delete, business-profile delta, cover-photo update/remove). Product-image and cover-photo uploads remain builders-only (no upload step in wa-java).
+- **Contact/label server APIs:** `AppPatchBuilder` patch models and `ChatService.buildServer*` facades — request models only, **not sent**: Baileys sends them via encrypted `appPatch`, which wa-java does not yet have (see report).
+- **App-state mapping:** `AppStateEventMapper` (feature/appstate) maps sync actions to labels/settings/lock events and history payloads; the history helpers are not wired because the client has no history-sync notification path. `AppStateSettingsLockMapper` (event package) is the settings/lock-only mapper kept from the same increment, renamed to end the duplicate `AppStateEventMapper` name collision.
+- **Store persistence:** `StoreJson` (hand-written, no new dependencies) and `FileStorePersistence` (atomic save); persistence lifecycle (when to save/load) is intentionally unwired.
+- **Spoiler messages:** `wa.proto` gained `ContextInfo.isSpoiler = 73` and `Message.spoilerMessage = 118`, verified against Baileys' compiled WAProto wire tags and regenerated with protoc 3.10.0; `MessageEncoder.spoilerWrap` mirrors Baileys' wrapper. `MessageKey.participantAlt` was deliberately **not** added to generated proto (Baileys' field is a JS-level extension, not a wire field); the plain `MessagesDelete.MessageKey` model gained a backwards-compatible 5th field, and `GroupMemberTagUpdate` already carried it.
+- **Status mentions:** `StatusMentionBuilder` plan/builders only. The send fan-out (relay with `statusJidList` + `mentioned_users`, then per-target mention messages 1500 ms apart) is **not** implemented: `MessageSender` has no additional-nodes support, and a send that dropped the meta nodes would misrepresent the feature.
+- **Not dispatched:** `messaging-history.set`/`status` (no history-sync notification path in the client; the pure mapper covers only the two explicit completions), `message-capping.update` (mex notification path, raw JSON only — no field list derivable from Baileys).
+
+## Baileys event compatibility (Increment 4)
+
+Increment 4 adds the appPatch transport, mex notification receive, history-sync dispatch, and status-mention sending.
+
+- **Events dispatched from JaWaClient (30 of 33 user-facing):** Increment 3's 27, plus `message-capping.update` (mex, raw JSON verbatim), `messaging-history.set` (inline-payload history notifications only), and `messaging-history.status` (bootstrap/RECENT-100/paused, deduplicated). `connection.update` gains the `reachoutTimeLock` variant from mex timelock notifications. The remaining 3 (`chats.delete`, `contacts.upsert`, `messages.delete`) are dispatched only by a bound store, so every user-facing event has at least one real dispatch path — but the client-only figure is 30/33.
+- **appPatch (transport only, not yet client-wired):** `AppPatchEncoder` mirrors Baileys `encodeSyncdPatch` exactly and round-trips through `AppStateProcessor.decode` with MAC validation; `AppPatchTransport` resyncs, encodes, sends the `w:sync:app:state` IQ, and persists the new version only on success. `ChatService.sendServer*` sends through a caller-supplied transport. Client wiring is blocked on verified prerequisites: `AuthCreds` has no `myAppStateKeyId`, no `app-state-sync-version` store exists, and `requestAppStateSync` does not expose collection versions. Two crypto formulae were inherited, not re-verified (see report §4.2/§4.5): the `AppStateKey.expand()` split order and wa-java's `LtHash` vs the rust bridge — round-trip proves self-consistency only, not wire-compatibility with a real server.
+- **Mex receive:** `MexNotificationParser` + a `mex` branch in `handleStanza` — capping verbatim, timelock, linked-profiles lid mappings (also recorded in store + routing map), legacy newsletter promote/settings. Malformed/unknown ops are ignored, never thrown.
+- **History-sync:** `HistorySyncNotificationParser` + `HistorySyncStatusTracker` + `handleHistorySyncNotification` (self-only guard, processability gate, inline zlib decode, `.set` mapping, status sink). Non-inline history download is **not** implemented: wa-java has no `md-msg-hist` media type or history HKDF info string, so payload-less notifications log and emit no `.set` — live history sync is not claimed.
+- **Status mentions:** `JaWaClient.sendStatusMention` (+ `MessagingService` facades) — status relay with expanded `statusJidList` + `mentioned_users`, then per-target mention relays (1500 ms default delay, injectable). `MessageSender`/`GroupSender` additional-nodes overloads are additive; existing send methods behave identically with empty node lists.
+- **Store lifecycle:** `StorePersistence.saveStore/loadStore` are explicit-only; nothing auto-saves. `InMemoryStore.cachedContactImgUrl` returns only the cached URL — fetching a missing URL remains the caller's job.
+
+## Baileys event compatibility (Increment 5)
+
+Increment 5 wires the JaWaClient.appPatch hook, adds history download, community linkedParent resolution, raw product/cover uploads, and explicit store lifecycle methods. No new event names or dispatch paths — event coverage stays at 30/33 from the client (3 more store-bound only).
+
+- **appPatch hook:** `AuthCreds.myAppStateKeyId` (persisted in both stores; set from the last shared app-state key on capture), `FileAppStateVersionStore` (SQLite table or file-per-collection under `<signalDir>/appstate-versions/`; unparseable → no state, never half-decoded), `SyncStateEvolver` + `requestAppStateSyncWithVersions` (Baileys' version precedence; no fabricated versions), and `JaWaClient.appPatch` (ordered failure checks; version persisted only on success). `ChatService` gained 7 no-transport `sendServer*` overloads delegating to it. Fallback: a plain `FileAuthStore` client with no `signalDir` keeps the in-memory version store (versions lost on restart). Limitations: resync is single-request (does not loop on `hasMorePatches`); external-blob snapshots still not downloaded; patch-only syncs with no base state do not persist evolved state; decode runs with `validateMacs=false` (pre-existing). Wire-compatibility caveat from Increment 4 still applies (round-trip proves self-consistency only).
+- **History download:** `MediaType.HISTORY("WhatsApp History Keys")` — verifiable from Baileys' HKDF mapping, not guessed — and `downloadHistory` (directPath → `mmg.whatsapp.net`, decrypt, inflate, decode). The history branch now tries inline, then download, then logs-and-skips. Standard media format is reused but not yet confirmed against a live history file (MAC failure → null, never partial sync).
+- **Community:** `fetchLinkedGroups` (metadata → `linkedParent` → linked groups; fails rather than guessing on missing metadata) and create-with-metadata refetch (raw-node creators kept). `GroupListQuery.GroupInfo` still has no `linkedParent` — use `GroupMetadataQuery.GroupMetadata` for resolution.
+- **Uploads:** product-image and biz-cover-photo use Baileys' raw-upload path (bytes as-is, token = SHA-256 of raw bytes, `/product/image` and `/pps/biz-cover-photo`), not encrypted MMS. `ProfileService` bytes overloads take a caller-supplied `MediaConn`; null/empty bytes = existing URL-only behaviour; uploaded URLs replace `imageUrls()` wholesale.
+- **Store lifecycle:** `JaWaClient.saveStore/loadStore` are explicit only (missing file → `false`, no change; otherwise install snapshot via `InMemoryStore.replaceWith`, `true`). Nothing auto-saves.
+- **Builders added, transport/emission pending:** `CallLinkQuery` (needs a non-`iq` `<call>` stanza send path) and community invite-V4 builders (expiry `messages.update` emission pending).
+
+## Baileys event compatibility (Increment 6)
+
+Increment 6 adds peer-data operations, placeholder resend, member-label, timelock fetch, public USync, newsletter picture, quick replies, call links, and invite-V4 emission. No new event names — event coverage stays at 30/33 from the client (3 more store-bound only).
+
+- **Peer-data:** `sendPeerDataOperationMessage` (PDO payload, `category=peer`, `push_priority=high_force`, `<meta appdata='default'/>` via the additional-nodes DM path — Baileys' bare-`<enc>` peer framing is a remaining hook, documented); `requestPlaceholderResend` (claim/delay/race manager + PDO send + 8 s expiry; `resolve()` is unwired — no inbound placeholder/PDO-response path exists yet); `updateMemberLabel` (30-char truncation, timestamp, `member_tag` meta).
+- **Fetch + USync:** `fetchAccountReachoutTimelock` (verified MEX query id `23983697327930364`; dispatches a partial `connection.update` with only `reachoutTimeLock`); public `executeUSyncQuery` (generic stanza shape + result; per-protocol parsing left to the caller).
+- **Newsletter picture:** resize verified as 720×720 JPEG q80 (Jimp top-left square crop + bilinear scale, `javax.imageio` only; sharp centre-crop divergence documented, not implemented); facades via the existing MEX update path, plus a base64 passthrough for already-resized pictures.
+- **Quick replies:** patches mirror Baileys exactly (SET even for remove, `deleted` flag, timestamp default) with `ChatService` facades via `JaWaClient.appPatch` (transport overloads also available).
+- **Call links:** generic `sendStanzaAsync` (tag-agnostic pending-map correlation, so non-`iq` responses can arrive; unmatched `<call>` stanzas still flow to `CallEvent` parsing) + `createCallLink` (token from response `<link_create>`; error responses fail the future; no token → null; no timeout added, matching `sendIqAsync`).
+- **Invite-V4:** accept sends the Increment 5 IQ and, only on a full key, dispatches `messages.update` with the invite copy (`inviteExpiration = 0`, `inviteCode = ''`). The synthetic `GROUP_PARTICIPANT_ADD` upsert Baileys also performs is not ported (wa-java has no synthetic-message upsert path).
+
+## Baileys event compatibility (Increment 7)
+
+Increment 7 adds privacy IQs, push-name and link-preview app-state patches, V4 revoke, cleanDirtyBits, disappearing duration, a connection-update waiter, peer framing, and placeholder-resolve dispatch. No new event names — event coverage stays at 30/33 from the client (3 more store-bound only).
+
+- **Privacy:** `PrivacyQuery` exact shapes; `fetchPrivacySettings` (Baileys-faithful cache — updates do not invalidate it, use `force=true` after an update) + 9 update variants + disappearing-mode alias, mirrored on `PrivacyService`. Values are passed verbatim (`all`/`contacts`/`contact_blacklist`/`none`); no enum was invented. `updateDisableLinkPreviewsPrivacy` is an app-state patch, not a privacy IQ (corrected while verifying).
+- **Push-name:** `buildPushNameSetting` / `buildDisableLinkPreviews` patches + facades via `JaWaClient.appPatch`. The presence-based `updatePushName` is kept untouched — the two paths are not interchangeable (presence = local creds + broadcast, no patch; app-state = server-side name synced to other devices) and neither calls the other.
+- **V4 revoke, cleanDirtyBits, disappearing duration, waiter:** revoke facade mirroring accept (`!!result`); `cleanDirtyBits` via `sendIqAsync` (Baileys uses fire-and-forget `sendNode` — same disconnected-drop class, but testable); disappearing duration via `executeUSyncQuery` (JID-keyed map, unparseable users omitted where Baileys would yield `NaN`); bus-based waiter (carries the matching update, timeout → null, throwing predicate = non-match, listener always removed).
+- **Peer framing / placeholder resolve:** `MessageSender.peerFrame` reframes exactly as Baileys does, but live PDO send is NOT rewired to it yet (bypassing `queryDevices` for a single own device-0 encryption is the exact remaining sender change; PDO still goes out as a self-DM stanza with a wire-identical payload). Placeholder responses are now resolved and dispatched as `messages.upsert` type `notify` (stored metadata preserved, content/timestamp from the reply; dispatch-only, not fed to the store or legacy `onMessage`); `MessageUpsert` has no `requestId`, so Baileys' `stanzaId` isn't propagated.
+
+## Baileys event compatibility (Increment 8)
+
+Increment 8 wires peer-mode PDO live, adds `MessageUpsert.requestId`, and adds the V4 synthetic upsert. No new event names — event coverage stays at 30/33 from the client (3 more store-bound only).
+
+- **Peer PDO:** `MessageSender.buildPeerStanza` encrypts for the single own device-0 JID only; `sendPeerDataOperationMessage` bypasses `queryDevices`, installs a device-0 session, reframes with `peerFrame`, and sends with peer attributes + meta node. Fallback: when `creds.meJid` is bare (device 0 itself), the Increment 6 self-DM path is kept — Baileys' relay loop likewise skips the exact sender device. No protocol store yet → fail fast, never silently drop. Disconnected-drop behaviour unchanged.
+- **requestId:** `MessageUpsert` gains a trailing nullable `requestId` (delegating 2-arg constructor; normal messages stay null). PDO dispatch sets it from `response.getStanzaId()` (blank → null).
+- **V4 synthetic upsert:** `generateMessageIdV2()` implements Baileys' id algorithm exactly (`3EB0`…`STARFALL`…); `acceptCommunityInviteV4` dispatches a synthetic `messages.upsert` (type `notify`, inviter as sender, community JID, V2 id, null message — matching Baileys' absent content) even for a bare-JID key, and feeds it to the memory store. `Decoded` has no stub-type/stub-parameters fields, so `GROUP_PARTICIPANT_ADD` and the `JSON(me)` parameter are not carried — that is the remaining fidelity hook, not an invented field.
+
+## Baileys event compatibility (Increment 9)
+
+Increment 9 adds `Decoded` stub fields and `updateMediaMessage`. No new event names — event coverage stays at 30/33 from the client (3 more store-bound only).
+
+- **Stub fields:** `Decoded` gains trailing nullable `messageStubType` (the existing generated `Wa.WebMessageInfo.StubType` — Baileys' `WAMessageStubType` is exactly that proto enum) + `messageStubParameters`, with delegating constructors (all existing sites default to null). The V4 synthetic upsert now carries `GROUP_PARTICIPANT_ADD` + `[meStubParameterJson]` (`{"id","name","lid"}`, blank fields omitted, `meJid` bared, no usable me → `"{}"`); the store feed retains them. Caveat: wa-java has no business name distinct from `pushName`, so a business account's `me.name` may differ from Baileys'.
+- **updateMediaMessage:** `JaWaClient.updateMediaMessage` (message / media-key-bytes / default 30 s timeout) + `MessagingService` facades. Flow: waiter registered before the retry request is sent, then error code / missing ciphertext / non-`SUCCESS` decrypt → failed future, else the `MediaRetryNotification` is returned. `MediaRetryRequest.build` is the single construction site (`sendMediaRetryReceipt` now delegates to it verbatim); `MediaUpdateWaiter` subscribes to the existing bus (no dispatch change); `MediaUpdate` carries `ciphertext, iv` (trailing, legacy sites still null). Divergences: WA protos are immutable, so wa-java returns the notification for the caller to rebuild from and emits no `messages.update` (Baileys mutates content in place); the caller must supply the media key — wa-java never re-uploads bytes it doesn't hold; timeout → null (Baileys waits indefinitely); disconnected-transport silent failure unchanged (resolves null on timeout).
+- **Not landed:** ciphertext-stub placeholder auto-trigger. Baileys gates PDO placeholder resend on the `'Message absent from node'` sentinel, which wa-java never produces (`decode` returns null-message or throws a libsignal `DecryptException`), so the receiver catch cannot distinguish it from failures Baileys answers with a retry receipt only. Landing an unconditional claim would change retry behaviour. The fix needs a structured `DecryptException` failure kind first — see the implementation report.
+
+## Baileys event compatibility (Increment 10)
+
+Increment 10 closes the placeholder auto-trigger blocker from Increment 9. No new event names — event coverage stays at 30/33 from the client (3 more store-bound only).
+
+- **Structured decrypt-failure kind:** `MessageReceiver.DecryptFailureKind` (`NO_MESSAGE_FOUND`, `MISSING_KEYS`, `OTHER`; only `NO_MESSAGE_FOUND` is placeholder-eligible), with legacy `DecryptException` constructors defaulting to `OTHER`. `decode()` throws `NO_MESSAGE_FOUND` for no-`<enc>` + a direct `<unavailable>` child whose type is not `view_once` (Baileys' `decrypt()` rule: decryptable = `enc`/`plaintext` with byte content; `<unavailable type='view_once'>` suppresses the stub).
+- **Placeholder auto-trigger:** `PeerDataOperations.isPlaceholderResendEligible` implements Baileys' gates in order (kind → peer-category → unavailable exclusions → 14-day cap; timestamp ≤ 0 treated as fresh). The receiver catch calls `handleDecryptFailurePlaceholder` after the untouched ack + retry-receipt lines: eligible failures upsert a `CIPHERTEXT` stub (`messageStubParameters=[error message]`) as `messages.upsert` type `notify`, claim via `PlaceholderResendManager`, and feed the store; non-eligible failures are a pure no-op. Open decisions (see the implementation report): the catch claims but does not itself send the PDO request (Baileys calls `requestPlaceholderResend`); plain no-`<enc>` without `<unavailable>` still returns the null-message `Decoded`; `MISSING_KEYS` is classified but not NACKed; wa-java keeps its catch retry receipt where Baileys sends ack only.
+
+## Baileys event compatibility (Increment 10b)
+
+Increment 10b completes the placeholder auto-trigger: the decrypt-failure catch now auto-sends the PDO resend, and a pre-existing null-creds crash is fixed. No new event names — event coverage stays at 30/33 from the client (3 more store-bound only).
+
+- **PDO auto-send:** `handleDecryptFailurePlaceholder` still upserts/stores the CIPHERTEXT stub first (ungated on claim success), then invokes the existing `requestPlaceholderResend` (claim + 2 s delay + PDO send + 8 s expiry — no duplicated logic), fire-and-forget with failures logged and swallowed, mirroring Baileys' floating `.then/.catch`. The PDO key mirrors Baileys' `cleanKey` (chat JID, stanza `participant` when present, `fromMe = false` — an assumption, since the helper's stanza inputs carry no fromMe flag). A `placeholderResendDelay` seam exists for tests; production scheduling is unchanged (real 2 s delay). Disconnected transport: existing silent-drop behaviour, no retry added. Test honesty: the PDO assertion captures the peer-mode stanza (category, attrs, bare `<enc>` first, meta last) — the Signal-encrypted inner `PLACEHOLDER_MESSAGE_RESEND` bytes were not decoded.
+- **Null-creds guard:** `sendRetryReceipt` returns early (logged, no retry count consumed) when `creds == null`, so a decrypt failure on an unpaired client no longer throws out of the catch block. Receipt behaviour with creds set is unchanged.
+- **Remaining dispatch detail:** Baileys' `messages.update` with `[NO_MESSAGE_FOUND_ERROR_TEXT, requestId]` on successful PDO send is not yet mirrored — the stub keeps only the error text; the auto-send future's success value is the `requestId` and is currently discarded.
+
+## Baileys event compatibility (Increment 10c)
+
+Increment 10c mirrors Baileys' `messages.update` on successful PDO auto-send. No new event names — event coverage stays at 30/33 from the client (3 more store-bound only).
+
+- **PDO success update:** on successful auto-send only, the catch dispatches `MESSAGES_UPDATE` with a single `MessageUpdate` for the same key as the stub upsert, carrying `[NO_MESSAGE_FOUND_ERROR_TEXT, requestId]` — gated on truthy, non-blank, non-`"RESOLVED"` requestId, exactly as Baileys (`messages-recv.js:1345–1354`). The future's success value *is* the requestId (verified: `PlaceholderResendManager.request` resolves to `null` / `"RESOLVED"` / the sent PDO message id). Failures never reach the handler (still logged and swallowed); the manual `requestPlaceholderResend` path emits no update. `MessageUpdate` gained a trailing nullable `messageStubParameters` component (existing call sites unchanged, emitting null).

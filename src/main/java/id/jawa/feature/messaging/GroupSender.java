@@ -168,6 +168,32 @@ public final class GroupSender {
         return new Result(stanza, typeMap, participants.size(), phash);
     }
 
+    /**
+     * Group variant of {@link #buildStanza(JaWaProtocolStore, SenderKeyStore, AuthCreds, String, String, List, Wa.Message)},
+     * appending {@code additionalNodes} (Baileys' {@code relayMessage}
+     * {@code additionalNodes}) as extra top-level children after the
+     * {@code participants} / {@code enc} / {@code device-identity} /
+     * {@code biz} nodes. Used for per-target group status mentions
+     * ({@code <meta is_group_status_mention="true"/>}). Null or empty
+     * lists return the base stanza unchanged.
+     */
+    public static Result buildStanza(JaWaProtocolStore protocolStore,
+                                     SenderKeyStore senderKeyStore,
+                                     AuthCreds creds,
+                                     String msgId,
+                                     String groupJid,
+                                     List<String> participantDeviceJids,
+                                     Wa.Message message,
+                                     List<BinaryNode> additionalNodes) {
+        Result base = buildStanza(protocolStore, senderKeyStore, creds, msgId,
+            groupJid, participantDeviceJids, message);
+        if (additionalNodes == null || additionalNodes.isEmpty()) {
+            return base;
+        }
+        return new Result(MessageSender.withAdditionalNodes(base.stanza(), additionalNodes),
+            base.ciphertextTypes(), base.skdmRecipients(), base.phash());
+    }
+
     public static String getMediaTypeFromMessage(Wa.Message msg) {
         if (msg == null) return null;
         if (msg.hasViewOnceMessage()) {

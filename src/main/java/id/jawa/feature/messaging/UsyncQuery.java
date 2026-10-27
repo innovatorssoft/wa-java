@@ -13,6 +13,7 @@ import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 public final class UsyncQuery {
 
@@ -338,6 +339,201 @@ public final class UsyncQuery {
             map.put(jid, new UserInfo(jid, lid, statusText, pictureId, verifiedName, devices));
         }
         return map;
+    }
+
+    /**
+     * One disappearing-mode result, mirroring Baileys'
+     * {@code USyncDisappearingModeProtocol} parser
+     * ({@code lib/WAUSync/Protocols/USyncDisappearingModeProtocol.js}):
+     * {@code duration} is the {@code duration} attr as a number of
+     * seconds, and {@code setAtEpochMs} is the {@code t} attr (epoch
+     * seconds) converted to epoch milliseconds (Baileys builds a
+     * {@code Date} from {@code +(t || 0) * 1000}).
+     *
+     * @param durationSeconds disappearing duration in seconds
+     * @param setAtEpochMs when the duration was set, epoch milliseconds
+     *                     (0 when the server sent no {@code t} attr)
+     */
+    public record DisappearingDuration(long durationSeconds, long setAtEpochMs) {}
+
+    /**
+     * Increment 7: Baileys {@code fetchDisappearingDuration}
+     * ({@code lib/Socket/chats.js:185}) as a generic query for
+     * {@link JaWaClient#executeUSyncQuery}: one
+     * {@code <disappearing_mode/>} query element (Baileys'
+     * {@code USyncDisappearingModeProtocol.getQueryElement}) and one
+     * bare {@code <user jid="..."/>} node per JID. The user nodes are
+     * bare because that protocol's {@code getUserElement} returns
+     * null, and they carry the {@code jid} attr because
+     * {@code executeUSyncQuery} sets it from the user's id when the
+     * user has no phone (Baileys' {@code fetchDisappearingDuration}
+     * passes JIDs via {@code withId}, not phones). Blank JIDs are
+     * skipped; an empty JID list still builds a query (Baileys does
+     * not validate users, it only notes a TODO to warn).
+     */
+    public static GenericQuery buildDisappearingModeGenericQuery(Collection<String> jids) {
+        List<BinaryNode> users = new ArrayList<>();
+        if (jids != null) {
+            for (String jid : jids) {
+                if (jid == null || jid.isBlank()) continue;
+                users.add(new BinaryNode("user", Map.of("jid", jid), null));
+            }
+        }
+        return new GenericQuery(
+            List.of(new BinaryNode("disappearing_mode", Map.of(), null)),
+            users, "interactive", "query");
+    }
+
+    /**
+     * Parses a disappearing-mode generic result (see
+     * {@link #buildDisappearingModeGenericQuery} and
+     * {@link JaWaClient#executeUSyncQuery}) into a JID-keyed map,
+     * mirroring Baileys' {@code parseUSyncQueryResult} dispatch
+     * through the disappearing-mode parser: each result-list entry
+     * contributes its {@code disappearing_mode} child's
+     * {@code duration} / {@code t} attrs, keyed by the user node's
+     * {@code jid}. Users without a {@code disappearing_mode} child,
+     * or with an unparseable duration, are skipped (Baileys would
+     * yield {@code NaN} for the latter, which has no Java
+     * representation here). A null result yields an empty map.
+     * Baileys' per-entry shape is {@code {id, disappearing_mode:
+     * {duration, setAt}}}; this map flattens it to
+     * {@code id -> DisappearingDuration}.
+     */
+    public static Map<String, DisappearingDuration> parseDisappearingModeResult(GenericResult result) {
+        Map<String, DisappearingDuration> map = new LinkedHashMap<>();
+        if (result == null) return map;
+        for (BinaryNode user : result.userNodes()) {
+            String jid = user.attr("jid");
+            if (jid == null) continue;
+            BinaryNode mode = user.child("disappearing_mode");
+            if (mode == null) continue;
+            Long duration = parseLongOrNull(mode.attr("duration"));
+            if (duration == null) continue;
+            Long t = parseLongOrNull(mode.attr("t"));
+            long setAtMs = (t == null ? 0L : t) * 1000L;
+            map.put(jid, new DisappearingDuration(duration, setAtMs));
+        }
+        return map;
+    }
+
+    /**
+     * Caller-supplied arbitrary USync query, mirroring Baileys'
+     * {@code USyncQuery} object in {@code lib/WAUSync/USyncQuery.js} and
+     * {@code executeUSyncQuery} in {@code lib/Socket/socket.js}.
+     * Baileys builds one {@code <user>} node per user (with a
+     * {@code jid} attribute only when the user has no phone) whose
+     * children are the per-protocol user elements, and one
+     * {@code <query>} node whose children are the per-protocol query
+     * elements. Wa-java's fixed builders ({@link #buildContactQuery},
+     * {@link #buildDeviceListQuery}, {@link #buildUserInfoQuery}) cannot
+     * express an arbitrary protocol set, so this model carries the
+     * protocol elements verbatim: the caller owns the user-node shape
+     * (including which users carry a {@code jid} attribute) exactly as
+     * Baileys' {@code USyncUser} / protocol {@code getUserElement}
+     * implementations own it there.
+     *
+     * @param queryElements per-protocol {@code <query>} children; must be non-empty
+     *                      (Baileys throws "USyncQuery must have at least one protocol")
+     * @param userElements per-user {@code <user>} nodes for the {@code <list>}
+     * @param context Baileys {@code usync} context; blank defaults to {@code "interactive"}
+     * @param mode Baileys {@code usync} mode; blank defaults to {@code "query"}
+     */
+    public record GenericQuery(
+        List<BinaryNode> queryElements,
+        List<BinaryNode> userElements,
+        String context,
+        String mode
+    ) {
+        public GenericQuery {
+            queryElements = queryElements == null ? List.of() : List.copyOf(queryElements);
+            userElements = userElements == null ? List.of() : List.copyOf(userElements);
+            context = context == null || context.isBlank() ? "interactive" : context;
+            mode = mode == null || mode.isBlank() ? "query" : mode;
+        }
+    }
+
+    /**
+     * Parsed arbitrary USync result, mirroring Baileys'
+     * {@code parseUSyncQueryResult} in {@code lib/WAUSync/USyncQuery.js}:
+     * the {@code <list>} children that carry a {@code jid} attribute
+     * (Baileys skips list nodes without one). Per-protocol field
+     * parsing is intentionally not done here: Baileys dispatches each
+     * child tag through that protocol's parser, and wa-java has no
+     * registry of arbitrary protocol parsers — callers run the
+     * protocol parsers they need over the {@code userNodes} (or over
+     * the raw {@code usyncNode}, which also exposes Baileys' not-yet-
+     * implemented side list and error nodes).
+     *
+     * @param usyncNode the result's {@code <usync>} child, or null when absent
+     * @param userNodes {@code <list>} children carrying a {@code jid} attribute, in order
+     */
+    public record GenericResult(BinaryNode usyncNode, List<BinaryNode> userNodes) {}
+
+    /**
+     * Builds an arbitrary USync IQ, mirroring Baileys'
+     * {@code executeUSyncQuery} stanza in {@code lib/Socket/socket.js}:
+     * {@code <iq to=s.whatsapp.net type=get xmlns=usync>} carrying
+     * {@code <usync context mode sid last=true index=0>} with
+     * {@code <query>} then {@code <list>} children.
+     *
+     * @throws IllegalArgumentException when the query has no protocol elements
+     */
+    public static BinaryNode buildGenericQuery(String iqId, String sid, GenericQuery query) {
+        Objects.requireNonNull(query, "query");
+        if (query.queryElements().isEmpty()) {
+            throw new IllegalArgumentException("USyncQuery must have at least one protocol");
+        }
+        BinaryNode usync = new BinaryNode("usync",
+            Map.of(
+                "sid", sid,
+                "mode", query.mode(),
+                "last", "true",
+                "index", "0",
+                "context", query.context()
+            ),
+            List.of(
+                new BinaryNode("query", Map.of(), query.queryElements()),
+                new BinaryNode("list", Map.of(), query.userElements())
+            ));
+        return new BinaryNode("iq",
+            Map.of(
+                "xmlns", "usync",
+                "type", "get",
+                "to", Jid.SERVER_WHATSAPP,
+                "id", iqId
+            ),
+            List.of(usync));
+    }
+
+    /**
+     * Parses an arbitrary USync result IQ. Mirrors Baileys'
+     * {@code parseUSyncQueryResult}: a non-{@code result} IQ yields
+     * null (Baileys returns {@code undefined}); a {@code result} IQ
+     * yields the {@code <usync>} node plus its jid-carrying
+     * {@code <list>} children (empty when the {@code <usync>} or
+     * {@code <list>} node is absent).
+     */
+    public static GenericResult parseGenericResult(BinaryNode resultIq) {
+        if (resultIq == null || !"result".equals(resultIq.attr("type"))) return null;
+        BinaryNode usync = resultIq.child("usync");
+        if (usync == null) return new GenericResult(null, List.of());
+        BinaryNode list = usync.child("list");
+        if (list == null) return new GenericResult(usync, List.of());
+        List<BinaryNode> users = new ArrayList<>();
+        for (BinaryNode user : list.childrenList()) {
+            if ("user".equals(user.tag()) && user.attr("jid") != null) users.add(user);
+        }
+        return new GenericResult(usync, List.copyOf(users));
+    }
+
+    private static Long parseLongOrNull(String s) {
+        if (s == null) return null;
+        try {
+            return Long.parseLong(s);
+        } catch (NumberFormatException ignored) {
+            return null;
+        }
     }
 
     private static int parseIntOr(String s, int def) {

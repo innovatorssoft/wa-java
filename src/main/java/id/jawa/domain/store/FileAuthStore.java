@@ -54,6 +54,7 @@ public final class FileAuthStore implements AuthStore {
         c.meLid = kv.get("meLid");
         c.pushName = kv.get("pushName");
         c.platform = kv.get("platform");
+        c.myAppStateKeyId = kv.get("myAppStateKeyId");
         return c;
     }
 
@@ -78,6 +79,7 @@ public final class FileAuthStore implements AuthStore {
         if (c.meLid != null) kv.put("meLid", c.meLid);
         if (c.pushName != null) kv.put("pushName", c.pushName);
         if (c.platform != null) kv.put("platform", c.platform);
+        if (c.myAppStateKeyId != null) kv.put("myAppStateKeyId", c.myAppStateKeyId);
         writeKv(kv);
     }
 

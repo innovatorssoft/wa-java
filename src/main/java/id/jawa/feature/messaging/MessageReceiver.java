@@ -41,9 +41,43 @@ public final class MessageReceiver {
 
     private MessageReceiver() {}
 
+    /**
+     * Increment 9: trailing stub components, following the Increment 6
+     * {@code MessagesUpdate.groupInviteMessage} / Increment 8
+     * {@code MessageUpsert.requestId} pattern: Baileys'
+     * {@code WebMessageInfo.messageStubType} /
+     * {@code messageStubParameters} ({@code lib/Types/Message.js}:
+     * {@code WAMessageStubType = proto.WebMessageInfo.StubType}).
+     * They are null for every pre-existing construction site (the
+     * delegating constructors below default them to null), so normal
+     * inbound messages still carry null stub fields; only the
+     * Increment 9 community-V4 synthetic upsert populates them
+     * (see {@code JaWaClient.acceptCommunityInviteV4}). Baileys
+     * {@code messageStubParameters} is a string array, modelled here
+     * as a nullable list, copied on construction when non-null.
+     * <p>
+     * Deliberately not modelled here (pre-existing documented loss,
+     * unchanged): {@code fromMe} / key {@code participant} are not
+     * Decoded fields, so the V4 synthetic's Baileys
+     * {@code participant: key.remoteJid} is carried only via
+     * {@code senderJid}, as before.
+     */
     public record Decoded(String senderJid, String groupJid, String msgId, String encType,
                           Wa.Message message, String text, InteractiveResponse interactive,
-                          long timestamp) {
+                          long timestamp, Wa.WebMessageInfo.StubType messageStubType,
+                          java.util.List<String> messageStubParameters) {
+        public Decoded {
+            messageStubParameters = messageStubParameters == null ? null
+                : java.util.List.copyOf(messageStubParameters);
+        }
+
+        public Decoded(String senderJid, String groupJid, String msgId, String encType,
+                       Wa.Message message, String text, InteractiveResponse interactive,
+                       long timestamp) {
+            this(senderJid, groupJid, msgId, encType, message, text, interactive, timestamp,
+                null, null);
+        }
+
         public Decoded(String senderJid, String groupJid, String msgId, String encType,
                        Wa.Message message, String text, InteractiveResponse interactive) {
             this(senderJid, groupJid, msgId, encType, message, text, interactive, 0L);
@@ -100,6 +134,36 @@ public final class MessageReceiver {
 
         BinaryNode enc = findEnc(messageStanza);
         if (enc == null) {
+            // Increment 10: Baileys' no-decryptable-content shape
+            // (verified, not guessed). In
+            // {@code lib/Utils/decode-wa-message.js} decrypt() counts a
+            // stanza child as decryptable only when its tag is
+            // {@code enc} (or {@code plaintext}) with byte content;
+            // when the count is 0 and the message is not a view-once
+            // placeholder, it sets stub CIPHERTEXT /
+            // [NO_MESSAGE_FOUND_ERROR_TEXT]. wa-java's BinaryNode
+            // equivalent of "carries an <unavailable> node" is a direct
+            // <unavailable> child (Baileys reads it with
+            // getBinaryNodeChild(node, 'unavailable') in
+            // messages-recv.js:1309, and decode-wa-message.js marks
+            // <unavailable type='view_once'> as isViewOnce, which
+            // suppresses the stub). So: an <unavailable> child that is
+            // NOT type view_once, with no <enc>, throws
+            // NO_MESSAGE_FOUND. Two deliberate preservations: (a) a
+            // view_once <unavailable> with no <enc> still returns the
+            // null-message Decoded, as Baileys suppresses its stub;
+            // (b) a plain no-<enc> stanza with NO <unavailable> child
+            // still returns the null-message Decoded exactly as before
+            // — wa-java's existing path for unencrypted/plain
+            // messages is not reclassified here (Baileys would stub
+            // it too, but reclassifying it would change the normal
+            // inbound path for every unencrypted message; that wider
+            // change is left to the coordinator, see the report).
+            BinaryNode unavailable = messageStanza.child("unavailable");
+            if (unavailable != null && !"view_once".equals(unavailable.attr("type"))) {
+                throw new DecryptException(NO_MESSAGE_FOUND_ERROR_TEXT,
+                    DecryptFailureKind.NO_MESSAGE_FOUND);
+            }
             return new Decoded(senderJidStr, groupJid, msgId, null, null, null, null, timestamp);
         }
 
@@ -134,7 +198,11 @@ public final class MessageReceiver {
         } catch (InvalidVersionException | InvalidMessageException | InvalidKeyException
                 | InvalidKeyIdException | NoSessionException | UntrustedIdentityException
                 | DuplicateMessageException | LegacyMessageException e) {
-            throw new DecryptException("decrypt failed for " + senderAddr + ": " + e, e);
+            // Increment 10: classify so a MISSING_KEYS libsignal
+            // failure is distinguishable; all other libsignal failures
+            // stay OTHER and therefore placeholder-ineligible.
+            throw new DecryptException("decrypt failed for " + senderAddr + ": " + e, e,
+                classifyFailure(e));
         }
 
         byte[] body = MessageEncoder.unpad(padded);
@@ -251,8 +319,84 @@ public final class MessageReceiver {
         return null;
     }
 
+    /**
+     * Increment 10: structured decrypt-failure kind, so the receiver
+     * can tell the cases Baileys distinguishes in
+     * {@code lib/Socket/messages-recv.js:1301-1360} apart without
+     * string-matching in the catch block. Only
+     * {@link #NO_MESSAGE_FOUND} is placeholder-eligible (see
+     * {@link PeerDataOperations#isPlaceholderResendEligible}); every
+     * other kind maps to "not placeholder-eligible" by default, so
+     * existing behaviour for NoSessionException / bad-MAC / etc. is
+     * unchanged. {@link #MISSING_KEYS} is classified but deliberately
+     * does NOT change the catch path: Baileys NACKs it
+     * ({@code NACK_REASONS.ParsingError}) instead of retry-receipting,
+     * and changing wa-java's receipt behaviour here is out of scope
+     * for Increment 10 (see the task's "do not silently change
+     * send-path" rule), so a MISSING_KEYS failure still goes through
+     * the unchanged ack + retry-receipt catch path.
+     */
+    public enum DecryptFailureKind {
+        NO_MESSAGE_FOUND,
+        MISSING_KEYS,
+        OTHER;
+
+        /** Only NO_MESSAGE_FOUND may trigger a placeholder upsert/claim. */
+        public boolean isPlaceholderEligible() { return this == NO_MESSAGE_FOUND; }
+    }
+
+    /**
+     * Baileys {@code NO_MESSAGE_FOUND_ERROR_TEXT}
+     * ({@code lib/Utils/decode-wa-message.js:28}):
+     * {@code 'Message absent from node'} — the stub parameter Baileys
+     * sets when a stanza carries nothing decryptable.
+     */
+    public static final String NO_MESSAGE_FOUND_ERROR_TEXT = "Message absent from node";
+    /**
+     * Baileys {@code MISSING_KEYS_ERROR_TEXT}
+     * ({@code lib/Utils/decode-wa-message.js:29}):
+     * {@code 'Key used already or never filled'}.
+     */
+    public static final String MISSING_KEYS_ERROR_TEXT = "Key used already or never filled";
+
+    /**
+     * Classifies a decrypt failure from its cause chain: a cause whose
+     * message contains {@link #MISSING_KEYS_ERROR_TEXT} is
+     * {@link DecryptFailureKind#MISSING_KEYS}, anything else is
+     * {@link DecryptFailureKind#OTHER}. NO_MESSAGE_FOUND is never
+     * produced here — it is produced only by the no-decryptable-content
+     * branch of {@link #decode}, never by a failed decrypt attempt
+     * (Baileys likewise sets it only when {@code decryptables == 0}).
+     */
+    public static DecryptFailureKind classifyFailure(Throwable cause) {
+        for (Throwable t = cause; t != null; t = t.getCause()) {
+            String m = t.getMessage();
+            if (m != null && m.contains(MISSING_KEYS_ERROR_TEXT)) {
+                return DecryptFailureKind.MISSING_KEYS;
+            }
+        }
+        return DecryptFailureKind.OTHER;
+    }
+
     public static final class DecryptException extends Exception {
-        public DecryptException(String message) { super(message); }
-        public DecryptException(String message, Throwable cause) { super(message, cause); }
+        private final DecryptFailureKind kind;
+
+        public DecryptException(String message) { this(message, (Throwable) null); }
+        public DecryptException(String message, Throwable cause) {
+            this(message, cause, DecryptFailureKind.OTHER);
+        }
+        public DecryptException(String message, DecryptFailureKind kind) {
+            this(message, null, kind);
+        }
+        public DecryptException(String message, Throwable cause, DecryptFailureKind kind) {
+            super(message, cause);
+            this.kind = kind == null ? DecryptFailureKind.OTHER : kind;
+        }
+
+        /** Structured failure kind; never null. Defaults to OTHER at legacy sites. */
+        public DecryptFailureKind kind() { return kind; }
+
+        /** True only for {@link DecryptFailureKind#NO_MESSAGE_FOUND}. */
+        public boolean isPlaceholderEligible() { return kind.isPlaceholderEligible(); }
     }
 }

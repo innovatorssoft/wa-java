@@ -17,7 +17,18 @@ public final class MediaCrypto {
         IMAGE("WhatsApp Image Keys"),
         VIDEO("WhatsApp Video Keys"),
         AUDIO("WhatsApp Audio Keys"),
-        DOCUMENT("WhatsApp Document Keys");
+        DOCUMENT("WhatsApp Document Keys"),
+        /**
+         * History-sync file ({@code md-msg-hist}). Baileys'
+         * {@code MEDIA_HKDF_KEY_MAPPING['md-msg-hist'] = 'History'}
+         * ({@code lib/Defaults/index.js}) combined with
+         * {@code hkdfInfoKey} ({@code lib/Utils/messages-media.js}:
+         * {@code `WhatsApp ${mapping} Keys`}) gives this info string.
+         * Download-only: history files are never uploaded, so this
+         * type is deliberately absent from {@code MediaUploader}'s
+         * MMS path map.
+         */
+        HISTORY("WhatsApp History Keys");
 
         private final byte[] info;
 

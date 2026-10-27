@@ -32,29 +32,47 @@ import id.jawa.domain.store.InMemorySenderKeyStore;
 import id.jawa.domain.store.InMemorySignalKeyStore;
 import id.jawa.domain.store.SignalKeyStore;
 import id.jawa.domain.store.SqliteAuthStore;
+import id.jawa.event.*;
+import id.jawa.feature.appstate.AppPatchBuilder;
+import id.jawa.feature.appstate.AppPatchEncoder;
+import id.jawa.feature.appstate.AppPatchTransport;
+import id.jawa.feature.appstate.AppStateEventMapper;
 import id.jawa.feature.appstate.AppStateKey;
 import id.jawa.feature.appstate.AppStateProcessor;
 import id.jawa.feature.appstate.AppStateSyncQuery;
+import id.jawa.feature.appstate.AppStateVersionStore;
 import id.jawa.feature.appstate.FileAppStateKeyStorage;
+import id.jawa.feature.appstate.FileAppStateVersionStore;
+import id.jawa.feature.appstate.InMemoryAppStateVersionStore;
 import id.jawa.feature.appstate.PatchName;
+import id.jawa.feature.appstate.SyncStateEvolver;
 import id.jawa.feature.media.MediaConn;
 import id.jawa.feature.media.MediaCrypto;
 import id.jawa.feature.media.MediaDownloader;
 import id.jawa.feature.media.MediaUploader;
+import id.jawa.feature.community.CommunityQuery;
+import id.jawa.feature.messaging.CallLinkQuery;
 import id.jawa.feature.messaging.GroupAction;
 import id.jawa.feature.messaging.GroupListQuery;
 import id.jawa.feature.messaging.GroupSender;
+import id.jawa.feature.messaging.HistorySyncNotificationParser;
 import id.jawa.feature.messaging.MessageEncoder;
 import id.jawa.feature.messaging.MessageReceiver;
 import id.jawa.feature.messaging.MessageSender;
+import id.jawa.feature.messaging.PeerDataOperations;
+import id.jawa.feature.messaging.ReachoutTimelock;
+import id.jawa.feature.messaging.StatusMentionBuilder;
 import id.jawa.feature.messaging.UsyncQuery;
 import id.jawa.feature.pairing.ClientPayloadBuilder;
 import id.jawa.feature.pairing.PairingCodeHandler;
 import id.jawa.feature.pairing.PairingHandler;
+import id.jawa.feature.privacy.PrivacyQuery;
 import id.jawa.feature.signal.JaWaProtocolStore;
 import id.jawa.feature.signal.PreKeyBundleFetcher;
 import id.jawa.feature.signal.PreKeyManager;
 import id.jawa.feature.signal.SessionBootstrap;
+import id.jawa.feature.store.InMemoryStore;
+import id.jawa.feature.store.StorePersistence;
 import id.jawa.proto.Wa;
 import id.jawa.protocol.codec.BinaryDecoder;
 import id.jawa.protocol.codec.BinaryEncoder;
@@ -253,10 +271,50 @@ public final class JaWaClient implements AutoCloseable {
     private FileSenderKeyStorage senderKeyStorage;
     private FileAppStateKeyStorage appStateKeyStorage;
     private AppStateProcessor appStateProcessor;
+    /**
+     * Increment 5: per-collection app-state-sync version state
+     * (Baileys {@code 'app-state-sync-version'}). Defaults to the
+     * in-memory store; {@link #connect()} replaces it with a
+     * {@link FileAppStateVersionStore} when a durable backend exists
+     * (SQLite database, or {@code signalDir}); a client with neither
+     * keeps the in-memory store and versions are lost on restart
+     * (see {@code FileAppStateVersionStore}'s fallback note).
+     */
+    private AppStateVersionStore appStateVersionStore = new InMemoryAppStateVersionStore();
+    /**
+     * Increment 5: IQ sender override for {@link #appPatch}, null in
+     * production (meaning {@code this::sendIqAsync}). Set only by the
+     * package-private test seam below, so appPatch can be exercised
+     * with a fake sender instead of a live server.
+     */
+    private AppPatchTransport.IqSender appPatchIqSender;
+    /**
+     * Increment 6: generic stanza-request sender override, null in
+     * production. Set only by the package-private test seam below, so
+     * {@link #sendIqAsync} and {@link #sendStanzaAsync} can be exercised
+     * with a fake sender instead of a live server. It is deliberately
+     * separate from {@code appPatchIqSender}: that seam feeds only the
+     * appPatch transport, while this one feeds the generic request
+     * paths (call-link creation, community V4 accept, MEX queries).
+     */
+    private AppPatchTransport.IqSender iqSenderForTesting;
+    /** Increment 8 test seam: captures peer-mode stanzas instead of {@link #send(BinaryNode)}. */
+    private java.util.function.Consumer<BinaryNode> messageSenderForTesting;
     private JaWaProtocolStore protocolStore;
     private PairingCodeHandler pairCodeHandler;
     private ScheduledExecutorService keepalive;
     private Listener listener = new Listener() {};
+    private final WaEventBus eventBus = new WaEventBus();
+    private final CallEventParser callEventParser = new CallEventParser();
+    /**
+     * Increment 2 in-memory store (chats, contacts, messages, groups,
+     * presences, labels). It is deliberately <em>not</em> bound to this
+     * client's event bus: the client dispatches events itself at the points
+     * below, and the store is query state. Binding the store to the bus as
+     * well would double-emit chats/groups events. Standalone store users
+     * may bind it to their own bus instead.
+     */
+    private final InMemoryStore memoryStore = new InMemoryStore();
     private FrameSocket frame;
     private NoiseHandshake noise;
     private NoiseTransport transport;
@@ -288,6 +346,42 @@ public final class JaWaClient implements AutoCloseable {
     private static final int PRE_KEY_UPLOAD_COUNT = 30;
 
     private final MessagingService messagingService = new MessagingService(this);
+    /**
+     * Increment 6: placeholder-resend cache for
+     * {@link #requestPlaceholderResend}. Baileys keeps this cache on the
+     * socket ({@code placeholderResendCache} in
+     * {@code lib/Socket/chats.js}); wa-java keeps one manager per
+     * client. Increment 7 wires the inbound hooks: the receiver
+     * resolves a pending claim when the real message is decoded (see
+     * {@code handleInboundMessage}), and the PDO-response branch
+     * consumes stored data via
+     * {@link #dispatchPlaceholderResendResponses}.
+     */
+    private final PeerDataOperations.PlaceholderResendManager placeholderResendManager =
+        new PeerDataOperations.PlaceholderResendManager();
+    /**
+     * Increment 10b: the delay {@link #requestPlaceholderResend} (and
+     * therefore the decrypt-failure auto-send in
+     * {@link #handleDecryptFailurePlaceholder}) waits before sending
+     * the PDO request. Production default is the manager's system
+     * delay (2 seconds, Baileys' delay); the seam exists so tests can
+     * inject an immediate fake delay instead of sleeping or leaving a
+     * 2-second delayed task behind, without changing production
+     * scheduling. The 8-second claim-expiry scheduling inside
+     * {@code requestPlaceholderResend} is unchanged.
+     */
+    private PeerDataOperations.PlaceholderResendManager.Delay placeholderResendDelay =
+        PeerDataOperations.PlaceholderResendManager.Delay.system();
+    /**
+     * Increment 7: Baileys' cached {@code privacySettings} variable
+     * ({@code lib/Socket/chats.js}, read by
+     * {@code fetchPrivacySettings}). Only the cached
+     * {@link #fetchPrivacySettings(boolean)} form uses this; the
+     * pre-existing {@link #getPrivacySettings()} always fetches and
+     * never reads or writes it, preserving its original behaviour.
+     */
+    private volatile PrivacySettings cachedPrivacySettings;
+
     private final GroupService groupService = new GroupService(this);
     private final MediaService mediaService = new MediaService(this);
     private final NewsletterService newsletterService = new NewsletterService(this);
@@ -303,6 +397,17 @@ public final class JaWaClient implements AutoCloseable {
         groupPhashMap = new ConcurrentHashMap<>();
     private final ReentrantLock messageSendLock =
         new ReentrantLock();
+
+    /** Increment 4: history-sync status state machine (Baileys chats.js). */
+    private final HistorySyncStatusTracker historySyncStatusTracker;
+
+    /**
+     * Increment 4: whether a {@code messaging-history.set} has been
+     * dispatched yet on this connection; Baileys' {@code isLatest} is
+     * "no previously processed history messages" (and undefined for
+     * ON_DEMAND).
+     */
+    private boolean historySetSeen;
 
     /**
      * Constructs a JaWaClient instance using the provided credential store.
@@ -322,6 +427,8 @@ public final class JaWaClient implements AutoCloseable {
     public JaWaClient(AuthStore store, Path signalDir) {
         this.store = store;
         this.signalDir = signalDir;
+        this.historySyncStatusTracker = new HistorySyncStatusTracker(
+            status -> dispatchEvent(BaileysEventType.MESSAGING_HISTORY_STATUS, status));
     }
 
     /**
@@ -331,6 +438,154 @@ public final class JaWaClient implements AutoCloseable {
      * @return This client instance for method chaining
      */
     public JaWaClient listener(Listener l) { this.listener = l != null ? l : new Listener() {}; return this; }
+
+    /**
+     * Returns the Baileys-shaped event bus for this client. The legacy
+     * single {@link Listener} is unchanged; bus events fire alongside it
+     * at the same dispatch points.
+     *
+     * @return this client's event bus
+     */
+    public WaEventBus eventBus() { return eventBus; }
+
+    /**
+     * Returns this client's in-memory store: chats, contacts, messages,
+     * groups, presences and labels accumulated from inbound traffic since
+     * connection (Increment 2). The store is populated by the client's
+     * reader loop; it is not persisted across restarts.
+     *
+     * @return this client's in-memory store
+     */
+    public InMemoryStore store() { return memoryStore; }
+
+    /**
+     * Saves this client's in-memory store to a file, explicitly and
+     * only when called (Increment 5; Baileys' {@code makeInMemoryStore}
+     * {@code toJSON} leaves <em>when</em> to save to the caller).
+     * Nothing calls this automatically: not on mutation, not on
+     * startup, not on shutdown. The write is atomic (sibling
+     * {@code .tmp} + move) via {@link StorePersistence}.
+     *
+     * @param file destination file path; must not be null
+     * @throws IOException if the file cannot be written
+     */
+    public void saveStore(Path file) throws IOException {
+        StorePersistence.saveStore(memoryStore, file);
+    }
+
+    /**
+     * Loads a store snapshot from a file into this client's live
+     * in-memory store, explicitly and only when called (Increment 5;
+     * Baileys' {@code fromJSON} counterpart). The live store's
+     * contents are replaced wholesale
+     * ({@link InMemoryStore#replaceWith(InMemoryStore)}); the live
+     * store's event-bus binding and message cap are kept. A missing
+     * file changes nothing and returns false; an empty or corrupt
+     * file replaces the store with an empty one (the store is a
+     * rebuildable cache — see {@code StorePersistence}'s policy)
+     * and returns true. Nothing calls this automatically.
+     *
+     * @param file source file path; must not be null
+     * @return true when a snapshot was loaded, false when the file
+     *         does not exist
+     * @throws IOException if the file cannot be read
+     */
+    public boolean loadStore(Path file) throws IOException {
+        InMemoryStore loaded = StorePersistence.loadStore(file);
+        if (loaded == null) return false;
+        memoryStore.replaceWith(loaded);
+        return true;
+    }
+
+    /**
+     * Registers a Baileys-shaped event listener on this client's bus.
+     *
+     * @param l listener implementation
+     * @return This client instance for method chaining
+     */
+    public JaWaClient addEventListener(WaEventListener l) { eventBus.addListener(l); return this; }
+
+    /**
+     * Unregisters a Baileys-shaped event listener from this client's bus.
+     *
+     * @param l listener implementation
+     * @return This client instance for method chaining
+     */
+    public JaWaClient removeEventListener(WaEventListener l) { eventBus.removeListener(l); return this; }
+
+    /**
+     * Increment 7: Baileys {@code waitForConnectionUpdate}
+     * ({@code lib/Socket/socket.js:963}, via
+     * {@code bindWaitForConnectionUpdate} in
+     * {@code lib/Utils/generics.js}). Waits on this client's event
+     * bus for a {@code connection.update} matching
+     * {@code predicate}; see {@link ConnectionUpdateWaiter} for the
+     * exact semantics, which differ from Baileys in two
+     * task-specified ways: the future completes with the matching
+     * update (Baileys resolves void), and on timeout it completes
+     * with null instead of failing (Baileys rejects on timeout and
+     * on close). A {@code close} update is delivered to the
+     * predicate like any other update.
+     *
+     * @param predicate match test; must not be null
+     * @param timeoutMs non-negative wait budget in milliseconds
+     * @return future completing with the first matching update, or null on timeout
+     */
+    public CompletableFuture<ConnectionUpdate> waitForConnectionUpdate(
+            Predicate<ConnectionUpdate> predicate, long timeoutMs) {
+        return ConnectionUpdateWaiter.waitFor(eventBus, predicate, timeoutMs);
+    }
+
+    /**
+     * Dispatches one bus event, logging (never throwing) on failure so a
+     * bus dispatch can never break the reader loop or a legacy callback.
+     * WaEventBus already guards each listener individually; this guard
+     * covers failures in the dispatch machinery itself.
+     */
+    private void dispatchEvent(BaileysEventType type, Object payload) {
+        try {
+            eventBus.dispatch(type, payload);
+        } catch (Throwable t) {
+            LOG.warn("Failed to dispatch {}", type == null ? "null event" : type.baileysName(), t);
+        }
+    }
+
+    /**
+     * Increment 2: emits {@code lid-mapping.update} for LID→PN mappings
+     * carried on an inbound message stanza ({@code sender_pn} /
+     * {@code participant_pn}), using exactly the derivation
+     * {@link MessageReceiver} applies when it fills
+     * {@link #LID_TO_PN_MAP}. Mappings are also recorded in the store.
+     * Unchanged re-registrations are still emitted here — unlike the
+     * store's change-only {@code upsertLidMapping} — because the stanza
+     * itself is the Baileys event trigger.
+     */
+    private void dispatchLidMappingsFrom(BinaryNode message) {
+        String from = message.attr("from");
+        String senderPn = message.attr("sender_pn");
+        if (from != null && from.endsWith("@lid") && senderPn != null && !senderPn.isBlank()) {
+            Jid fromJid = Jid.parse(from);
+            Jid pnJid = Jid.parse(senderPn);
+            if (fromJid != null && pnJid != null) {
+                String lidBare = fromJid.user() + "@lid";
+                String pnBare = pnJid.user() + "@" + Jid.SERVER_WHATSAPP;
+                memoryStore.upsertLidMapping(lidBare, pnBare);
+                dispatchEvent(BaileysEventType.LID_MAPPING_UPDATE, new LidMappingUpdate(lidBare, pnBare));
+            }
+        }
+        String participant = message.attr("participant");
+        String participantPn = message.attr("participant_pn");
+        if (participant != null && participant.endsWith("@lid") && participantPn != null && !participantPn.isBlank()) {
+            Jid partJid = Jid.parse(participant);
+            Jid pnJid = Jid.parse(participantPn);
+            if (partJid != null && pnJid != null) {
+                String lidBare = partJid.user() + "@lid";
+                String pnBare = pnJid.user() + "@" + Jid.SERVER_WHATSAPP;
+                memoryStore.upsertLidMapping(lidBare, pnBare);
+                dispatchEvent(BaileysEventType.LID_MAPPING_UPDATE, new LidMappingUpdate(lidBare, pnBare));
+            }
+        }
+    }
 
     /**
      * Enables or disables automatic reconnection with exponential backoff upon unexpected disconnection.
@@ -715,6 +970,7 @@ public final class JaWaClient implements AutoCloseable {
             preKeyStorage      = new FilePreKeyStorage(sqliteStore);
             senderKeyStorage   = new FileSenderKeyStorage(sqliteStore);
             appStateKeyStorage = new FileAppStateKeyStorage(sqliteStore);
+            appStateVersionStore = new FileAppStateVersionStore(sqliteStore);
             signalStore        = new InMemorySignalKeyStore(preKeyStorage);
             senderKeyStore     = new InMemorySenderKeyStore(senderKeyStorage);
             appStateProcessor  = new AppStateProcessor(appStateKeyStorage);
@@ -723,6 +979,7 @@ public final class JaWaClient implements AutoCloseable {
             preKeyStorage      = new FilePreKeyStorage(signalDir.resolve("prekeys"));
             senderKeyStorage   = new FileSenderKeyStorage(signalDir.resolve("sender-keys"));
             appStateKeyStorage = new FileAppStateKeyStorage(signalDir.resolve("appstate-keys"));
+            appStateVersionStore = new FileAppStateVersionStore(signalDir.resolve("appstate-versions"));
             signalStore        = new InMemorySignalKeyStore(preKeyStorage);
             senderKeyStore     = new InMemorySenderKeyStore(senderKeyStorage);
             appStateProcessor  = new AppStateProcessor(appStateKeyStorage);
@@ -831,22 +1088,83 @@ public final class JaWaClient implements AutoCloseable {
         var pm = decoded.message().getProtocolMessage();
         if (!pm.hasAppStateSyncKeyShare()) return;
         int count = 0;
+        String lastKeyIdB64 = null;
         for (Wa.Message.AppStateSyncKey k : pm.getAppStateSyncKeyShare().getKeysList()) {
             byte[] id = k.getKeyId().getKeyId().toByteArray();
             byte[] data = k.getKeyData().getKeyData().toByteArray();
             if (data.length != 32) continue;
             appStateKeyStorage.put(new AppStateKey(id, data));
+            lastKeyIdB64 = Bytes.toBase64(id);
             count++;
         }
         if (count > 0) {
             LOG.info("Persisted {} app-state key(s) shared by {}", count, decoded.senderJid());
+            // Increment 5: Baileys sets creds.myAppStateKeyId to the
+            // last shared key id (lib/Utils/process-message.js:361
+            // emits creds.update with it) — without this, appPatch
+            // could never find "my" key, since nothing else sets the
+            // field. Standard base64, matching Baileys'
+            // Buffer.toString('base64') and AuthCreds' documented form.
+            if (creds != null && lastKeyIdB64 != null) {
+                creds.myAppStateKeyId = lastKeyIdB64;
+                try { store.save(creds); }
+                catch (Exception e) { LOG.warn("save creds (myAppStateKeyId) failed", e); }
+            }
             try { listener.onAppStateKeysReceived(count); }
             catch (Throwable t) { LOG.warn("listener.onAppStateKeysReceived threw", t); }
         }
     }
 
+    /**
+     * Result of an app-state sync: the decoded mutations (as
+     * {@link #requestAppStateSync} returns), plus the version numbers
+     * the server actually reported.
+     *
+     * @param mutations decoded mutations, in server order
+     * @param reportedVersion server-reported version for the collection
+     *                        (see {@link AppStateSyncQuery.PatchList#reportedVersion()}),
+     *                        or null when the response carries no usable version
+     * @param hasMorePatches server's {@code has_more_patches} flag
+     * @param error true only when the server answered with an error IQ
+     *              (mutations are then empty and no version is persisted)
+     */
+    public record AppStateSyncResult(List<AppStateProcessor.Mutation> mutations,
+                                     Long reportedVersion,
+                                     boolean hasMorePatches,
+                                     boolean error) {}
+
     public CompletableFuture<List<AppStateProcessor.Mutation>>
             requestAppStateSync(PatchName name, long fromVersion) {
+        return requestAppStateSyncWithVersions(name, fromVersion)
+            .thenApply(AppStateSyncResult::mutations);
+    }
+
+    /**
+     * Increment 5: app-state sync that also exposes and persists
+     * collection versions — the version plumbing Increment 4 was
+     * missing. Behaviour for the returned mutations is unchanged from
+     * the old {@link #requestAppStateSync}; the addition is that, on
+     * a successful (non-error) sync, the collection's LtHash state is
+     * evolved from the decoded mutations
+     * ({@link SyncStateEvolver}, mirroring Baileys'
+     * {@code decodeSyncdSnapshot}/{@code decodePatches}) and persisted
+     * to {@link #appStateVersionStore()} — but only when the evolution
+     * is trustworthy (see {@code SyncStateEvolver}'s trust rule: a
+     * patch-only sync with no stored or snapshot base, a missing
+     * version, or any undecodable record/mutation leaves the stored
+     * state untouched and logs a warning instead of persisting a
+     * half-evolved state). An error IQ persists nothing. A failed
+     * persist (e.g. a SQLite error) is logged, never fails the sync
+     * result, because the mutations themselves were decoded fine.
+     *
+     * <p>Single-request only: unlike Baileys' {@code resyncAppState}
+     * ({@code lib/Socket/chats.js:428}), which loops while
+     * {@code hasMorePatches} is set, this method makes one request;
+     * callers that need a complete sync must loop on
+     * {@link AppStateSyncResult#hasMorePatches()} themselves.
+     */
+    public CompletableFuture<AppStateSyncResult>
+            requestAppStateSyncWithVersions(PatchName name, long fromVersion) {
         if (appStateProcessor == null) {
             return CompletableFuture.failedFuture(
                 new IllegalStateException("signalDir not set: app-state sync requires persistent storage"));
@@ -859,31 +1177,243 @@ public final class JaWaClient implements AutoCloseable {
         return sendIqAsync(iq).thenApply(resp -> {
             if ("error".equals(resp.attr("type"))) {
                 LOG.warn("App-state sync rejected: {}", resp);
-                return List.<AppStateProcessor.Mutation>of();
+                return new AppStateSyncResult(List.of(), null, false, true);
             }
             AppStateSyncQuery.PatchList list =
                 AppStateSyncQuery.parseResponse(resp);
-            if (list == null) return List.<AppStateProcessor.Mutation>of();
+            if (list == null) return new AppStateSyncResult(List.of(), null, false, false);
 
             List<AppStateProcessor.Mutation> all = new ArrayList<>();
+            List<AppStateProcessor.Mutation> snapshotDecoded = null;
             if (list.snapshot() != null) {
-                all.addAll(appStateProcessor.decodeSnapshot(list.snapshot(), false));
+                snapshotDecoded = appStateProcessor.decodeSnapshot(list.snapshot(), false);
+                all.addAll(snapshotDecoded);
             }
+            List<List<AppStateProcessor.Mutation>> perPatchDecoded = new ArrayList<>();
             for (Wa.SyncdPatch p : list.patches()) {
-                all.addAll(appStateProcessor.decodePatch(p, false));
+                List<AppStateProcessor.Mutation> decoded = appStateProcessor.decodePatch(p, false);
+                perPatchDecoded.add(decoded);
+                all.addAll(decoded);
             }
-            LOG.info("App-state sync {}: {} snapshot record(s) + {} patch(es) -> {} mutation(s) decoded",
+            LOG.info("App-state sync {}: {} snapshot record(s) + {} patch(es) -> {} mutation(s) decoded, reportedVersion={}",
                 name.wire,
                 list.snapshot() == null ? 0 : list.snapshot().getRecordsCount(),
                 list.patches().size(),
-                all.size());
+                all.size(),
+                list.reportedVersion());
+
+            // Persist the evolved version state (Increment 5). A
+            // snapshot gives a fresh base even with no stored state;
+            // patches evolve from the snapshot state when present,
+            // else from the stored state — and from nothing otherwise.
+            id.jawa.feature.appstate.LtHashState evolved = null;
+            if (list.snapshot() != null) {
+                evolved = SyncStateEvolver.evolveFromSnapshot(list.snapshot(), snapshotDecoded);
+                if (evolved == null) {
+                    LOG.warn("App-state sync {}: snapshot state not persisted (missing version or undecodable record)",
+                        name.wire);
+                }
+            }
+            if (!list.patches().isEmpty()) {
+                id.jawa.feature.appstate.LtHashState base = evolved != null
+                    ? evolved
+                    : appStateVersionStore.load(name.wire);
+                if (base == null) {
+                    LOG.warn("App-state sync {}: patch state not persisted (no stored or snapshot base state)",
+                        name.wire);
+                } else {
+                    id.jawa.feature.appstate.LtHashState after = SyncStateEvolver.evolveFromPatches(
+                        base, list.patches(), perPatchDecoded, list.collectionVersion());
+                    if (after == null) {
+                        LOG.warn("App-state sync {}: patch state not persisted (missing version or undecodable mutation)",
+                            name.wire);
+                    } else {
+                        evolved = after;
+                    }
+                }
+            }
+            if (evolved != null && (list.snapshot() != null || !list.patches().isEmpty())) {
+                try {
+                    appStateVersionStore.save(name.wire, evolved);
+                } catch (RuntimeException e) {
+                    LOG.warn("App-state sync {}: failed persisting version state: {}", name.wire, e.toString());
+                }
+            }
+
             if (!all.isEmpty()) {
                 try { listener.onAppStateMutations(name, all); }
                 catch (Throwable t) { LOG.warn("listener.onAppStateMutations threw", t); }
+                // Increment 3: dispatch typed events mapped from decoded
+                // sync actions (labels.edit, labels.association,
+                // settings.update, chats.lock). The feature-appstate mapper
+                // is the canonical one here: it covers the same
+                // settings/lock branches as the event-package
+                // AppStateSettingsLockMapper plus labels. History-set/status
+                // mapping is deliberately not dispatched here — there is
+                // no history-sync notification path in this client yet.
+                for (AppStateProcessor.Mutation mutation : all) {
+                    for (AppStateEventMapper.MappedEvent mapped
+                            : AppStateEventMapper.mapMutation(mutation)) {
+                        dispatchEvent(mapped.type(), mapped.payload());
+                    }
+                }
             }
-            return all;
+            return new AppStateSyncResult(List.copyOf(all), list.reportedVersion(),
+                list.hasMorePatches(), false);
         });
     }
+
+    /**
+     * Increment 5: the JaWaClient {@code appPatch} hook (Baileys
+     * {@code lib/Socket/chats.js:712} {@code appPatch}, via
+     * {@link AppPatchTransport}). Checks, in order: the patch is
+     * non-null; {@code creds.myAppStateKeyId} is set (Baileys throws
+     * 'App state key not present!' when absent); the patch type is a
+     * known collection ({@link PatchName#fromWire}); the key id is
+     * valid standard-base64. The transport then resyncs the
+     * collection, encodes with the stored app-state key and the
+     * stored version state, sends the {@code w:sync:app:state} IQ,
+     * and persists the new version only on success — an error IQ, a
+     * missing key, or a send failure leaves the stored version
+     * untouched (see {@code AppPatchTransport}).
+     *
+     * <p>Resync: the adapter calls
+     * {@link #requestAppStateSyncWithVersions} from the stored
+     * version (a snapshot request when no version is stored, or the
+     * stored version is 0 — mirroring Baileys'
+     * {@code return_snapshot: !state.version}), which persists the
+     * evolved state when trustworthy; the transport then encodes from
+     * that refreshed store. When no app-state processor exists (no
+     * durable storage configured), resync is a no-op and the
+     * transport encodes from whatever the version store holds, as
+     * Increment 4 documented. A resync rejected by the server (error
+     * IQ) fails the patch, and a resync that reports
+     * {@code hasMorePatches} is logged: this hook makes a single
+     * resync request and does not loop the way Baileys'
+     * {@code resyncAppState} does.
+     *
+     * <p>Silent-failure behaviour is <em>not</em> changed (documented,
+     * not changed, per the workstream constraint): this method adds
+     * no connected check of its own. When the IQ sender is the real
+     * {@code sendIqAsync} and the client is disconnected,
+     * {@link #send(BinaryNode)} logs a warning and drops the node,
+     * leaving the future pending — exactly as every other IQ method
+     * behaves. Callers that need a failure on disconnect must enforce
+     * it in their own sender, or check connection state first.
+     *
+     * <p>Wire caveat, inherited from Increment 4 and restated, not
+     * re-verified: {@code AppStateKey.expand}'s split order and the
+     * LtHash-vs-rust-bridge behaviour are as Increment 4 left them;
+     * round-trip tests prove self-consistency only, not wire
+     * compatibility with WhatsApp's server-side LtHash.
+     *
+     * @param patch patch model from {@link AppPatchBuilder}
+     * @return future completing with the encoder result on a successful send
+     */
+    public CompletableFuture<AppPatchEncoder.EncodedPatch> appPatch(AppPatchBuilder.AppPatch patch) {
+        if (patch == null) {
+            return CompletableFuture.failedFuture(new IllegalArgumentException("patch must not be null"));
+        }
+        if (creds == null || creds.myAppStateKeyId == null || creds.myAppStateKeyId.isBlank()) {
+            return CompletableFuture.failedFuture(new IllegalStateException(
+                "App state key not present: myAppStateKeyId is not set"));
+        }
+        PatchName patchName = PatchName.fromWire(patch.type());
+        if (patchName == null) {
+            return CompletableFuture.failedFuture(new IllegalStateException(
+                "unknown app-state patch type: " + patch.type()));
+        }
+        byte[] myKeyId;
+        try {
+            myKeyId = Bytes.fromBase64(creds.myAppStateKeyId);
+        } catch (IllegalArgumentException e) {
+            return CompletableFuture.failedFuture(new IllegalStateException(
+                "myAppStateKeyId is not valid base64: " + creds.myAppStateKeyId, e));
+        }
+        AppPatchTransport transport = new AppPatchTransport(
+            keyId -> appStateKeyStorage == null ? null : appStateKeyStorage.get(keyId),
+            this::resyncAppStateForPatch,
+            appStateVersionStore,
+            appPatchIqSender != null ? appPatchIqSender : this::sendIqAsync,
+            this::newIqId);
+        return transport.send(patch, myKeyId);
+    }
+
+    /** Resync adapter for {@link #appPatch} (Baileys {@code resyncAppState}). */
+    private CompletableFuture<Void> resyncAppStateForPatch(String collectionName) {
+        PatchName name = PatchName.fromWire(collectionName);
+        if (name == null) {
+            return CompletableFuture.failedFuture(new IllegalStateException(
+                "unknown app-state patch type: " + collectionName));
+        }
+        if (appStateProcessor == null) {
+            LOG.debug("appPatch resync skipped for {}: no app-state processor (no durable storage configured)", collectionName);
+            return CompletableFuture.completedFuture(null);
+        }
+        id.jawa.feature.appstate.LtHashState stored = appStateVersionStore.load(collectionName);
+        long fromVersion = (stored == null || stored.version() == 0) ? -1 : stored.version();
+        return requestAppStateSyncWithVersions(name, fromVersion).thenCompose(result -> {
+            if (result.error()) {
+                return CompletableFuture.<Void>failedFuture(new IllegalStateException(
+                    "app-state resync rejected by server for " + collectionName));
+            }
+            if (result.hasMorePatches()) {
+                LOG.warn("appPatch resync for {} reported has_more_patches: single-request resync only, "
+                    + "later patches in the server queue were not fetched", collectionName);
+            }
+            return CompletableFuture.completedFuture(null);
+        });
+    }
+
+    /**
+     * Returns this client's app-state-sync version store (durable
+     * when {@link #connect()} found a SQLite store or a
+     * {@code signalDir}, in-memory otherwise).
+     */
+    public AppStateVersionStore appStateVersionStore() { return appStateVersionStore; }
+
+    /** Test seam: creds as {@link #connect()} would have loaded them. */
+    void setCredsForTesting(AuthCreds creds) { this.creds = creds; }
+
+    /** Test seam: app-state key storage as {@link #connect()} would have built it. */
+    void setAppStateKeyStorageForTesting(FileAppStateKeyStorage storage) { this.appStateKeyStorage = storage; }
+
+    /** Test seam: version store as {@link #connect()} would have wired it (null restores the in-memory default). */
+    void setAppStateVersionStoreForTesting(AppStateVersionStore store) {
+        this.appStateVersionStore = store != null ? store : new InMemoryAppStateVersionStore();
+    }
+
+    /** Test seam: fake generic stanza-request sender for {@link #sendIqAsync} and {@link #sendStanzaAsync} (null restores the real send path). */
+    void setIqSenderForTesting(AppPatchTransport.IqSender sender) { this.iqSenderForTesting = sender; }
+
+    /** Increment 8 test seam: protocol store as {@link #connect()} would have built it (null restores live behaviour). */
+    void setProtocolStoreForTesting(JaWaProtocolStore store) { this.protocolStore = store; }
+
+    /** Increment 8 test seam: captures peer-mode message stanzas instead of {@link #send(BinaryNode)} (null restores the real send path). */
+    void setMessageSenderForTesting(java.util.function.Consumer<BinaryNode> sender) { this.messageSenderForTesting = sender; }
+
+    /**
+     * Test seam: runs one inbound stanza through {@code handleStanza}
+     * (null pairing handler: only branches that do not touch pairing
+     * are exercised, which includes the {@code <call>} correlation
+     * branch). Returns what {@code handleStanza} returns.
+     */
+    boolean handleStanzaForTesting(BinaryNode node) throws Exception { return handleStanza(node, null); }
+
+    /** Test seam: the client's placeholder-resend manager, so tests can claim entries before driving the PDO-response dispatch. */
+    PeerDataOperations.PlaceholderResendManager placeholderResendManagerForTesting() {
+        return placeholderResendManager;
+    }
+
+    /** Increment 10b test seam: delay used by {@link #requestPlaceholderResend} (null restores the system delay). */
+    void setPlaceholderResendDelayForTesting(
+            PeerDataOperations.PlaceholderResendManager.Delay delay) {
+        this.placeholderResendDelay = delay != null
+            ? delay : PeerDataOperations.PlaceholderResendManager.Delay.system();
+    }
+
+    /** Test seam: fake IQ sender for {@link #appPatch} (null restores {@code sendIqAsync}). */
+    void setAppPatchIqSenderForTesting(AppPatchTransport.IqSender sender) { this.appPatchIqSender = sender; }
 
     private void handleFailure(BinaryNode node) {
         String reason = node.attr("reason", "");
@@ -905,6 +1435,7 @@ public final class JaWaClient implements AutoCloseable {
         String detail = "reason=" + reason + (location.isEmpty() ? "" : " location=" + location);
         try { listener.onTerminated(cat, detail, permanent); }
         catch (Throwable t) { LOG.warn("listener.onTerminated threw", t); }
+        dispatchEvent(BaileysEventType.CONNECTION_UPDATE, ConnectionUpdate.close(detail));
         try { listener.onError(new IllegalStateException("server rejected session: " + detail)); }
         catch (Throwable t) { LOG.warn("listener.onError threw", t); }
     }
@@ -918,11 +1449,15 @@ public final class JaWaClient implements AutoCloseable {
             terminated.set(true);
             try { listener.onTerminated(TerminationReason.REPLACED, "conflict type=" + type, true); }
             catch (Throwable t) { LOG.warn("listener.onTerminated threw", t); }
+            dispatchEvent(BaileysEventType.CONNECTION_UPDATE,
+                ConnectionUpdate.close("conflict type=" + type));
             return;
         }
         LOG.warn("Stream error: {} (treating as transient)", node);
         try { listener.onTerminated(TerminationReason.TRANSIENT, "stream:error " + node, false); }
         catch (Throwable t) { LOG.warn("listener.onTerminated threw", t); }
+        dispatchEvent(BaileysEventType.CONNECTION_UPDATE,
+            ConnectionUpdate.close("stream:error " + node));
     }
 
     private void doAutoReconnect() {
@@ -998,6 +1533,43 @@ public final class JaWaClient implements AutoCloseable {
         return "3EB0" + Bytes.toHex(prefix).toUpperCase();
     }
 
+    /**
+     * Increment 8: Baileys {@code generateMessageIDV2}
+     * ({@code lib/Utils/generics.js}, after whatsmeow): a 44-byte
+     * buffer holding the unix-seconds timestamp (big-endian, 8
+     * bytes), the own user id plus {@code "@c.us"} at offset 8,
+     * and 16 random bytes at offset 28; SHA-256 of the buffer,
+     * first 9 bytes as upper-case hex prefixed with {@code "3EB0"},
+     * with {@code "STARFALL"} inserted at position
+     * {@code 4 + (hash[0] & 15)}. Used for the community V4
+     * synthetic upsert id, exactly where Baileys calls
+     * {@code generateMessageIDV2(sock.user?.id)}.
+     *
+     * @return a V2-format message id
+     */
+    public String generateMessageIdV2() {
+        byte[] data = new byte[44];
+        long ts = System.currentTimeMillis() / 1000L;
+        for (int i = 7; i >= 0; i--) {
+            data[i] = (byte) (ts & 0xFFL);
+            ts >>= 8;
+        }
+        if (creds != null && creds.meJid != null) {
+            Jid j = Jid.parse(creds.meJid);
+            if (j != null && j.user() != null && !j.user().isEmpty()) {
+                byte[] userBytes = (j.user() + "@c.us").getBytes(StandardCharsets.UTF_8);
+                System.arraycopy(userBytes, 0, data, 8, Math.min(userBytes.length, 20));
+            }
+        }
+        byte[] random = Bytes.random(16);
+        System.arraycopy(random, 0, data, 28, 16);
+        byte[] hash = Sha256.hash(data);
+        byte[] prefix = Arrays.copyOfRange(hash, 0, 9);
+        String baseId = "3EB0" + Bytes.toHex(prefix).toUpperCase();
+        int pos = 4 + (hash[0] & 15);
+        return baseId.substring(0, pos) + "STARFALL" + baseId.substring(pos);
+    }
+
     public String sendIq(BinaryNode iq, Consumer<BinaryNode> onResponse) {
         String id = iq.attr("id");
         if (id == null) throw new IllegalArgumentException("iq has no id attribute");
@@ -1007,9 +1579,245 @@ public final class JaWaClient implements AutoCloseable {
     }
 
     public CompletableFuture<BinaryNode> sendIqAsync(BinaryNode iq) {
+        if (iqSenderForTesting != null) return iqSenderForTesting.sendIq(iq);
         var f = new CompletableFuture<BinaryNode>();
         sendIq(iq, f::complete);
         return f;
+    }
+
+    /**
+     * Increment 6: generic stanza request/response, mirroring Baileys'
+     * {@code query} ({@code lib/Socket/socket.js:122}), which is
+     * tag-agnostic: it waits for any inbound node carrying the request
+     * id, not just an {@code iq}. wa-java's previous correlation only
+     * consulted the pending map for {@code iq} result/error nodes, so
+     * a {@code <call>} stanza could be sent (via {@link #send}) but its
+     * response could never complete a future. This method registers the
+     * request id in the same pending map {@code sendIq} uses and sends
+     * the node; the inbound {@code <call>} branch of
+     * {@code handleStanza} now completes a pending entry for that id
+     * before treating the stanza as a call event, and {@code iq}
+     * responses were already correlated. The response tag is therefore
+     * not assumed: Baileys' {@code createCallLink} reads
+     * {@code <link_create>} off whatever node arrives with the id.
+     *
+     * <p>Silent-failure behaviour is <em>not</em> changed (documented,
+     * not changed, per the workstream constraint): like every other
+     * request method here, a disconnected client drops the node in
+     * {@link #send} and the future stays pending, exactly as
+     * {@code sendIqAsync} behaves. There is no timeout on this path,
+     * matching {@code sendIqAsync}; Baileys' own query timeout is a
+     * separate gap, not closed here.
+     *
+     * @param node request stanza; must carry a non-null {@code id} attr
+     * @return future completing with the inbound response node
+     */
+    public CompletableFuture<BinaryNode> sendStanzaAsync(BinaryNode node) {
+        if (node == null) throw new IllegalArgumentException("node must not be null");
+        if (iqSenderForTesting != null) return iqSenderForTesting.sendIq(node);
+        String id = node.attr("id");
+        if (id == null) throw new IllegalArgumentException("node has no id attribute");
+        var f = new CompletableFuture<BinaryNode>();
+        pendingIqResults.put(id, f::complete);
+        send(node);
+        return f;
+    }
+
+    /**
+     * Increment 6: creates a call link (Baileys {@code createCallLink},
+     * {@code lib/Socket/chats.js:603}). Sends the {@code <call>} stanza
+     * built by {@link CallLinkQuery#buildCreate} via
+     * {@link #sendStanzaAsync} and returns the created link's token from
+     * the response's {@code <link_create>} child. An error-type
+     * response fails the future (Baileys' {@code query} asserts the
+     * node error-free); a non-error response without a token resolves
+     * to null, as Baileys' {@code child?.attrs?.token} does.
+     *
+     * @param mediaType media type, e.g. {@code video} or {@code audio}
+     * @param eventStartTime event start time in epoch seconds, or null for a link with no event
+     * @return future resolving to the created link token, or null when the response carries none
+     */
+    public CompletableFuture<String> createCallLink(String mediaType, Long eventStartTime) {
+        BinaryNode node = CallLinkQuery.buildCreate(newIqId(), mediaType, eventStartTime);
+        return sendStanzaAsync(node).thenApply(resp -> {
+            if ("error".equals(resp.attr("type"))) {
+                throw new IllegalStateException("createCallLink rejected: " + resp);
+            }
+            return CallLinkQuery.parseToken(resp);
+        });
+    }
+
+    /**
+     * Increment 6: accepts a community V4 invite (Baileys
+     * {@code communityAcceptInviteV4},
+     * {@code lib/Socket/communities.js:347}, wrapped in
+     * {@code ev.createBufferedFunction}). Sends the {@code <accept>}
+     * community IQ built by
+     * {@link CommunityQuery#buildAcceptInviteV4} and, on success, emits
+     * the expiry side-effect exactly when Baileys does: only when the
+     * caller supplied a full message key (a non-blank
+     * {@code messageId}). The invite message is rewritten with
+     * {@code inviteExpiration = 0} and {@code inviteCode = ''} (all
+     * other fields preserved verbatim, as Baileys' {@code fromObject}
+     * copy does) and dispatched as
+     * {@code messages.update} with {@code update.message.groupInviteMessage}
+     * set to that expired copy — carried here by
+     * {@link MessagesUpdate.MessageUpdate#groupInviteMessage()}.
+     * When the key is a bare remote JID (no message id), Baileys skips
+     * the emission and so does this method.
+     *
+     * <p>Increment 8: Baileys then upserts a synthetic
+     * {@code GROUP_PARTICIPANT_ADD} message (the
+     * {@code upsertMessage} call after the emission,
+     * {@code lib/Socket/communities.js:347} area), and so does this
+     * method, in the same order (expiry emission first, synthetic
+     * upsert second, and the synthetic upsert runs even for a
+     * bare-JID key, as in Baileys). Baileys' synthetic key is
+     * {@code {remoteJid: groupJid, id: generateMessageIDV2(me.id),
+     * fromMe: false, participant: inviterRemoteJid}} with
+     * {@code messageStubType: GROUP_PARTICIPANT_ADD},
+     * {@code messageStubParameters: [JSON.stringify(creds.me)]},
+     * {@code participant: inviterRemoteJid} and
+     * {@code messageTimestamp: unixTimestampSeconds()}, and no
+     * message content. wa-java's {@link MessageReceiver.Decoded}
+     * carries no stub-type/stub-parameters/fromMe fields, so the
+     * dispatched upsert carries exactly the key-equivalent fields
+     * that model can hold — sender = inviter (the participant),
+     * group = the community JID, id = the V2 id, timestamp = now
+     * in epoch seconds, no message content — and the stub type and
+     * the JSON(me) parameter are not carried (documented loss, not
+     * invented fields). The synthetic message is also fed to the
+     * in-memory store with {@code fromMe = false}, mirroring the
+     * inbound path's {@code memoryStore.upsertMessage(decoded)}
+     * call; it does not re-fire the legacy {@code onMessage}
+     * callback, matching the placeholder-response dispatch-only
+     * precedent for synthetic upserts.
+     *
+     * @param inviterRemoteJid inviter's JID (Baileys' {@code key.remoteJid}, the {@code admin} attr)
+     * @param messageId invite message id, or null/blank for a bare-JID key (no emission)
+     * @param fromMe Baileys key {@code fromMe} for the emitted update
+     * @param participant Baileys key {@code participant}, or null
+     * @param inviteMessage the invite message to accept; its group JID, code and expiration build the IQ
+     * @return future resolving to the community JID from the response ({@code results.attrs.from}), or null
+     */
+    public CompletableFuture<String> acceptCommunityInviteV4(String inviterRemoteJid, String messageId,
+                                                              boolean fromMe, String participant,
+                                                              Wa.Message.GroupInviteMessage inviteMessage) {
+        if (inviterRemoteJid == null || inviterRemoteJid.isBlank()) {
+            return CompletableFuture.failedFuture(new IllegalArgumentException("inviterRemoteJid must not be blank"));
+        }
+        if (inviteMessage == null) {
+            return CompletableFuture.failedFuture(new IllegalArgumentException("inviteMessage must not be null"));
+        }
+        BinaryNode iq = CommunityQuery.buildAcceptInviteV4(newIqId(), inviteMessage.getGroupJid(),
+            inviteMessage.getInviteCode(), inviteMessage.getInviteExpiration(), inviterRemoteJid);
+        return sendIqAsync(iq).thenApply(resp -> {
+            if (messageId != null && !messageId.isBlank()) {
+                Wa.Message.GroupInviteMessage expired = CommunityQuery.expireInviteMessage(inviteMessage);
+                dispatchEvent(BaileysEventType.MESSAGES_UPDATE, new MessagesUpdate(List.of(
+                    new MessagesUpdate.MessageUpdate(messageId, inviterRemoteJid, fromMe, participant,
+                        null, null, null, expired))));
+            }
+            // Increment 9: full GROUP_PARTICIPANT_ADD fidelity (Baileys
+            // lib/Socket/communities.js:358-359): the synthetic upsert
+            // carries messageStubType GROUP_PARTICIPANT_ADD and
+            // messageStubParameters [JSON.stringify(creds.me)].
+            MessageReceiver.Decoded synthetic = new MessageReceiver.Decoded(
+                inviterRemoteJid, inviteMessage.getGroupJid(), generateMessageIdV2(), null,
+                null, null, null, System.currentTimeMillis() / 1000L,
+                Wa.WebMessageInfo.StubType.GROUP_PARTICIPANT_ADD,
+                List.of(meStubParameterJson(creds)));
+            dispatchEvent(BaileysEventType.MESSAGES_UPSERT, new MessageUpsert(List.of(synthetic), "notify"));
+            memoryStore.upsertMessage(synthetic, false);
+            return resp.attr("from");
+        });
+    }
+
+    /**
+     * Increment 9: serialises the account's {@code me} for a
+     * {@code messageStubParameters} entry, mirroring Baileys'
+     * {@code JSON.stringify(authState.creds.me)}
+     * ({@code lib/Socket/communities.js:359}).
+     * <p>
+     * Baileys' {@code me} shape: {@code {id, name}} at pairing
+     * ({@code lib/Socket/socket.js} pairing-code path) with
+     * {@code lid} added later ({@code creds.update} merge). wa-java's
+     * {@link AuthCreds} carries exactly those three fields under
+     * different names — {@code meJid} (bare JID, matching Baileys'
+     * device-less {@code me.id}), {@code pushName} (the account
+     * display name, Baileys' {@code me.name} analogue), and
+     * {@code meLid} — so the JSON carries {@code id}/{@code name}/
+     * {@code lid} in Baileys' key order, omitting any blank field.
+     * Field difference, stated not hidden: wa-java has no separate
+     * business/profile name distinct from {@code pushName}, so a
+     * business account's {@code me.name} may differ from Baileys'.
+     * With no usable {@code me} at all (null creds / blank
+     * {@code meJid}) the result is {@code "{}"}, matching
+     * {@code JSON.stringify} of an empty {@code me} object.
+     * Package-private so tests can assert the exact serialisation.
+     */
+    static String meStubParameterJson(AuthCreds creds) {
+        StringBuilder sb = new StringBuilder("{");
+        boolean first = true;
+        String id = creds != null && creds.meJid != null && !creds.meJid.isBlank()
+            ? Jid.bare(creds.meJid) : null;
+        String name = creds != null && creds.pushName != null && !creds.pushName.isBlank()
+            ? creds.pushName : null;
+        String lid = creds != null && creds.meLid != null && !creds.meLid.isBlank()
+            ? creds.meLid : null;
+        for (String[] field : new String[][]{{"id", id}, {"name", name}, {"lid", lid}}) {
+            if (field[1] == null) continue;
+            if (!first) sb.append(',');
+            first = false;
+            sb.append('"').append(field[0]).append("\":\"").append(jsonEscape(field[1])).append('"');
+        }
+        return sb.append('}').toString();
+    }
+
+    private static String jsonEscape(String value) {
+        StringBuilder sb = new StringBuilder(value.length());
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
+            switch (c) {
+                case '"' -> sb.append("\\\"");
+                case '\\' -> sb.append("\\\\");
+                case '\n' -> sb.append("\\n");
+                case '\r' -> sb.append("\\r");
+                case '\t' -> sb.append("\\t");
+                default -> {
+                    if (c < 0x20) sb.append(String.format("\\u%04x", (int) c));
+                    else sb.append(c);
+                }
+            }
+        }
+        return sb.toString();
+    }
+
+    /**
+     * Increment 7: revokes a community V4 invite (Baileys
+     * {@code communityRevokeInviteV4},
+     * {@code lib/Socket/communities.js:309}). Sends the
+     * {@code <revoke><participant jid="..."/>} community IQ built by
+     * {@link CommunityQuery#buildRevokeInviteV4} — the builder
+     * already existed from Increment 5; this is its facade, mirroring
+     * {@link #acceptCommunityInviteV4}'s IQ/response pattern.
+     * Baileys returns {@code true} for any non-null result; wa-java
+     * returns true when a response node arrived, false only when the
+     * response itself is null.
+     *
+     * @param communityJid community JID
+     * @param invitedJid JID of the invited person whose invite is revoked
+     * @return future resolving to true on a response, false on a null response
+     */
+    public CompletableFuture<Boolean> revokeCommunityInviteV4(String communityJid, String invitedJid) {
+        if (communityJid == null || communityJid.isBlank()) {
+            return CompletableFuture.failedFuture(new IllegalArgumentException("communityJid must not be blank"));
+        }
+        if (invitedJid == null || invitedJid.isBlank()) {
+            return CompletableFuture.failedFuture(new IllegalArgumentException("invitedJid must not be blank"));
+        }
+        BinaryNode iq = CommunityQuery.buildRevokeInviteV4(newIqId(), communityJid, invitedJid);
+        return sendIqAsync(iq).thenApply(resp -> resp != null);
     }
 
     public CompletableFuture<String> requestPairingCode(String phoneNumber, String customCode) {
@@ -1074,6 +1882,63 @@ public final class JaWaClient implements AutoCloseable {
             : sendDmMessage(chatJid, msg);
     }
 
+    /**
+     * Increment 2: sends an album (Baileys {@code album} content). The album
+     * declaration message is sent first; its message id becomes the parent
+     * key that each member is associated with via
+     * {@link MessageEncoder#withAlbumAssociation}, in member order. Members
+     * must be image or video messages — Baileys' album validation accepts
+     * only image/video items.
+     *
+     * @param chatJid destination chat JID
+     * @param mediaMembers album member media messages, at least two
+     * @return future of the sent message ids: album declaration first, then
+     *         one id per member, in order
+     */
+    public CompletableFuture<List<String>> sendAlbum(String chatJid, List<Wa.Message> mediaMembers) {
+        if (mediaMembers == null || mediaMembers.size() < 2) {
+            return CompletableFuture.failedFuture(
+                new IllegalArgumentException("an album needs at least two media members"));
+        }
+        int images = 0;
+        int videos = 0;
+        for (Wa.Message m : mediaMembers) {
+            if (m == null) {
+                return CompletableFuture.failedFuture(
+                    new IllegalArgumentException("album members must not be null"));
+            }
+            if (m.hasImageMessage()) {
+                images++;
+            } else if (m.hasVideoMessage()) {
+                videos++;
+            } else {
+                return CompletableFuture.failedFuture(
+                    new IllegalArgumentException("album members must be image or video messages"));
+            }
+        }
+        Wa.Message album = MessageEncoder.albumMessage(images, videos);
+        return sendMessage(chatJid, album).thenCompose(albumId -> {
+            Wa.MessageKey parentKey = Wa.MessageKey.newBuilder()
+                .setRemoteJid(chatJid)
+                .setFromMe(true)
+                .setId(albumId)
+                .build();
+            CompletableFuture<List<String>> chain =
+                CompletableFuture.completedFuture(new ArrayList<>(List.of(albumId)));
+            for (int i = 0; i < mediaMembers.size(); i++) {
+                final int index = i;
+                final Wa.Message member = MessageEncoder.withAlbumAssociation(
+                    mediaMembers.get(i), parentKey, index);
+                chain = chain.thenCompose(ids -> sendMessage(chatJid, member).thenApply(id -> {
+                    List<String> next = new ArrayList<>(ids);
+                    next.add(id);
+                    return next;
+                }));
+            }
+            return chain;
+        });
+    }
+
     public CompletableFuture<String> sendLocation(
             String chatJid, double latitude, double longitude, String name, String address) {
         Wa.Message msg = MessageEncoder.locationMessage(latitude, longitude, name, address);
@@ -1098,6 +1963,159 @@ public final class JaWaClient implements AutoCloseable {
 
     public CompletableFuture<String> sendStatusMedia(Wa.Message mediaMsg) {
         return sendDmMessage("status@broadcast", mediaMsg);
+    }
+
+    /**
+     * Increment 4: sends a status message mentioning an array of JIDs
+     * (Baileys {@code sendMessage} array-JID branch, "Lia@Changes
+     * 13-03-26 — Add status mentions!", {@code lib/Socket/messages-send.js}).
+     * The content is relayed once to {@code status@broadcast} with the
+     * expanded participant list (groups replaced by their participants,
+     * duplicates dropped) and a
+     * {@code <meta><mentioned_users>} node listing the original
+     * targets; then one mention message per original target is relayed
+     * ({@code statusMentionMessage} / {@code groupStatusMentionMessage}
+     * wrapping a protocol message pointing at the status message's key
+     * with type 25, plus a {@code <meta is_status_mention>} /
+     * {@code <meta is_group_status_mention>} node), with the default
+     * 1500ms delay between targets. Group-metadata lookup failures are
+     * logged and that group simply contributes no expanded users
+     * (Baileys logs the error and continues); the group still appears
+     * in {@code mentioned_users} and still gets a mention attempt.
+     * This method introduces no silent-failure change to any existing
+     * send path; failures of the status relay or of a mention relay
+     * fail the returned future.
+     *
+     * @param targets original array-JID input (users and/or groups)
+     * @param content status content message
+     * @return future of the status message id
+     */
+    public CompletableFuture<String> sendStatusMention(List<String> targets, Wa.Message content) {
+        return sendStatusMention(targets, content, StatusMentionBuilder.DEFAULT_DELAY_MS);
+    }
+
+    /**
+     * Increment 4: {@link #sendStatusMention(List, Wa.Message)} with an
+     * injectable inter-target delay. Pass 0 in tests to skip sleeping;
+     * production callers should use the default-delay overload.
+     *
+     * @param targets original array-JID input (users and/or groups)
+     * @param content status content message
+     * @param delayMs delay between per-target mention relays, in milliseconds
+     * @return future of the status message id
+     */
+    public CompletableFuture<String> sendStatusMention(List<String> targets, Wa.Message content,
+            long delayMs) {
+        if (targets == null || targets.isEmpty()) {
+            return CompletableFuture.failedFuture(
+                new IllegalArgumentException("status mention targets must not be empty"));
+        }
+        if (content == null) {
+            return CompletableFuture.failedFuture(
+                new IllegalArgumentException("status mention content must not be null"));
+        }
+        List<String> distinctGroups = new ArrayList<>();
+        for (String target : targets) {
+            if (target != null && StatusMentionBuilder.isGroupJid(target)
+                    && !distinctGroups.contains(target)) {
+                distinctGroups.add(target);
+            }
+        }
+        ConcurrentHashMap<String, List<String>> groupParticipants = new ConcurrentHashMap<>();
+        List<CompletableFuture<?>> resolutions = new ArrayList<>();
+        for (String groupJid : distinctGroups) {
+            GroupListQuery.GroupInfo cached = groupCache.get(groupJid);
+            CompletableFuture<GroupListQuery.GroupInfo> infoFuture =
+                cached != null ? CompletableFuture.completedFuture(cached) : queryGroupInfo(groupJid);
+            resolutions.add(infoFuture.thenAccept(info -> {
+                if (info != null) {
+                    groupParticipants.put(groupJid, info.participantJids());
+                }
+            }).exceptionally(ex -> {
+                LOG.warn("Status mention: group metadata lookup failed for {} (continuing): {}",
+                    groupJid, ex.getMessage());
+                return null;
+            }));
+        }
+        return CompletableFuture.allOf(resolutions.toArray(new CompletableFuture<?>[0]))
+            .thenCompose(ignored -> {
+                List<String> expanded =
+                    StatusMentionBuilder.expandMentionTargets(targets, groupParticipants::get);
+                Jid myJid = Jid.parse(creds.meJid);
+                if (myJid == null) {
+                    return CompletableFuture.<String>failedFuture(
+                        new IllegalStateException("creds.meJid invalid"));
+                }
+                String ownBareJid = myJid.user() + "@" + Jid.SERVER_WHATSAPP;
+                String statusMsgId = generateMessageId();
+                Wa.MessageKey statusKey = Wa.MessageKey.newBuilder()
+                    .setRemoteJid(StatusMentionBuilder.STATUS_JID)
+                    .setFromMe(true)
+                    .setId(statusMsgId)
+                    .build();
+                StatusMentionBuilder.StatusMentionPlan plan = StatusMentionBuilder.plan(
+                    targets, groupParticipants::get, statusKey);
+                Wa.Message statusContent =
+                    wrapEphemeralIfNeeded(StatusMentionBuilder.STATUS_JID, content);
+                LinkedHashSet<String> queryTargets = new LinkedHashSet<>(expanded);
+                queryTargets.add(ownBareJid);
+                return queryDevices(queryTargets).thenCompose(devicesMap -> {
+                    List<String> allDeviceJids = new ArrayList<>();
+                    for (var entry : devicesMap.entrySet()) {
+                        Jid base = Jid.parse(entry.getKey());
+                        if (base == null) continue;
+                        for (var d : entry.getValue()) {
+                            allDeviceJids.add(d.asJid(base.user(), base.server()).asString());
+                        }
+                    }
+                    return fetchBundlesAndInstallSessions(allDeviceJids).thenCompose(addresses -> {
+                        messageSendLock.lock();
+                        try {
+                            MessageSender.Result result = MessageSender.buildDualIdentityStanza(
+                                protocolStore, creds, statusMsgId, StatusMentionBuilder.STATUS_JID,
+                                allDeviceJids, allDeviceJids, statusContent,
+                                List.of(plan.mentionedUsersMeta()));
+                            send(result.stanza());
+                            LOG.info("Sent status mention id={} to status@broadcast ({} participant device(s), {} target(s))",
+                                statusMsgId, allDeviceJids.size(), plan.mentions().size());
+                        } finally {
+                            messageSendLock.unlock();
+                        }
+                        // Per-target mentions, in original-target order
+                        // (the plan's map is unordered, so the input order
+                        // is replayed here), delaying between targets.
+                        LinkedHashSet<String> orderedTargets = new LinkedHashSet<>();
+                        for (String target : targets) {
+                            if (target != null && !target.isBlank()) {
+                                orderedTargets.add(target);
+                            }
+                        }
+                        CompletableFuture<Void> chain = CompletableFuture.completedFuture(null);
+                        for (String target : orderedTargets) {
+                            StatusMentionBuilder.Mention mention = plan.mentions().get(target);
+                            if (mention == null) continue;
+                            CompletableFuture<String> sendFuture =
+                                StatusMentionBuilder.isGroupJid(target)
+                                    ? sendGroupMessage(target, mention.message(),
+                                        List.of(mention.metaNode()), false)
+                                    : sendDmMessage(target, mention.message(),
+                                        List.of(mention.metaNode()), false);
+                            chain = chain.thenCompose(v -> sendFuture
+                                .thenCompose(id -> delayStage(delayMs)));
+                        }
+                        return chain.thenApply(v -> statusMsgId);
+                    });
+                });
+            });
+    }
+
+    /** Delayed stage for the status-mention loop; a non-positive delay completes immediately. */
+    private static CompletableFuture<Void> delayStage(long delayMs) {
+        if (delayMs <= 0) {
+            return CompletableFuture.completedFuture(null);
+        }
+        return CompletableFuture.runAsync(() -> {},
+            CompletableFuture.delayedExecutor(delayMs, TimeUnit.MILLISECONDS));
     }
 
     public CompletableFuture<String> sendNewsletterText(
@@ -1264,7 +2282,15 @@ public final class JaWaClient implements AutoCloseable {
         BinaryNode iq = new BinaryNode("iq",
             Map.of("to", Jid.SERVER_WHATSAPP, "type", "set", "xmlns", "blocklist", "id", iqId),
             List.of(item));
-        return sendIqAsync(iq);
+        // Increment 2: a successful block/unblock is also a blocklist
+        // change for event consumers (Baileys emits blocklist.update from
+        // account_sync notifications; a local change has no notification,
+        // so the client emits it on success).
+        return sendIqAsync(iq).thenApply(resp -> {
+            dispatchEvent(BaileysEventType.BLOCKLIST_UPDATE,
+                new BlocklistUpdate(List.of(targetJid), block ? "add" : "remove"));
+            return resp;
+        });
     }
 
     public CompletableFuture<List<String>> fetchBlockList() {
@@ -1303,7 +2329,14 @@ public final class JaWaClient implements AutoCloseable {
         BinaryNode iq = new BinaryNode("iq",
             Map.of("to", Jid.SERVER_WHATSAPP, "type", "set", "xmlns", "blocklist", "id", iqId),
             List.of(item));
-        return sendIqAsync(iq).thenApply(this::parseBlocklistNode);
+        // Increment 2: see updateBlockStatus — emit the blocklist change
+        // on success, since no account_sync notification follows a local
+        // change.
+        return sendIqAsync(iq).thenApply(this::parseBlocklistNode).thenApply(bl -> {
+            dispatchEvent(BaileysEventType.BLOCKLIST_UPDATE,
+                new BlocklistUpdate(List.of(targetJid), block ? "add" : "remove"));
+            return bl;
+        });
     }
 
     private Blocklist parseBlocklistNode(BinaryNode resp) {
@@ -1417,7 +2450,40 @@ public final class JaWaClient implements AutoCloseable {
 
     public CompletableFuture<String>
             sendDmMessage(String toUser, Wa.Message msg) {
-        final Wa.Message outboundMsg = wrapEphemeralIfNeeded(toUser, msg);
+        return sendDmMessage(toUser, msg, List.of(), true);
+    }
+
+    /**
+     * Increment 4: DM send with Baileys {@code relayMessage}
+     * {@code additionalNodes} appended to the stanza (see
+     * {@link MessageSender#buildDualIdentityStanza(JaWaProtocolStore, AuthCreds, String, String, List, List, Wa.Message, List)}).
+     * With an empty node list this behaves exactly like
+     * {@link #sendDmMessage(String, Wa.Message)}. The
+     * {@code applyEphemeralWrap} flag exists for status-mention
+     * relays, which Baileys generates without ephemeral wrapping;
+     * normal sends pass true.
+     */
+    public CompletableFuture<String>
+            sendDmMessage(String toUser, Wa.Message msg, List<BinaryNode> additionalNodes,
+                    boolean applyEphemeralWrap) {
+        return sendDmMessage(toUser, msg, additionalNodes, Map.of(), applyEphemeralWrap);
+    }
+
+    /**
+     * Increment 6: DM send with Baileys {@code relayMessage}
+     * {@code additionalAttributes} merged onto the stanza (see
+     * {@link MessageSender#withAdditionalAttributes(BinaryNode, Map)}),
+     * in addition to {@code additionalNodes}. With empty attributes
+     * this behaves exactly like
+     * {@link #sendDmMessage(String, Wa.Message, List, boolean)}.
+     * The PDO send ({@link #sendPeerDataOperationMessage}) uses this
+     * overload for its {@code category}/{@code push_priority}
+     * attributes.
+     */
+    public CompletableFuture<String>
+            sendDmMessage(String toUser, Wa.Message msg, List<BinaryNode> additionalNodes,
+                    Map<String, String> additionalAttributes, boolean applyEphemeralWrap) {
+        final Wa.Message outboundMsg = applyEphemeralWrap ? wrapEphemeralIfNeeded(toUser, msg) : msg;
         String ownBareJid;
         if (toUser != null && toUser.endsWith("@lid") && creds.meLid != null && !creds.meLid.isBlank()) {
             Jid lidJid = Jid.parse(creds.meLid);
@@ -1484,8 +2550,8 @@ public final class JaWaClient implements AutoCloseable {
                 try {
                     MessageSender.Result result = MessageSender.buildDualIdentityStanza(
                         protocolStore, creds, msgId, finalRoutingJid,
-                        allDeviceJids, encryptionDeviceJids, outboundMsg);
-                    send(result.stanza());
+                        allDeviceJids, encryptionDeviceJids, outboundMsg, additionalNodes);
+                    send(MessageSender.withAdditionalAttributes(result.stanza(), additionalAttributes));
                     int ownCount = countOwnDevices(allDeviceJids, ownUser);
                     LOG.info("Sent message id={} to={} ({} device(s) total, {} own-companion DSM)",
                         msgId, finalRoutingJid, allDeviceJids.size(),
@@ -1496,6 +2562,233 @@ public final class JaWaClient implements AutoCloseable {
                 }
             });
         });
+    }
+
+    /**
+     * Increment 6: Baileys {@code sendPeerDataOperationMessage}
+     * ({@code lib/Socket/messages-send.js}). Relays the given PDO
+     * request to the account's own bare JID
+     * ({@code jidNormalizedUser(me.id)}; here {@link Jid#bare} of
+     * {@code creds.meJid}) with stanza attributes
+     * {@code category=peer} / {@code push_priority=high_force} and the
+     * {@code <meta appdata='default'/>} additional node, via the
+     * Increment 4 additional-nodes DM path plus the Increment 6
+     * additional-attributes overload. Protocol messages are exempt
+     * from ephemeral wrapping in {@link #wrapEphemeralIfNeeded}, so
+     * the PDO payload is never ephemeral-wrapped.
+     *
+     * <p>Increment 8: the live peer-mode wiring Increment 7 specified
+     * is now in place for the companion case. Baileys' peer relay
+     * ({@code relayMessage} with {@code category: 'peer'}) skips
+     * USync device enumeration, so this method bypasses
+     * {@code queryDevices} entirely: it fetches/installs a session
+     * for the single own device-0 JID only (the bare own JID, whose
+     * Signal address is {@code (user, 0)}), encrypts the PDO message
+     * for that device with
+     * {@link MessageSender#buildPeerStanza}, reframes with
+     * {@link MessageSender#peerFrame} (bare {@code <enc>} first,
+     * {@code <device-identity>} second when a pre-key message was
+     * produced), and sends with the peer attributes and the
+     * {@code <meta appdata='default'/>} node. The DM/group builders
+     * are untouched, so DM/group behaviour cannot change through
+     * this path.
+     * <p>Fallback, stated not hidden: when the client's own device
+     * is 0 (a bare {@code creds.meJid}, as the pairing flow leaves
+     * it), device 0 <em>is</em> the sender, so there is no distinct
+     * device-0 recipient to encrypt for — Baileys' own relay loop
+     * skips the exact sender device in that case too — and this
+     * method keeps the Increment 6 self-DM path (enumerated own
+     * devices, {@code <participants>} framing) instead of sending a
+     * stanza encrypted to the sender itself. Likewise, when no
+     * protocol store exists yet (never connected), the peer path
+     * fails fast rather than silently dropping the stanza the way
+     * {@link #send(BinaryNode)} does for a disconnected transport.
+     * <p>Silent-failure behaviour is <em>not</em> changed (documented,
+     * not changed, per the workstream constraint): once the stanza is
+     * built, a disconnected transport still drops it in
+     * {@link #send(BinaryNode)} and the future has already completed
+     * with the message id, exactly as the DM path behaves.
+     *
+     * @param pdo caller-built PDO request (type and payload owned by the caller)
+     * @return future of the sent message id; fails when not
+     *         authenticated, mirroring Baileys' {@code HttpError('Not authenticated')}
+     */
+    public CompletableFuture<String> sendPeerDataOperationMessage(
+            Wa.Message.PeerDataOperationRequestMessage pdo) {
+        if (pdo == null) {
+            return CompletableFuture.failedFuture(new IllegalArgumentException("pdo must not be null"));
+        }
+        if (creds == null || creds.meJid == null || creds.meJid.isBlank()) {
+            return CompletableFuture.failedFuture(new IllegalStateException("Not authenticated"));
+        }
+        String ownBareJid = Jid.bare(creds.meJid);
+        Wa.Message msg = PeerDataOperations.buildPeerDataOperationMessage(pdo);
+        Jid myJid = Jid.parse(creds.meJid);
+        if (myJid == null || myJid.device() == 0) {
+            // Device-0-is-the-sender: keep the Increment 6 self-DM
+            // path (see Javadoc above).
+            return sendDmMessage(ownBareJid, msg,
+                List.of(PeerDataOperations.peerMetaNode()),
+                PeerDataOperations.peerAttributes(), true);
+        }
+        if (protocolStore == null) {
+            return CompletableFuture.failedFuture(
+                new IllegalStateException("Not connected: no protocol store"));
+        }
+        String device0Jid = new Jid(myJid.user(), myJid.server(), 0, 0, myJid.domainType()).asString();
+        return fetchBundlesAndInstallSessions(List.of(device0Jid)).thenApply(addresses -> {
+            String msgId = generateMessageId();
+            messageSendLock.lock();
+            try {
+                MessageSender.Result result = MessageSender.buildPeerStanza(
+                    protocolStore, creds, msgId, ownBareJid, msg,
+                    List.of(PeerDataOperations.peerMetaNode()));
+                BinaryNode stanza = MessageSender.withAdditionalAttributes(
+                    MessageSender.peerFrame(result), PeerDataOperations.peerAttributes());
+                if (messageSenderForTesting != null) {
+                    messageSenderForTesting.accept(stanza);
+                } else {
+                    send(stanza);
+                }
+                LOG.info("Sent peer message id={} to={} (device 0 only)", msgId, ownBareJid);
+                return msgId;
+            } finally {
+                messageSendLock.unlock();
+            }
+        });
+    }
+
+    /**
+     * Increment 6: Baileys {@code requestPlaceholderResend}
+     * ({@code lib/Socket/messages-recv.js}). Claims the message id in
+     * the placeholder-resend cache, waits 2 seconds, re-checks the
+     * claim, and — when it survives — sends a
+     * {@code PLACEHOLDER_MESSAGE_RESEND} PDO request, scheduling the
+     * 8-second expiry for the claim when the send runs.
+     *
+     * @param messageKey key of the placeholder message (its {@code id} is the cache key)
+     * @param msgData original message data preserved for the PDO
+     *                response handler, or null to store {@code true}
+     * @return future of null (resend already requested), {@code "RESOLVED"}
+     *         (the real message arrived during the delay), or the sent
+     *         PDO message id
+     */
+    public CompletableFuture<String> requestPlaceholderResend(Wa.MessageKey messageKey, Object msgData) {
+        if (messageKey == null || messageKey.getId() == null || messageKey.getId().isBlank()) {
+            return CompletableFuture.failedFuture(
+                new IllegalArgumentException("messageKey with a non-blank id is required"));
+        }
+        String messageId = messageKey.getId();
+        return placeholderResendManager.request(messageId, msgData,
+            placeholderResendDelay,
+            () -> {
+                CompletableFuture.runAsync(() -> {},
+                    CompletableFuture.delayedExecutor(
+                        PeerDataOperations.PLACEHOLDER_RESEND_TIMEOUT_MS, TimeUnit.MILLISECONDS))
+                    .thenRun(() -> placeholderResendManager.expire(messageId));
+                return sendPeerDataOperationMessage(
+                    PeerDataOperations.buildPlaceholderResendRequest(messageKey));
+            });
+    }
+
+    /**
+     * Increment 7 (stretch): consumes one inbound PDO response
+     * (called from the receiver's protocol-message branch) and
+     * dispatches the resolved placeholder messages as
+     * {@code messages.upsert} with type {@code notify}, mirroring
+     * Baileys' {@code process-message.js}
+     * {@code PEER_DATA_OPERATION_REQUEST_RESPONSE_MESSAGE} case
+     * ({@code ev.emit('messages.upsert', {messages: [finalMsg],
+     * type: 'notify', requestId: response.stanzaId})}).
+     * {@link PeerDataOperations#resolvePlaceholderResendResponses}
+     * does the pure work (decode, read stored data, resolve the
+     * claim); this method only converts each resolved reply into
+     * wa-java's {@link MessageReceiver.Decoded} model and dispatches
+     * it. Conversion rule, mirroring Baileys' "apply decoded content
+     * onto cached metadata": when the stored data is a
+     * {@code Decoded}, its sender/group/encType/text/interactive
+     * fields are preserved and only the message content and
+     * timestamp come from the phone's reply; otherwise the reply's
+     * key supplies sender (participant, else remote JID), group
+     * (remote JID when it is a group), message and timestamp, with
+     * no text/interactive extraction. Increment 8: the upsert now
+     * carries Baileys' {@code requestId} from
+     * {@code response.stanzaId} (a blank stanza id becomes null, so
+     * the null default for non-PDO upserts is preserved); this is
+     * the only PDO-response dispatch path, and the stanza id is
+     * available at this call site on the response proto itself, so
+     * nothing is lost here. The remaining divergence, stated not
+     * hidden: like the edit/revoke derived events above, resolved
+     * messages are dispatched only — they are not fed to the
+     * in-memory store and do not re-fire the legacy
+     * {@code onMessage} callback (Baileys emits only
+     * {@code messages.upsert} for them). Package-private so tests in
+     * this package can drive it without a Signal session.
+     *
+     * @param response inbound PDO response message; null dispatches nothing
+     * @return the dispatched decoded messages, in response order
+     */
+    List<MessageReceiver.Decoded> dispatchPlaceholderResendResponses(
+            Wa.Message.PeerDataOperationRequestResponseMessage response) {
+        List<PeerDataOperations.ResolvedPlaceholder> resolved =
+            PeerDataOperations.resolvePlaceholderResendResponses(response, placeholderResendManager);
+        List<MessageReceiver.Decoded> out = new ArrayList<>();
+        for (PeerDataOperations.ResolvedPlaceholder r : resolved) {
+            Wa.WebMessageInfo info = r.info();
+            Wa.MessageKey key = info.getKey();
+            String msgId = key.getId();
+            MessageReceiver.Decoded decoded;
+            if (r.storedData() instanceof MessageReceiver.Decoded stored) {
+                long ts = info.getMessageTimestamp() > 0 ? info.getMessageTimestamp() : stored.timestamp();
+                decoded = new MessageReceiver.Decoded(
+                    stored.senderJid(), stored.groupJid(), msgId, stored.encType(),
+                    info.hasMessage() ? info.getMessage() : stored.message(),
+                    stored.text(), stored.interactive(), ts);
+            } else {
+                String remoteJid = key.getRemoteJid();
+                String participant = key.getParticipant();
+                String sender = participant != null && !participant.isEmpty() ? participant : remoteJid;
+                String group = remoteJid != null && remoteJid.endsWith("@g.us") ? remoteJid : null;
+                decoded = new MessageReceiver.Decoded(
+                    sender, group, msgId, null,
+                    info.hasMessage() ? info.getMessage() : null,
+                    null, null, info.getMessageTimestamp());
+            }
+            out.add(decoded);
+        }
+        if (!out.isEmpty()) {
+            String requestId = response != null && response.getStanzaId() != null
+                && !response.getStanzaId().isBlank() ? response.getStanzaId() : null;
+            dispatchEvent(BaileysEventType.MESSAGES_UPSERT, new MessageUpsert(out, "notify", requestId));
+        }
+        return out;
+    }
+
+    /**
+     * Increment 6: Baileys {@code updateMemberLabel}
+     * ({@code lib/Socket/messages-send.js}). Relays a
+     * {@code GROUP_MEMBER_LABEL_CHANGE} protocol message (label
+     * truncated to 30 characters, timestamp = current unix seconds)
+     * to the caller-supplied JID with the
+     * {@code <meta tag_reason='user_update' appdata='member_tag'/>}
+     * additional node. Group JIDs go through the group send path
+     * (which requires group membership, unlike Baileys' bare relay);
+     * other JIDs go through the DM path.
+     *
+     * @param jid destination JID supplied by the caller (Baileys relays to it verbatim)
+     * @param label member label, truncated to 30 characters; null leaves the label field unset
+     * @return future of the sent message id
+     */
+    public CompletableFuture<String> updateMemberLabel(String jid, String label) {
+        if (jid == null || jid.isBlank()) {
+            return CompletableFuture.failedFuture(new IllegalArgumentException("jid must not be blank"));
+        }
+        Wa.Message msg = PeerDataOperations.buildMemberLabelMessage(
+            label, System.currentTimeMillis() / 1000L);
+        BinaryNode meta = PeerDataOperations.memberLabelMetaNode();
+        return jid.endsWith("@g.us")
+            ? sendGroupMessage(jid, msg, List.of(meta), true)
+            : sendDmMessage(jid, msg, List.of(meta), true);
     }
 
     private static int countOwnDevices(List<String> deviceJids, String ownUser) {
@@ -1590,7 +2883,22 @@ public final class JaWaClient implements AutoCloseable {
 
     public CompletableFuture<String>
             sendGroupMessage(String groupJid, Wa.Message msg) {
-        final Wa.Message outboundMsg = wrapEphemeralIfNeeded(groupJid, msg);
+        return sendGroupMessage(groupJid, msg, List.of(), true);
+    }
+
+    /**
+     * Increment 4: group send with Baileys {@code relayMessage}
+     * {@code additionalNodes} appended to the stanza (see
+     * {@link GroupSender#buildStanza(JaWaProtocolStore, SenderKeyStore, AuthCreds, String, String, List, Wa.Message, List)}).
+     * With an empty node list this behaves exactly like
+     * {@link #sendGroupMessage(String, Wa.Message)}. The
+     * {@code applyEphemeralWrap} flag exists for status-mention
+     * relays, which Baileys generates without ephemeral wrapping.
+     */
+    public CompletableFuture<String>
+            sendGroupMessage(String groupJid, Wa.Message msg, List<BinaryNode> additionalNodes,
+                    boolean applyEphemeralWrap) {
+        final Wa.Message outboundMsg = applyEphemeralWrap ? wrapEphemeralIfNeeded(groupJid, msg) : msg;
         GroupListQuery.GroupInfo cached = groupCache.get(groupJid);
         CompletableFuture<GroupListQuery.GroupInfo> targetFuture =
             cached != null
@@ -1628,7 +2936,7 @@ public final class JaWaClient implements AutoCloseable {
                         GroupSender.Result result =
                             GroupSender.buildStanza(
                                 protocolStore, senderKeyStore, creds, msgId,
-                                groupJid, allDeviceJids, outboundMsg);
+                                groupJid, allDeviceJids, outboundMsg, additionalNodes);
                         if (result.phash() != null && !result.phash().isEmpty()) {
                             groupPhashMap.put(groupJid, result.phash());
                         }
@@ -2466,6 +3774,10 @@ public final class JaWaClient implements AutoCloseable {
             sendActivePassive();
             sendPresenceAvailable();
             listener.onConnected();
+            dispatchEvent(BaileysEventType.CONNECTION_UPDATE, ConnectionUpdate.open());
+            // Increment 4: Baileys resets the history-sync status flags
+            // on connection open (chats.js connection.update handler).
+            historySyncStatusTracker.reset();
             uploadPreKeys();
             return true;
         }
@@ -2537,10 +3849,96 @@ public final class JaWaClient implements AutoCloseable {
                     }
                     LOG.debug("Invalidated groupCache for {}", from);
                 }
+                // Increment 2: Baileys event dispatch from notification
+                // types. Each parser mirrors a Baileys processNotification
+                // case (see the parser classes for sources and differences).
+                // Group notifications (w:gp2) are distinct from the w:g2
+                // xmlns cache-invalidation branch above.
+                if ("w:gp2".equals(type) && from != null) {
+                    List<BinaryNode> gpChildren = node.childrenList();
+                    if (!gpChildren.isEmpty()) {
+                        BinaryNode first = gpChildren.get(0);
+                        if ("ephemeral".equals(first.tag())) {
+                            try {
+                                int exp = Integer.parseInt(first.attr("expiration"));
+                                if (exp > 0) {
+                                    chatEphemeralTimers.put(from, exp);
+                                } else {
+                                    chatEphemeralTimers.remove(from);
+                                }
+                            } catch (Exception ignored) {}
+                        } else if ("not_ephemeral".equals(first.tag())) {
+                            chatEphemeralTimers.remove(from);
+                        } else {
+                            groupCache.remove(from);
+                            groupPhashMap.remove(from);
+                        }
+                    }
+                    for (EventDispatch dispatch : GroupNotificationParser.parse(node)) {
+                        if (dispatch.type() == BaileysEventType.GROUPS_UPSERT) {
+                            GroupsUpsert upsert = (GroupsUpsert) dispatch.payload();
+                            for (GroupsUpsert.GroupInfo g : upsert.groups()) {
+                                memoryStore.upsertGroup(g);
+                            }
+                        } else if (dispatch.type() == BaileysEventType.GROUP_PARTICIPANTS_UPDATE) {
+                            GroupParticipantsUpdate upd = (GroupParticipantsUpdate) dispatch.payload();
+                            memoryStore.updateGroupParticipants(upd.id(), upd.participants(), upd.action());
+                        } else if (dispatch.type() == BaileysEventType.CHATS_UPSERT) {
+                            ChatsUpsert upsert = (ChatsUpsert) dispatch.payload();
+                            for (String chatId : upsert.chatIds()) {
+                                memoryStore.ensureChat(chatId, 0L);
+                            }
+                        }
+                        dispatchEvent(dispatch.type(), dispatch.payload());
+                    }
+                } else if ("newsletter".equals(type)) {
+                    for (EventDispatch dispatch : NewsletterNotificationParser.parse(node)) {
+                        dispatchEvent(dispatch.type(), dispatch.payload());
+                    }
+                } else if ("mediaretry".equals(type)) {
+                    MessagesMediaUpdate mediaUpdate = MediaRetryParser.parse(node);
+                    if (mediaUpdate != null) {
+                        dispatchEvent(BaileysEventType.MESSAGES_MEDIA_UPDATE, mediaUpdate);
+                    }
+                } else if ("picture".equals(type)) {
+                    ContactsUpdate pictureUpdate = PictureNotificationParser.parse(node);
+                    if (pictureUpdate != null) {
+                        for (ContactsUpdate.ContactUpdate u : pictureUpdate.updates()) {
+                            memoryStore.updateContactImgUrl(u.id(), u.imgUrl());
+                        }
+                        dispatchEvent(BaileysEventType.CONTACTS_UPDATE, pictureUpdate);
+                    }
+                } else if ("account_sync".equals(type)) {
+                    for (BlocklistUpdate blocklistUpdate : BlocklistParser.parse(node)) {
+                        dispatchEvent(BaileysEventType.BLOCKLIST_UPDATE, blocklistUpdate);
+                    }
+                } else if ("mex".equals(type)) {
+                    // Increment 4: Baileys handleMexNotification
+                    // (lib/Socket/messages-recv.js). Lid mappings from
+                    // mex are recorded in the store and the LID->PN
+                    // routing map, mirroring Baileys' signal-repository
+                    // storage of linked-profiles mappings.
+                    for (EventDispatch dispatch : MexNotificationParser.parse(node)) {
+                        if (dispatch.type() == BaileysEventType.LID_MAPPING_UPDATE) {
+                            LidMappingUpdate mapping = (LidMappingUpdate) dispatch.payload();
+                            memoryStore.upsertLidMapping(mapping.lid(), mapping.pn());
+                            LID_TO_PN_MAP.put(mapping.lid(), mapping.pn());
+                        }
+                        dispatchEvent(dispatch.type(), dispatch.payload());
+                    }
+                }
             } else if ("receipt".equals(node.tag())) {
                 try {
                     Receipt parsed = Receipt.parse(node);
-                    if (parsed != null) listener.onReceipt(parsed);
+                    if (parsed != null) {
+                        listener.onReceipt(parsed);
+                        try {
+                            eventBus.dispatch(BaileysEventType.MESSAGE_RECEIPT_UPDATE,
+                                new MessageReceiptUpdate(parsed));
+                        } catch (Throwable t) {
+                            LOG.warn("Failed to dispatch message-receipt.update", t);
+                        }
+                    }
                 } catch (Throwable t) {
                     LOG.warn("Failed to dispatch onReceipt", t);
                 }
@@ -2551,6 +3949,47 @@ public final class JaWaClient implements AutoCloseable {
         if ("message".equals(node.tag())) {
             handleInboundMessage(node);
             return true;
+        }
+
+        if ("presence".equals(node.tag())) {
+            // New in Increment 1. No ack is sent for presence stanzas, and
+            // returning false keeps the legacy onStanza fallthrough firing
+            // for existing consumers.
+            try {
+                PresenceUpdate presence = PresenceEventParser.parse(node);
+                if (presence != null) {
+                    memoryStore.upsertPresence(presence);
+                    dispatchEvent(BaileysEventType.PRESENCE_UPDATE, presence);
+                }
+            } catch (Throwable t) {
+                LOG.warn("Failed to dispatch presence.update", t);
+            }
+            return false;
+        }
+
+        if ("call".equals(node.tag())) {
+            // Increment 6: a <call> stanza whose id matches a pending
+            // stanza request (see sendStanzaAsync / createCallLink) is
+            // that request's response, not a call event: complete it
+            // and consume the stanza, exactly as the iq branch does
+            // for iq result/error nodes. Baileys' query() correlates
+            // by id regardless of tag, so this is the missing half of
+            // that correlation in wa-java.
+            String callId = node.attr("id");
+            var pending = callId == null ? null : pendingIqResults.remove(callId);
+            if (pending != null) { pending.accept(node); return true; }
+            // New in Increment 1. No ack is sent for call stanzas (a
+            // documented difference from Baileys, which acks after handling),
+            // and returning false keeps the legacy onStanza fallthrough firing.
+            try {
+                CallEvent call = callEventParser.parse(node);
+                if (call != null) {
+                    dispatchEvent(BaileysEventType.CALL, call);
+                }
+            } catch (Throwable t) {
+                LOG.warn("Failed to dispatch call", t);
+            }
+            return false;
         }
 
         if (!"iq".equals(node.tag())) return false;
@@ -2570,6 +4009,9 @@ public final class JaWaClient implements AutoCloseable {
             send(pair.ackPairDevice(node.attr("id")));
             LOG.info("Got {} QR refs", qrs.size());
             listener.onQr(qrs);
+            for (String qr : qrs) {
+                dispatchEvent(BaileysEventType.CONNECTION_UPDATE, ConnectionUpdate.qr(qr));
+            }
             return true;
         }
         if (pairSuccess != null) {
@@ -2577,6 +4019,10 @@ public final class JaWaClient implements AutoCloseable {
             send(reply);
             store.save(creds);
             listener.onPaired(creds.meJid, creds.pushName, creds.platform);
+            dispatchEvent(BaileysEventType.CREDS_UPDATE,
+                CredsUpdate.paired(creds.meJid, creds.pushName));
+            dispatchEvent(BaileysEventType.CONNECTION_UPDATE,
+                ConnectionUpdate.isNewLogin(true));
 
             reconnectAfterPair.set(true);
             return true;
@@ -2613,6 +4059,39 @@ public final class JaWaClient implements AutoCloseable {
         try {
             MessageReceiver.Decoded decoded =
                 MessageReceiver.decode(message, protocolStore, senderKeyStore);
+            // Increment 7 (stretch): the receiver-side placeholder
+            // resolve. Baileys' requestPlaceholderResend re-checks
+            // its cache after the 2-second delay and returns
+            // 'RESOLVED' on a miss; the miss is produced by the
+            // cache delete in the PDO-response handler, and wa-java
+            // mirrors that below — but a real message can also
+            // arrive directly (decryptable on first receipt), in
+            // which case nothing in Baileys' recv path deletes the
+            // claim either, so the delay re-check is the only
+            // guard there. wa-java goes one step further, safely:
+            // a successfully decoded message whose id is pending
+            // resolves the claim immediately, so a pending
+            // requestPlaceholderResend observes RESOLVED instead of
+            // sending a now-pointless PDO request. This changes no
+            // dispatch: the message continues down the normal path
+            // below. Remaining gap, stated not hidden: wa-java has
+            // no ciphertext-stub placeholder upsert (Baileys'
+            // processPlaceholderMsg) — a message that fails to
+            // decrypt is logged with a retry receipt in the catch
+            // below, never upserted as a placeholder, so
+            // Increment 10 narrows this: the catch below now upserts a
+            // CIPHERTEXT stub and claims the id for a
+            // NO_MESSAGE_FOUND failure only (see
+            // handleDecryptFailurePlaceholder); every other failure
+            // kind still takes the old path (ack + retry receipt,
+            // no upsert, no claim). Increment 10b completes it: the
+            // catch's helper now also auto-requests the placeholder
+            // resend through requestPlaceholderResend (claim + delay
+            // + PDO send), so it is no longer manual-only for an
+            // eligible NO_MESSAGE_FOUND failure.
+            if (placeholderResendManager.isPending(decoded.msgId())) {
+                placeholderResendManager.resolve(decoded.msgId());
+            }
             if (decoded.message() != null) {
                 if (decoded.message().hasProtocolMessage()) {
                     var proto = decoded.message().getProtocolMessage();
@@ -2646,12 +4125,339 @@ public final class JaWaClient implements AutoCloseable {
 
             try { listener.onMessage(decoded); }
             catch (Throwable t) { LOG.warn("listener.onMessage threw", t); }
+            try {
+                eventBus.dispatch(BaileysEventType.MESSAGES_UPSERT,
+                    new MessageUpsert(List.of(decoded), "notify"));
+            } catch (Throwable t) {
+                LOG.warn("Failed to dispatch messages.upsert", t);
+            }
+            // Increment 2: LID→PN mappings, store feeding, and derived
+            // events for message content Baileys classifies separately
+            // from plain messages (reactions, edits, revokes, member tags).
+            dispatchLidMappingsFrom(message);
+            String storeChatId = decoded.groupJid() != null ? decoded.groupJid() : decoded.senderJid();
+            if (storeChatId != null) {
+                boolean chatWasNew = memoryStore.getChat(storeChatId) == null;
+                memoryStore.upsertMessage(decoded);
+                dispatchEvent(chatWasNew ? BaileysEventType.CHATS_UPSERT : BaileysEventType.CHATS_UPDATE,
+                    chatWasNew ? new ChatsUpsert(List.of(storeChatId))
+                        : new ChatsUpdate(List.of(storeChatId)));
+            }
+            if (decoded.message() != null) {
+                if (decoded.message().hasReactionMessage()) {
+                    var reaction = decoded.message().getReactionMessage();
+                    var key = reaction.getKey();
+                    String reactionChat = key.getRemoteJid() != null && !key.getRemoteJid().isEmpty()
+                        ? key.getRemoteJid() : storeChatId;
+                    memoryStore.applyReaction(reactionChat, key.getId(), key.getFromMe(),
+                        key.getParticipant().isEmpty() ? null : key.getParticipant(),
+                        reaction.getText(), decoded.senderJid());
+                    dispatchEvent(BaileysEventType.MESSAGES_REACTION, new MessagesReaction(List.of(
+                        new MessagesReaction.MessageReaction(key.getId(), reactionChat, key.getFromMe(),
+                            key.getParticipant().isEmpty() ? null : key.getParticipant(),
+                            reaction.getText(), decoded.senderJid()))));
+                }
+                if (decoded.message().hasProtocolMessage()) {
+                    var protocol = decoded.message().getProtocolMessage();
+                    var protoKey = protocol.getKey();
+                    var protoType = protocol.getType();
+                    if (protoType == Wa.Message.ProtocolMessage.Type.MESSAGE_EDIT
+                            || protoType == Wa.Message.ProtocolMessage.Type.REVOKE) {
+                        // Key-only update: the Increment 1 MessagesUpdate
+                        // payload does not model edited content or a
+                        // revoke marker, so only the target key and
+                        // timestamp are carried (see its Javadoc).
+                        long tsSec = protocol.getTimestampMs() > 0
+                            ? protocol.getTimestampMs() / 1000 : decoded.timestamp();
+                        dispatchEvent(BaileysEventType.MESSAGES_UPDATE, new MessagesUpdate(List.of(
+                            new MessagesUpdate.MessageUpdate(protoKey.getId(), protoKey.getRemoteJid(),
+                                protoKey.getFromMe(),
+                                protoKey.getParticipant().isEmpty() ? null : protoKey.getParticipant(),
+                                null, tsSec, null))));
+                    } else if (protoType == Wa.Message.ProtocolMessage.Type.GROUP_MEMBER_LABEL_CHANGE
+                            && protocol.hasMemberLabel()) {
+                        var label = protocol.getMemberLabel();
+                        long tsSec = protocol.getTimestampMs() > 0
+                            ? protocol.getTimestampMs() / 1000 : decoded.timestamp();
+                        dispatchEvent(BaileysEventType.GROUP_MEMBER_TAG_UPDATE,
+                            new GroupMemberTagUpdate(storeChatId, label.getLabel(),
+                                protoKey.getParticipant().isEmpty() ? decoded.senderJid() : protoKey.getParticipant(),
+                                null, tsSec));
+                    } else if (protoType == Wa.Message.ProtocolMessage.Type.PEER_DATA_OPERATION_REQUEST_RESPONSE_MESSAGE
+                            && protocol.hasPeerDataOperationRequestResponseMessage()) {
+                        // Increment 7 (stretch): inbound PDO-response
+                        // handling, mirroring Baileys'
+                        // process-message.js PEER_DATA_OPERATION_REQUEST_RESPONSE_MESSAGE
+                        // case. Resolved placeholder messages are
+                        // dispatched as messages.upsert, type notify.
+                        dispatchPlaceholderResendResponses(
+                            protocol.getPeerDataOperationRequestResponseMessage());
+                    }
+                }
+                // Increment 4: history-sync notifications ride on inbound
+                // protocol messages (Baileys process-message.js /
+                // chats.js). This runs after the offline-ignore early
+                // return above, so wa-java's existing offline filtering
+                // still applies to history traffic.
+                Wa.Message.HistorySyncNotification historyNotif =
+                    HistorySyncNotificationParser.extractNotification(decoded.message());
+                if (historyNotif != null) {
+                    handleHistorySyncNotification(decoded, historyNotif);
+                }
+            }
         } catch (MessageReceiver.DecryptException de) {
             LOG.warn("Decrypt failed for message id={} from={}: {}",
                 message.attr("id"), message.attr("from"), de.getMessage());
+            // Increment 10: the ack + retry receipt above are
+            // unchanged and run exactly once for every failure kind
+            // (Baileys sends no retry receipt for NO_MESSAGE_FOUND —
+            // ack only — but wa-java's catch has always retry-receipted
+            // here, and the task forbids silently changing send-path
+            // behaviour, so the receipt is kept, not removed or
+            // duplicated). Only the placeholder step below is new,
+            // and only for NO_MESSAGE_FOUND.
             sendAck(message);
             sendRetryReceipt(message);
+            handleDecryptFailurePlaceholder(message, de);
         }
+    }
+
+    /**
+     * Increment 10: the placeholder step factored out of
+     * {@link #handleInboundMessage}'s decrypt-failure catch, so it is
+     * unit-testable without a socket (see Increment10Test, which
+     * drives it both directly and through
+     * {@link #handleStanzaForTesting}, i.e. through the real catch).
+     * <p>
+     * Baileys shape (verified in
+     * {@code lib/Socket/messages-recv.js:1301-1360} and
+     * {@code lib/Utils/decode-wa-message.js:300-306}): a decrypt
+     * failure is upserted as a CIPHERTEXT stub with
+     * {@code messageStubParameters = [error message]} — for
+     * NO_MESSAGE_FOUND that error message is exactly
+     * {@code 'Message absent from node'} — as
+     * {@code messages.upsert} type {@code notify}, and the id is
+     * claimed so a subsequent {@code requestPlaceholderResend}
+     * observes the claim (already-requested) instead of sending a
+     * duplicate PDO request. Eligibility (kind, {@code <unavailable>}
+     * exclusions, peer category, 14-day cap) is decided by
+     * {@link PeerDataOperations#isPlaceholderResendEligible}; this
+     * method only builds the stub from the stanza attrs (sender/group
+     * derivation mirrors {@code MessageReceiver.decode}), claims, and
+     * dispatches + stores it, following the Increment 9 V4 synthetic
+     * pattern (dispatch + store, no legacy {@code onMessage} call, as
+     * with the PDO-response dispatch).
+     * <p>
+     * Increment 10b: this method now also auto-requests the resend,
+     * completing Baileys' branch — after dispatching and storing the
+     * stub, it invokes {@link #requestPlaceholderResend} with the
+     * stub as the stored data, reusing that method's claim + delay +
+     * PDO send (and its 8-second expiry scheduling) verbatim, with
+     * no duplicated claim/delay/send logic here. The claim inside
+     * {@code requestPlaceholderResend} happens synchronously, before
+     * the delay, so by the time this method returns the id is
+     * claimed and a subsequent manual {@code requestPlaceholderResend}
+     * observes already-claimed (null) rather than sending a
+     * duplicate. The request is fire-and-forget, exactly as Baileys
+     * floats its {@code requestPlaceholderResend(...).then(...).catch(...)}
+     * without awaiting it: a failure (notably the fast
+     * "Not authenticated" failure when creds are null, or a
+     * disconnected transport's silent drop in {@link #send}) is
+     * logged and swallowed, never thrown out of the catch block.
+     * <p>
+     * Increment 10c: Baileys' success handler is now mirrored too —
+     * on PDO-send success only, this method dispatches a
+     * {@code messages.update} carrying
+     * {@code [NO_MESSAGE_FOUND_ERROR_TEXT, requestId]} for the same
+     * key as the stub upsert, exactly as Baileys'
+     * {@code requestPlaceholderResend(...).then(requestId => ...)}
+     * does ({@code lib/Socket/messages-recv.js:1345-1354}). The
+     * guard mirrors Baileys' {@code if (requestId &&
+     * requestId !== 'RESOLVED')}: an already-claimed (null) or
+     * RESOLVED outcome emits nothing, and a failure emits nothing
+     * (it stays logged-and-swallowed as before). The handler lives
+     * only on this catch's auto-send future — the manual
+     * {@code requestPlaceholderResend} path is unchanged and emits
+     * no such update.
+     * <p>
+     * The upsert is not gated on claim success: Baileys upserts the
+     * stub via fall-through even when {@code requestPlaceholderResend}
+     * reports already-requested, so a duplicate arrival still upserts
+     * while the cache claim stays single — and, by the same token, a
+     * duplicate arrival sends no second PDO request.
+     * <p>
+     * Disconnected transport, documented not changed: the PDO send
+     * goes through the existing send path
+     * ({@link #sendPeerDataOperationMessage} /
+     * {@link #send(BinaryNode)}), whose existing silent-drop
+     * behaviour for a disconnected transport applies unchanged — the
+     * future may then stay pending (DM path) or the stanza may be
+     * dropped (peer path via the test seam / {@code send}), and no
+     * retry is added here.
+     *
+     * @param message the original inbound stanza (attrs supply id /
+     *                from / participant / t / category; its direct
+     *                {@code <unavailable>} child supplies the type)
+     * @param failure the decrypt failure; only NO_MESSAGE_FOUND can
+     *                produce a stub
+     * @return the upserted stub Decoded, or null when ineligible or
+     *         when no stub can be built (blank id, no sender)
+     */
+    MessageReceiver.Decoded handleDecryptFailurePlaceholder(
+            BinaryNode message, MessageReceiver.DecryptException failure) {
+        if (message == null || failure == null) return null;
+        String msgId = message.attr("id");
+        if (msgId == null || msgId.isBlank()) return null;
+        String from = message.attr("from");
+        String participant = message.attr("participant");
+        String senderJid = participant != null ? participant : from;
+        if (senderJid == null || senderJid.isBlank()) return null;
+        String groupJid = participant != null && from != null && !from.equals(participant)
+            ? from : null;
+        long timestamp = 0L;
+        String tAttr = message.attr("t");
+        if (tAttr != null && !tAttr.isEmpty()) {
+            try {
+                timestamp = Long.parseLong(tAttr);
+            } catch (NumberFormatException ignored) {}
+        }
+        BinaryNode unavailable = message.child("unavailable");
+        String unavailableType = unavailable == null ? null : unavailable.attr("type");
+        if (!PeerDataOperations.isPlaceholderResendEligible(failure.kind(), unavailableType,
+                message.attr("category"), timestamp, System.currentTimeMillis() / 1000L)) {
+            return null;
+        }
+        String errorMessage = failure.getMessage() != null ? failure.getMessage()
+            : MessageReceiver.NO_MESSAGE_FOUND_ERROR_TEXT;
+        MessageReceiver.Decoded stub = new MessageReceiver.Decoded(
+            senderJid, groupJid, msgId, null, null, null, null, timestamp,
+            Wa.WebMessageInfo.StubType.CIPHERTEXT, List.of(errorMessage));
+        // Upsert + store first, ungated on the claim (see Javadoc):
+        // a duplicate arrival still upserts even though its resend
+        // request is already claimed.
+        dispatchEvent(BaileysEventType.MESSAGES_UPSERT, new MessageUpsert(List.of(stub), "notify"));
+        String storeChatId = groupJid != null ? groupJid : senderJid;
+        memoryStore.upsertMessage(stub);
+        LOG.debug("Upserted decrypt-failure placeholder id={} chat={} (stub=CIPHERTEXT)",
+            msgId, storeChatId);
+        // Increment 10b auto-send: reuse requestPlaceholderResend
+        // (claim + delay + PDO send) with the stub as the stored data
+        // Baileys' PDO-response handler applies a reply onto. The
+        // claim happens synchronously inside that call, before the
+        // delay, so a subsequent manual request observes it. The key
+        // mirrors Baileys' cleanKey (remoteJid = chat, participant =
+        // group sender when present, fromMe = false for an inbound
+        // stanza — the helper's inputs carry no fromMe flag). The
+        // future is never awaited and its failure is swallowed here,
+        // so a failed PDO attempt (e.g. no creds, disconnected
+        // transport) cannot throw out of the decrypt-failure catch.
+        Wa.MessageKey.Builder keyBuilder = Wa.MessageKey.newBuilder()
+            .setId(msgId)
+            .setRemoteJid(storeChatId)
+            .setFromMe(false);
+        if (participant != null && !participant.isEmpty()) {
+            keyBuilder.setParticipant(participant);
+        }
+        requestPlaceholderResend(keyBuilder.build(), stub)
+            // Increment 10c: Baileys' .then(requestId => ...) handler
+            // (lib/Socket/messages-recv.js:1345-1354), success only.
+            // The future resolves to null (already claimed),
+            // "RESOLVED" (real message arrived during the delay), or
+            // the sent PDO message id — that id is the requestId, and
+            // only it is emitted. Failures never reach this handler;
+            // they fall through to the exceptionally below, unchanged.
+            .thenAccept(requestId -> {
+                if (requestId == null || requestId.isBlank() || "RESOLVED".equals(requestId)) {
+                    return;
+                }
+                dispatchEvent(BaileysEventType.MESSAGES_UPDATE, new MessagesUpdate(List.of(
+                    new MessagesUpdate.MessageUpdate(msgId, storeChatId, false,
+                        participant != null && !participant.isEmpty() ? participant : null,
+                        null, null, null, null,
+                        List.of(MessageReceiver.NO_MESSAGE_FOUND_ERROR_TEXT, requestId)))));
+            })
+            .exceptionally(ex -> {
+                LOG.warn("Failed to request placeholder resend for id={}: {}", msgId, ex.getMessage());
+                return null;
+            });
+        return stub;
+    }
+
+    /**
+     * Increment 4: handles one inbound history-sync notification.
+     * Mirrors Baileys' split between {@code chats.js} (the status
+     * machine, fed from the notification's sync type and progress) and
+     * {@code process-message.js} (the {@code messaging-history.set}
+     * emission, fed from the decoded sync). Gates, in Baileys' order:
+     * history notifications are a self-only protocol type (dropped
+     * when not from our own account, per the whatsmeow guard Baileys
+     * mirrors), and the sync type must pass
+     * {@link HistorySyncNotificationParser#shouldProcessHistoryMessage}
+     * (processable and not FULL under Baileys' default config).
+     * <p>
+     * Increment 5: both payload paths are implemented. A notification
+     * with {@code initialHistBootstrapInlinePayload} decodes inline;
+     * a payload-less notification falls back to Baileys' media
+     * download of the history file
+     * ({@code downloadHistory} in {@code lib/Utils/history.js},
+     * {@code HistorySyncNotificationParser.downloadHistory} here).
+     * The status machine still runs for every processable
+     * notification, as in Baileys; only a notification whose payload
+     * neither decodes inline nor downloads produces no
+     * {@code messaging-history.set}, and is logged.
+     */
+    private void handleHistorySyncNotification(MessageReceiver.Decoded decoded,
+            Wa.Message.HistorySyncNotification notif) {
+        if (!isSelfSender(decoded.senderJid())) {
+            LOG.warn("Dropping history-sync notification from non-self sender {}", decoded.senderJid());
+            return;
+        }
+        if (!notif.hasSyncType()
+                || !HistorySyncNotificationParser.shouldProcessHistoryMessage(notif.getSyncType())) {
+            return;
+        }
+        historySyncStatusTracker.onHistoryMessage(notif.getSyncType().name(),
+            notif.hasProgress() ? notif.getProgress() : null);
+        Wa.HistorySync sync = HistorySyncNotificationParser.decodeInline(notif);
+        if (sync == null) {
+            sync = HistorySyncNotificationParser.downloadHistory(notif);
+        }
+        if (sync == null) {
+            LOG.info("History-sync notification id={} has no decodable inline payload "
+                + "and its non-inline history download failed, "
+                + "no messaging-history.set is emitted", decoded.msgId());
+            return;
+        }
+        Boolean isLatest = notif.getSyncType() == Wa.Message.HistorySyncType.ON_DEMAND
+            ? null : !historySetSeen;
+        MessagingHistorySet set =
+            HistorySyncNotificationParser.toHistorySet(sync, notif, isLatest);
+        if (set == null) {
+            return;
+        }
+        for (LidMappingUpdate mapping : HistorySyncNotificationParser.lidPnMappings(sync)) {
+            memoryStore.upsertLidMapping(mapping.lid(), mapping.pn());
+            LID_TO_PN_MAP.put(mapping.lid(), mapping.pn());
+            dispatchEvent(BaileysEventType.LID_MAPPING_UPDATE, mapping);
+        }
+        dispatchEvent(BaileysEventType.MESSAGING_HISTORY_SET, set);
+        historySetSeen = true;
+    }
+
+    /** True when the sender is our own account (PN or LID user match). */
+    private boolean isSelfSender(String senderJid) {
+        Jid sender = senderJid == null ? null : Jid.parse(senderJid);
+        if (sender == null) {
+            return false;
+        }
+        for (String own : new String[] { creds.meJid, creds.meLid }) {
+            if (own == null || own.isBlank()) continue;
+            Jid ownJid = Jid.parse(own);
+            if (ownJid != null && ownJid.user().equals(sender.user())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static int extractExpiration(Wa.Message msg) {
@@ -2709,6 +4515,20 @@ public final class JaWaClient implements AutoCloseable {
         String id = message.attr("id");
         String from = message.attr("from");
         if (id == null || from == null) return;
+
+        // Increment 10b crash guard (pre-existing, predates Increment
+        // 10): on an unpaired client creds is null, and the
+        // registration node below dereferenced
+        // creds.registrationId, throwing NPE out of the
+        // decrypt-failure catch and risking the reader loop. With no
+        // creds there is no registration id to send, so skip the
+        // receipt (without consuming a retry count) and log, and let
+        // the caller continue its catch flow. Receipt behaviour when
+        // creds exist is unchanged.
+        if (creds == null) {
+            LOG.warn("Skipping retry receipt id={}: no creds (unpaired client)", id);
+            return;
+        }
 
         int retryCount = messageRetries.merge(id, 1, Integer::sum);
         if (retryCount > MAX_RETRY_COUNT) {
@@ -2784,38 +4604,12 @@ public final class JaWaClient implements AutoCloseable {
                 if (creds == null || creds.meJid == null) {
                     throw new IllegalStateException("Not logged in");
                 }
-                String ownJid = Jid.bare(creds.meJid);
-                byte[] retryKey = Hkdf.derive(
-                    mediaKey, null, "WhatsApp Media Retry Notification".getBytes(StandardCharsets.UTF_8), 32);
-                Wa.ServerErrorReceipt receipt = Wa.ServerErrorReceipt.newBuilder()
-                    .setStanzaId(messageId)
-                    .build();
-                byte[] plaintext = receipt.toByteArray();
-                byte[] iv = Bytes.random(12);
-                byte[] ciphertext = AesGcm.encrypt(
-                    retryKey, iv, plaintext, messageId.getBytes(StandardCharsets.UTF_8));
-
-                Map<String, String> rmrAttrs = new LinkedHashMap<>();
-                rmrAttrs.put("jid", chatJid);
-                rmrAttrs.put("from_me", String.valueOf(isFromMe));
-                if (isGroup && senderJid != null && !senderJid.isBlank()) {
-                    rmrAttrs.put("participant", senderJid);
-                }
-
-                List<BinaryNode> encryptChildren = List.of(
-                    new BinaryNode("enc_p", Map.of(), ciphertext),
-                    new BinaryNode("enc_iv", Map.of(), iv)
-                );
-
-                BinaryNode encryptNode = new BinaryNode("encrypt", Map.of(), encryptChildren);
-                BinaryNode rmrNode = new BinaryNode("rmr", rmrAttrs, null);
-
-                Map<String, String> receiptAttrs = new LinkedHashMap<>();
-                receiptAttrs.put("id", messageId);
-                receiptAttrs.put("to", ownJid);
-                receiptAttrs.put("type", "server-error");
-
-                BinaryNode receiptStanza = new BinaryNode("receipt", receiptAttrs, List.of(encryptNode, rmrNode));
+                // Increment 9: node construction moved verbatim to
+                // MediaRetryRequest.build (same attrs, same crypto);
+                // only the construction site changed.
+                BinaryNode receiptStanza = MediaRetryRequest.build(
+                    messageId, chatJid, isFromMe, isGroup ? senderJid : null,
+                    mediaKey, Jid.bare(creds.meJid));
                 send(receiptStanza);
             } catch (Exception e) {
                 LOG.error("Failed to send media retry receipt: {}", e.getMessage(), e);
@@ -2831,6 +4625,160 @@ public final class JaWaClient implements AutoCloseable {
         String ownJid = creds != null && creds.meJid != null ? Jid.bare(creds.meJid) : "";
         boolean isFromMe = !ownJid.isBlank() && ownJid.equals(Jid.bare(target.senderJid()));
         return sendMediaRetryReceipt(target.msgId(), chatJid, target.senderJid(), isFromMe, isGroup, mediaKey);
+    }
+
+    /** Default media-update wait budget for {@link #updateMediaMessage} convenience overloads. */
+    public static final long DEFAULT_MEDIA_UPDATE_TIMEOUT_MS = 30_000L;
+
+    /**
+     * Increment 9: Baileys {@code updateMediaMessage}
+     * ({@code lib/Socket/messages-send.js:1070}): asks the phone to
+     * re-upload a message's media and returns the re-uploaded
+     * location. Baileys' flow is: {@code assertMediaContent} (media
+     * key from the message), {@code encryptMediaRetryRequest}
+     * (receipt node, sent), wait for {@code messages.media-update}
+     * matching the message id, {@code decryptMediaRetryData} on the
+     * update's encrypted media, then mutate the message content's
+     * {@code directPath}/{@code url} in place and emit
+     * {@code messages.update}.
+     * <p>
+     * Portable part implemented here: the retry-request send (via
+     * {@link #sendMediaRetryReceipt}, i.e. {@link MediaRetryRequest}),
+     * the media-update correlation (via {@link MediaUpdateWaiter} on
+     * the existing Increment 2 dispatch — no dispatch change), and
+     * the decrypt + {@code SUCCESS} check (via
+     * {@link #decryptMediaRetryNotification}). The waiter is
+     * registered before the request is sent, so an update arriving
+     * between send and wait cannot be missed.
+     * <p>
+     * Divergences, stated not hidden:
+     * <ul>
+     *   <li>Wa messages are immutable protos, so wa-java cannot
+     *       mutate the caller's content in place: the returned
+     *       {@link Wa.MediaRetryNotification} carries the new
+     *       {@code directPath} (and {@code result}); the caller
+     *       rebuilds its content from it. No {@code messages.update}
+     *       is emitted for the same reason — Baileys' emission
+     *       carries the mutated message, which has no wa-java
+     *       equivalent here.</li>
+     *   <li>The caller must supply the media: either a
+     *       {@link Wa.Message} carrying a media key (this overload
+     *       extracts it via {@link MediaRetryRequest#mediaKeyOf}),
+     *       or the media key bytes directly (the bytes overload).
+     *       wa-java cannot re-upload original media bytes it does
+     *       not hold, and it never re-uploads stale bytes — the
+     *       phone performs the re-upload.</li>
+     *   <li>Timeout: Baileys waits indefinitely for the media
+     *       update; wa-java completes with {@code null} on timeout,
+     *       following the Increment 7 {@code ConnectionUpdateWaiter}
+     *       pattern. A disconnected transport is not an error here:
+     *       {@link #send(BinaryNode)} logs and drops the request
+     *       (pre-existing silent-failure behaviour, unchanged), so
+     *       the call resolves {@code null} when the timeout elapses.</li>
+     *   <li>Error mapping: Baileys throws {@code HttpError} with the
+     *       media-retry status code; wa-java fails the future with
+     *       {@link IllegalStateException} carrying the same
+     *       information (error code, non-{@code SUCCESS} result, or
+     *       missing ciphertext).</li>
+     * </ul>
+     *
+     * @param messageId message key id; must not be blank
+     * @param remoteJid message key remote JID (chat JID)
+     * @param fromMe message key fromMe
+     * @param participant group participant, or null for DMs
+     * @param message message whose media key is used; a message
+     *                without a media key fails the future with
+     *                {@link IllegalArgumentException}
+     * @param timeoutMs non-negative media-update wait budget in milliseconds
+     * @return future of the phone's {@code MediaRetryNotification},
+     *         or null on timeout; failed on send failure, error
+     *         code, non-{@code SUCCESS} result, or missing ciphertext
+     */
+    public CompletableFuture<Wa.MediaRetryNotification> updateMediaMessage(
+            String messageId, String remoteJid, boolean fromMe, String participant,
+            Wa.Message message, long timeoutMs) {
+        byte[] mediaKey = MediaRetryRequest.mediaKeyOf(message);
+        if (mediaKey == null) {
+            return CompletableFuture.failedFuture(new IllegalArgumentException(
+                "message carries no media key (not an image/video/audio/document/sticker message)"));
+        }
+        return updateMediaMessage(messageId, remoteJid, fromMe, participant, mediaKey, timeoutMs);
+    }
+
+    /**
+     * Increment 9: {@link #updateMediaMessage(String, String, boolean, String, Wa.Message, long)}
+     * with the media key supplied directly, for callers that hold it
+     * outside the message proto.
+     *
+     * @param messageId message key id; must not be blank
+     * @param remoteJid message key remote JID (chat JID)
+     * @param fromMe message key fromMe
+     * @param participant group participant, or null for DMs
+     * @param mediaKey 32-byte media key; null/empty fails the future
+     * @param timeoutMs non-negative media-update wait budget in milliseconds
+     * @return future of the phone's {@code MediaRetryNotification}, or null on timeout
+     */
+    public CompletableFuture<Wa.MediaRetryNotification> updateMediaMessage(
+            String messageId, String remoteJid, boolean fromMe, String participant,
+            byte[] mediaKey, long timeoutMs) {
+        if (messageId == null || messageId.isBlank()) {
+            return CompletableFuture.failedFuture(new IllegalArgumentException("messageId must not be blank"));
+        }
+        if (mediaKey == null || mediaKey.length == 0) {
+            return CompletableFuture.failedFuture(new IllegalArgumentException("mediaKey must not be empty"));
+        }
+        if (timeoutMs < 0) {
+            return CompletableFuture.failedFuture(new IllegalArgumentException("timeoutMs must not be negative"));
+        }
+        boolean isGroup = remoteJid != null && remoteJid.endsWith("@g.us");
+        CompletableFuture<MessagesMediaUpdate.MediaUpdate> waiter =
+            MediaUpdateWaiter.waitFor(eventBus, messageId, timeoutMs);
+        CompletableFuture<Void> sent = sendMediaRetryReceipt(
+            messageId, remoteJid, participant, fromMe, isGroup, mediaKey);
+        // A failed send must not leave the waiter subscribed until its timeout.
+        sent.whenComplete((value, error) -> {
+            if (error != null) waiter.cancel(false);
+        });
+        return sent.thenCompose(ignored -> waiter).thenApply(update -> {
+            if (update == null) return null;
+            if (update.errorCode() != null) {
+                throw new IllegalStateException(
+                    "Failed to re-upload media (error code " + update.errorCode() + ")");
+            }
+            if (update.ciphertext() == null || update.iv() == null) {
+                throw new IllegalStateException(
+                    "Failed to re-upload media (missing ciphertext)");
+            }
+            Wa.MediaRetryNotification notification = decryptMediaRetryNotification(
+                update.ciphertext(), update.iv(), messageId, mediaKey);
+            if (notification.getResult() != Wa.MediaRetryNotification.ResultType.SUCCESS) {
+                throw new IllegalStateException(
+                    "Media re-upload failed by device (" + notification.getResult() + ")");
+            }
+            return notification;
+        });
+    }
+
+    /**
+     * Increment 9: {@link #updateMediaMessage(String, String, boolean, String, Wa.Message, long)}
+     * with the default {@link #DEFAULT_MEDIA_UPDATE_TIMEOUT_MS} wait budget.
+     */
+    public CompletableFuture<Wa.MediaRetryNotification> updateMediaMessage(
+            String messageId, String remoteJid, boolean fromMe, String participant,
+            Wa.Message message) {
+        return updateMediaMessage(messageId, remoteJid, fromMe, participant, message,
+            DEFAULT_MEDIA_UPDATE_TIMEOUT_MS);
+    }
+
+    /**
+     * Increment 9: {@link #updateMediaMessage(String, String, boolean, String, byte[], long)}
+     * with the default {@link #DEFAULT_MEDIA_UPDATE_TIMEOUT_MS} wait budget.
+     */
+    public CompletableFuture<Wa.MediaRetryNotification> updateMediaMessage(
+            String messageId, String remoteJid, boolean fromMe, String participant,
+            byte[] mediaKey) {
+        return updateMediaMessage(messageId, remoteJid, fromMe, participant, mediaKey,
+            DEFAULT_MEDIA_UPDATE_TIMEOUT_MS);
     }
 
     public static Wa.MediaRetryNotification decryptMediaRetryNotification(
@@ -2937,6 +4885,11 @@ public final class JaWaClient implements AutoCloseable {
             ContactStatus status = map.get(bareLid);
             if (status != null && status.jid() != null && status.jid().endsWith("@" + Jid.SERVER_WHATSAPP)) {
                 LID_TO_PN_MAP.put(bareLid, status.jid());
+                // Increment 2: a newly learned mapping is a lid-mapping
+                // event, as in Baileys' sync-action/mex mapping paths.
+                memoryStore.upsertLidMapping(bareLid, status.jid());
+                dispatchEvent(BaileysEventType.LID_MAPPING_UPDATE,
+                    new LidMappingUpdate(bareLid, status.jid()));
                 return status.jid();
             }
             return null;
@@ -3091,25 +5044,9 @@ public final class JaWaClient implements AutoCloseable {
     }
 
     public CompletableFuture<PrivacySettings> getPrivacySettings() {
-        String iqId = newIqId();
-        BinaryNode iq = new BinaryNode("iq", Map.of(
-            "id", iqId,
-            "to", Jid.SERVER_WHATSAPP,
-            "type", "get",
-            "xmlns", "privacy"
-        ), List.of(new BinaryNode("privacy", Map.of(), null)));
+        BinaryNode iq = PrivacyQuery.buildFetch(newIqId());
         return sendIqAsync(iq).thenApply(resp -> {
-            BinaryNode privacy = resp.child("privacy");
-            Map<String, String> map = new LinkedHashMap<>();
-            if (privacy != null) {
-                for (BinaryNode child : privacy.childrenList()) {
-                    if ("category".equals(child.tag())) {
-                        String name = child.attr("name");
-                        String val = child.attr("value");
-                        if (name != null && val != null) map.put(name, val);
-                    }
-                }
-            }
+            Map<String, String> map = PrivacyQuery.parseFetch(resp);
             return new PrivacySettings(
                 map.getOrDefault("groupadd", ""),
                 map.getOrDefault("last", ""),
@@ -3121,6 +5058,92 @@ public final class JaWaClient implements AutoCloseable {
                 map
             );
         });
+    }
+
+    /**
+     * Increment 7: Baileys {@code fetchPrivacySettings}
+     * ({@code lib/Socket/chats.js:64}). Like Baileys, this caches:
+     * with {@code force = false} a previously fetched result is
+     * returned without a network round trip; {@code force = true}
+     * always refetches and replaces the cache. The pre-existing
+     * {@link #getPrivacySettings()} is the same IQ without the cache
+     * and is unchanged. Baileys-faithful quirk, documented not
+     * fixed: the typed {@code update*Privacy} methods below do not
+     * invalidate this cache (Baileys' {@code privacyQuery} does not
+     * touch its {@code privacySettings} variable either), so after
+     * an update callers that need fresh values must fetch with
+     * {@code force = true}.
+     *
+     * @param force true to refetch even when a cached result exists
+     * @return future resolving to the privacy settings
+     */
+    public CompletableFuture<PrivacySettings> fetchPrivacySettings(boolean force) {
+        PrivacySettings cached = cachedPrivacySettings;
+        if (cached != null && !force) {
+            return CompletableFuture.completedFuture(cached);
+        }
+        return getPrivacySettings().thenApply(fetched -> {
+            cachedPrivacySettings = fetched;
+            return fetched;
+        });
+    }
+
+    /** Increment 7: {@link #fetchPrivacySettings(boolean)} with Baileys' default ({@code force = false}). */
+    public CompletableFuture<PrivacySettings> fetchPrivacySettings() {
+        return fetchPrivacySettings(false);
+    }
+
+    /**
+     * Increment 7: Baileys {@code updateMessagesPrivacy}
+     * ({@code lib/Socket/chats.js:102}): {@code privacyQuery} with
+     * category {@code messages}. Thin facade over
+     * {@link #setPrivacySetting}; the value is passed through
+     * verbatim ({@code all}, {@code contacts},
+     * {@code contact_blacklist}, {@code none}).
+     */
+    public CompletableFuture<Void> updateMessagesPrivacy(String value) {
+        return setPrivacySetting(PrivacyQuery.CATEGORY_MESSAGES, value);
+    }
+
+    /** Increment 7: Baileys {@code updateCallPrivacy}: category {@code calladd}. See {@link #updateMessagesPrivacy}. */
+    public CompletableFuture<Void> updateCallPrivacy(String value) {
+        return setPrivacySetting(PrivacyQuery.CATEGORY_CALL_ADD, value);
+    }
+
+    /** Increment 7: Baileys {@code updateLastSeenPrivacy}: category {@code last}. See {@link #updateMessagesPrivacy}. */
+    public CompletableFuture<Void> updateLastSeenPrivacy(String value) {
+        return setPrivacySetting(PrivacyQuery.CATEGORY_LAST_SEEN, value);
+    }
+
+    /** Increment 7: Baileys {@code updateOnlinePrivacy}: category {@code online}. See {@link #updateMessagesPrivacy}. */
+    public CompletableFuture<Void> updateOnlinePrivacy(String value) {
+        return setPrivacySetting(PrivacyQuery.CATEGORY_ONLINE, value);
+    }
+
+    /** Increment 7: Baileys {@code updateProfilePicturePrivacy}: category {@code profile}. See {@link #updateMessagesPrivacy}. */
+    public CompletableFuture<Void> updateProfilePicturePrivacy(String value) {
+        return setPrivacySetting(PrivacyQuery.CATEGORY_PROFILE_PICTURE, value);
+    }
+
+    /** Increment 7: Baileys {@code updateStatusPrivacy}: category {@code status}. See {@link #updateMessagesPrivacy}. */
+    public CompletableFuture<Void> updateStatusPrivacy(String value) {
+        return setPrivacySetting(PrivacyQuery.CATEGORY_STATUS, value);
+    }
+
+    /** Increment 7: Baileys {@code updateReadReceiptsPrivacy}: category {@code readreceipts}. See {@link #updateMessagesPrivacy}. */
+    public CompletableFuture<Void> updateReadReceiptsPrivacy(String value) {
+        return setPrivacySetting(PrivacyQuery.CATEGORY_READ_RECEIPTS, value);
+    }
+
+    /**
+     * Increment 7: Baileys {@code updateGroupsAddPrivacy}
+     * ({@code lib/Socket/chats.js:123}): {@code privacyQuery} with
+     * category {@code groupadd} (the same key the pre-existing
+     * {@code PrivacySettings.groupAdd} field reads). See
+     * {@link #updateMessagesPrivacy}.
+     */
+    public CompletableFuture<Void> updateGroupsAddPrivacy(String value) {
+        return setPrivacySetting(PrivacyQuery.CATEGORY_GROUP_ADD, value);
     }
 
     public CompletableFuture<Void> setPrivacySetting(String category, String value) {
@@ -3144,21 +5167,70 @@ public final class JaWaClient implements AutoCloseable {
     }
 
     public CompletableFuture<Void> setDefaultDisappearingTimer(int seconds) {
-        String iqId = newIqId();
-        BinaryNode node = new BinaryNode("disappearing_mode", Map.of(
-            "duration", String.valueOf(seconds)
-        ), null);
-        BinaryNode iq = new BinaryNode("iq", Map.of(
-            "id", iqId,
-            "to", Jid.SERVER_WHATSAPP,
-            "type", "set",
-            "xmlns", "disappearing_mode"
-        ), List.of(node));
+        // Increment 7: shape factored into PrivacyQuery (identical IQ).
+        BinaryNode iq = PrivacyQuery.buildUpdateDefaultDisappearingMode(newIqId(), seconds);
         return sendIqAsync(iq).thenAccept(resp -> {
             if ("error".equals(resp.attr("type"))) {
                 throw new IllegalStateException("Failed to set default disappearing timer: " + resp);
             }
         });
+    }
+
+    /**
+     * Increment 7: Baileys {@code updateDefaultDisappearingMode}
+     * ({@code lib/Socket/chats.js:126}). Baileys' name for the
+     * pre-existing {@link #setDefaultDisappearingTimer(int)}: the
+     * same {@code xmlns=disappearing_mode} set IQ, with the duration
+     * as a decimal string. This method delegates to it unchanged;
+     * the older wa-java name is kept, not renamed.
+     *
+     * @param durationSeconds default disappearing duration in seconds (0 disables)
+     * @return future completing when the setting is saved
+     */
+    public CompletableFuture<Void> updateDefaultDisappearingMode(int durationSeconds) {
+        return setDefaultDisappearingTimer(durationSeconds);
+    }
+
+    /**
+     * Increment 7: Baileys {@code cleanDirtyBits}
+     * ({@code lib/Socket/chats.js:400}): an {@code iq} to
+     * {@code s.whatsapp.net}, type {@code set},
+     * {@code xmlns=urn:xmpp:whatsapp:dirty}, carrying
+     * {@code <clean type [timestamp]>}. Baileys sends it with
+     * {@code sendNode} (fire-and-forget, no response wait); wa-java
+     * routes it through {@code sendIqAsync} instead, so the future
+     * completes when the server's result IQ arrives — the only
+     * divergence, and it keeps this method testable through the
+     * client's IQ seam like every other IQ method here. The
+     * timestamp attr is omitted when {@code fromTimestamp} is null
+     * <em>or</em> 0, mirroring Baileys' JS truthiness check
+     * ({@code fromTimestamp ? ... : null}).
+     *
+     * <p>Silent-failure behaviour is documented, not changed: like
+     * every other request method here, a disconnected client drops
+     * the stanza in {@link #send} and the future stays pending.
+     *
+     * @param type dirty-bit type, e.g. {@code account_sync}
+     * @param fromTimestamp lower-bound timestamp, or null/0 to omit it
+     * @return future completing when the server answers
+     */
+    public CompletableFuture<Void> cleanDirtyBits(String type, Long fromTimestamp) {
+        if (type == null || type.isBlank()) {
+            return CompletableFuture.failedFuture(new IllegalArgumentException("type must not be blank"));
+        }
+        Map<String, String> cleanAttrs = new HashMap<>();
+        cleanAttrs.put("type", type);
+        if (fromTimestamp != null && fromTimestamp != 0L) {
+            cleanAttrs.put("timestamp", String.valueOf(fromTimestamp));
+        }
+        BinaryNode clean = new BinaryNode("clean", cleanAttrs, null);
+        BinaryNode iq = new BinaryNode("iq", Map.of(
+            "id", newIqId(),
+            "to", Jid.SERVER_WHATSAPP,
+            "type", "set",
+            "xmlns", "urn:xmpp:whatsapp:dirty"
+        ), List.of(clean));
+        return sendIqAsync(iq).thenApply(resp -> null);
     }
 
     public CompletableFuture<String> getContactQrLink(boolean revoke) {
@@ -3226,6 +5298,67 @@ public final class JaWaClient implements AutoCloseable {
             getUserInfo(String targetJid) {
         return getUserInfo(List.of(targetJid))
             .thenApply(map -> map.get(targetJid));
+    }
+
+    /**
+     * Increment 6: Baileys {@code executeUSyncQuery}
+     * ({@code lib/Socket/socket.js}), made public. Executes a
+     * caller-supplied arbitrary USync query — the fixed builders
+     * behind {@link #isOnWhatsApp} and {@link #getUserInfo} cannot
+     * express an arbitrary protocol set — and returns the parsed
+     * result. The query model owns the protocol elements and user
+     * nodes (see {@link UsyncQuery.GenericQuery}); per-protocol
+     * field parsing is the caller's job over
+     * {@link UsyncQuery.GenericResult#userNodes()}. No socket
+     * internals are exposed: only the query model goes in and the
+     * parsed result comes out.
+     *
+     * @param query caller-supplied USync query; must carry at least one
+     *              protocol element (Baileys throws otherwise)
+     * @return future of the parsed result, or null for a non-
+     *         {@code result} IQ (Baileys returns {@code undefined} there)
+     */
+    public CompletableFuture<UsyncQuery.GenericResult> executeUSyncQuery(UsyncQuery.GenericQuery query) {
+        if (query == null || query.queryElements().isEmpty()) {
+            return CompletableFuture.failedFuture(
+                new IllegalArgumentException("USyncQuery must have at least one protocol"));
+        }
+        String iqId = newIqId();
+        String sid = newIqId();
+        BinaryNode iq = UsyncQuery.buildGenericQuery(iqId, sid, query);
+        LOG.debug("Sent generic USync IQ id={} sid={} for {} protocol(s)", iqId, sid, query.queryElements().size());
+        return sendIqAsync(iq).thenApply(UsyncQuery::parseGenericResult);
+    }
+
+    /**
+     * Increment 7: Baileys {@code fetchDisappearingDuration}
+     * ({@code lib/Socket/chats.js:185}): a USync query with the
+     * disappearing-mode protocol for each JID, executed through the
+     * Increment 6 {@link #executeUSyncQuery} hook (no new transport:
+     * the query model is
+     * {@link UsyncQuery#buildDisappearingModeGenericQuery} and the
+     * per-user parsing is
+     * {@link UsyncQuery#parseDisappearingModeResult}). Baileys
+     * returns a list of {@code {id, disappearing_mode: {duration,
+     * setAt}}} entries, including entries whose protocol field is
+     * absent; wa-java returns a JID-keyed map and omits users with
+     * no (or an unparseable) {@code disappearing_mode} child — see
+     * that parser's Javadoc. A non-{@code result} IQ yields an empty
+     * map, matching {@code executeUSyncQuery}'s null-result handling
+     * folded into a map.
+     *
+     * @param jids JIDs to query; blank entries are skipped
+     * @return future resolving to a JID-keyed map of disappearing durations
+     */
+    public CompletableFuture<Map<String, UsyncQuery.DisappearingDuration>> fetchDisappearingDuration(List<String> jids) {
+        UsyncQuery.GenericQuery query = UsyncQuery.buildDisappearingModeGenericQuery(jids);
+        return executeUSyncQuery(query).thenApply(result ->
+            result == null ? Map.of() : UsyncQuery.parseDisappearingModeResult(result));
+    }
+
+    /** Increment 7: varargs form of {@link #fetchDisappearingDuration(List)}. */
+    public CompletableFuture<Map<String, UsyncQuery.DisappearingDuration>> fetchDisappearingDuration(String... jids) {
+        return fetchDisappearingDuration(jids == null ? List.of() : List.of(jids));
     }
 
     public CompletableFuture<BusinessProfile> getBusinessProfile(String jid) {
@@ -3664,6 +5797,58 @@ public final class JaWaClient implements AutoCloseable {
         return CompletableFuture.completedFuture(null);
     }
 
+    /**
+     * Increment 7: Baileys {@code updateProfileName}
+     * ({@code lib/Socket/chats.js:285}): {@code chatModify({pushNameSetting: name}, '')},
+     * i.e. the {@code setting_pushName} app-state patch built by
+     * {@link AppPatchBuilder#buildPushNameSetting} and sent through
+     * {@link #appPatch} (Increment 5 hook). This is the path that
+     * actually propagates the new profile name to the server and to
+     * other devices via app-state sync.
+     *
+     * <p>Relationship to {@link #updatePushName}, stated not hidden:
+     * the two methods are <em>not</em> interchangeable and neither
+     * replaces the other. {@code updatePushName} is the pre-existing
+     * presence-based path — it updates the local credential and
+     * broadcasts a {@code <presence name>} stanza, but sends no
+     * app-state patch, so it does not change the server-side profile
+     * name the way Baileys' {@code updateProfileName} does. This
+     * method does the app-state patch but does not update the local
+     * credential or broadcast presence. Callers that want both
+     * effects call both methods; neither method calls the other, so
+     * no existing caller changes behaviour.
+     *
+     * @param name new profile (push) name; must not be null (Baileys
+     *             passes it through verbatim, so an empty string is
+     *             allowed here)
+     * @return future completing with the encoder result on a successful send;
+     *         fails when no app-state key id is configured (see {@link #appPatch})
+     */
+    public CompletableFuture<AppPatchEncoder.EncodedPatch> updateProfileName(String name) {
+        if (name == null) {
+            return CompletableFuture.failedFuture(new IllegalArgumentException("name must not be null"));
+        }
+        return appPatch(AppPatchBuilder.buildPushNameSetting(name));
+    }
+
+    /**
+     * Increment 7: Baileys {@code updateDisableLinkPreviewsPrivacy}
+     * ({@code lib/Socket/chats.js:828}): {@code chatModify({disableLinkPreviews:
+     * {isPreviewsDisabled}}, '')}, i.e. the
+     * {@code setting_disableLinkPreviews} app-state patch built by
+     * {@link AppPatchBuilder#buildDisableLinkPreviews} and sent
+     * through {@link #appPatch}. Despite the name it is not a
+     * privacy IQ (Baileys sends no {@code xmlns=privacy} stanza for
+     * it); {@code PrivacyService} exposes a delegate for
+     * discoverability with that caveat in its Javadoc.
+     *
+     * @param isPreviewsDisabled true to disable link previews
+     * @return future completing with the encoder result on a successful send
+     */
+    public CompletableFuture<AppPatchEncoder.EncodedPatch> updateDisableLinkPreviewsPrivacy(boolean isPreviewsDisabled) {
+        return appPatch(AppPatchBuilder.buildDisableLinkPreviews(isPreviewsDisabled));
+    }
+
     public CompletableFuture<String> sendMexQuery(String queryId, String jsonVariables) {
         String iqId = newIqId();
         String payload = "{\"variables\":" + (jsonVariables != null && !jsonVariables.isBlank() ? jsonVariables : "{}") + "}";
@@ -3677,6 +5862,38 @@ public final class JaWaClient implements AutoCloseable {
             BinaryNode res = resp.child("result");
             return res != null ? res.textContent() : null;
         });
+    }
+
+    /**
+     * Increment 6: Baileys {@code fetchAccountReachoutTimelock}
+     * ({@code lib/Socket/socket.js}). Sends the MEX query with id
+     * {@code 23983697327930364} (Baileys
+     * {@code QueryIds.REACHOUT_TIMELOCK}, {@code lib/Types/Mex.js})
+     * and empty variables, parses the
+     * {@code xwa2_fetch_account_reachout_timelock} result with
+     * {@link ReachoutTimelock}, and emits a partial
+     * {@code connection.update} carrying only
+     * {@code reachoutTimeLock} — exactly Baileys' emit. When the
+     * payload is absent or carries GraphQL errors, the future fails
+     * and nothing is emitted (Baileys throws before its emit).
+     * Fetch-path parsing differs from the notification path: no
+     * now+60s expiry default and no enforcement-type validation (see
+     * {@link ReachoutTimelock}).
+     *
+     * @return future of the parsed timelock value
+     */
+    public CompletableFuture<ConnectionUpdate.ReachoutTimeLock> fetchAccountReachoutTimelock() {
+        return sendMexQuery(ReachoutTimelock.QUERY_ID, ReachoutTimelock.VARIABLES_JSON)
+            .thenApply(json -> {
+                ConnectionUpdate.ReachoutTimeLock lock = ReachoutTimelock.parse(json);
+                if (lock == null) {
+                    throw new IllegalStateException(
+                        "fetch_account_reachout_timelock: unexpected MEX response structure");
+                }
+                dispatchEvent(BaileysEventType.CONNECTION_UPDATE,
+                    new ConnectionUpdate(null, null, null, null, null, null, null, lock));
+                return lock;
+            });
     }
 
     public CompletableFuture<Void> followNewsletter(String newsletterJid) {
