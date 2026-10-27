@@ -1292,14 +1292,14 @@ public final class JaWaClient implements AutoCloseable {
      * resync request and does not loop the way Baileys'
      * {@code resyncAppState} does.
      *
-     * <p>Silent-failure behaviour is <em>not</em> changed (documented,
-     * not changed, per the workstream constraint): this method adds
-     * no connected check of its own. When the IQ sender is the real
-     * {@code sendIqAsync} and the client is disconnected,
-     * {@link #send(BinaryNode)} logs a warning and drops the node,
-     * leaving the future pending — exactly as every other IQ method
-     * behaves. Callers that need a failure on disconnect must enforce
-     * it in their own sender, or check connection state first.
+     * <p>Scoped fail-fast (2026-10-27 decision): this method adds
+     * no connected check of its own, but when the IQ sender is the
+     * real {@link #sendIqAsync} and the client is disconnected,
+     * that guard fails the future promptly instead of leaving it
+     * pending while {@link #send(BinaryNode)} drops the node — the
+     * resync step fails the same way, through the same guard.
+     * Callers that supply their own IQ sender must enforce any
+     * disconnect behaviour in that sender.
      *
      * <p>Wire caveat, inherited from Increment 4 and restated, not
      * re-verified: {@code AppStateKey.expand}'s split order and the
@@ -1578,8 +1578,28 @@ public final class JaWaClient implements AutoCloseable {
         return id;
     }
 
+    /**
+     * Sends an IQ stanza and completes with the server's response node.
+     *
+     * <p>Scoped fail-fast (2026-10-27 decision): when the client is
+     * disconnected ({@link #isDisconnected()}), the returned future
+     * fails promptly with an {@link IllegalStateException} instead of
+     * staying pending while {@link #send(BinaryNode)} drops the node.
+     * The test seam ({@code iqSenderForTesting}) takes precedence:
+     * when set, its result is returned unchanged, so fake-IQ tests
+     * that simulate a connected server are unaffected. No timeout is
+     * added here — the separate sendIqAsync-no-timeout gap is out of
+     * scope. {@link #send(BinaryNode)} itself is unchanged.
+     *
+     * @param iq IQ stanza to send; must carry a non-null {@code id} attr
+     * @return future completing with the inbound response node, or
+     *         failing promptly when disconnected
+     */
     public CompletableFuture<BinaryNode> sendIqAsync(BinaryNode iq) {
         if (iqSenderForTesting != null) return iqSenderForTesting.sendIq(iq);
+        if (isDisconnected()) {
+            return CompletableFuture.failedFuture(disconnectedFailure());
+        }
         var f = new CompletableFuture<BinaryNode>();
         sendIq(iq, f::complete);
         return f;
@@ -1601,13 +1621,20 @@ public final class JaWaClient implements AutoCloseable {
      * not assumed: Baileys' {@code createCallLink} reads
      * {@code <link_create>} off whatever node arrives with the id.
      *
-     * <p>Silent-failure behaviour is <em>not</em> changed (documented,
-     * not changed, per the workstream constraint): like every other
-     * request method here, a disconnected client drops the node in
-     * {@link #send} and the future stays pending, exactly as
-     * {@code sendIqAsync} behaves. There is no timeout on this path,
-     * matching {@code sendIqAsync}; Baileys' own query timeout is a
-     * separate gap, not closed here.
+     * <p>Silent-failure behaviour is deliberately retained here,
+     * unlike {@link #sendIqAsync}: a disconnected client drops the
+     * node in {@link #send} and the future stays pending, because
+     * the pending-correlation pattern this method exists for is
+     * driven through {@code handleStanza} on a client with no live
+     * transport (see the Increment 6 call-correlation test), and
+     * there is no seam-independent way to distinguish that pattern
+     * from a disconnected production client. Guarding this method
+     * would break that pattern, so it is left unguarded; callers
+     * that need a failure on disconnect should use
+     * {@link #sendIqAsync} or check connection state first. There
+     * is no timeout on this path, matching {@code sendIqAsync};
+     * Baileys' own query timeout is a separate gap, not closed
+     * here.
      *
      * @param node request stanza; must carry a non-null {@code id} attr
      * @return future completing with the inbound response node
@@ -2118,8 +2145,23 @@ public final class JaWaClient implements AutoCloseable {
             CompletableFuture.delayedExecutor(delayMs, TimeUnit.MILLISECONDS));
     }
 
+    /**
+     * Sends a text message to a newsletter (channel).
+     *
+     * <p>Scoped fail-fast: when disconnected, the returned future
+     * fails promptly with an {@link IllegalStateException} instead
+     * of completing with a message id for a stanza that
+     * {@link #send(BinaryNode)} dropped.
+     *
+     * @param newsletterJid newsletter (channel) JID
+     * @param text message text
+     * @return future of the message id, failing promptly when disconnected
+     */
     public CompletableFuture<String> sendNewsletterText(
             String newsletterJid, String text) {
+        if (isDisconnected()) {
+            return CompletableFuture.failedFuture(disconnectedFailure());
+        }
         String msgId = generateMessageId();
         byte[] msgBytes = MessageEncoder.encode(MessageEncoder.text(text));
         BinaryNode node = new BinaryNode("message",
@@ -2133,8 +2175,25 @@ public final class JaWaClient implements AutoCloseable {
         return CompletableFuture.completedFuture(msgId);
     }
 
+    /**
+     * Sends (or, with a blank reaction code, removes) a reaction to a
+     * newsletter message.
+     *
+     * <p>Scoped fail-fast: when disconnected, the returned future
+     * fails promptly with an {@link IllegalStateException} instead
+     * of completing with a message id for a stanza that
+     * {@link #send(BinaryNode)} dropped.
+     *
+     * @param newsletterJid newsletter (channel) JID
+     * @param serverId server id of the message being reacted to
+     * @param reactionCode reaction code, or blank to remove the reaction
+     * @return future of the message id, failing promptly when disconnected
+     */
     public CompletableFuture<String> sendNewsletterReaction(
             String newsletterJid, String serverId, String reactionCode) {
+        if (isDisconnected()) {
+            return CompletableFuture.failedFuture(disconnectedFailure());
+        }
         String msgId = generateMessageId();
         Map<String, String> attrs = new HashMap<>();
         attrs.put("to", newsletterJid);
@@ -2603,11 +2662,15 @@ public final class JaWaClient implements AutoCloseable {
      * protocol store exists yet (never connected), the peer path
      * fails fast rather than silently dropping the stanza the way
      * {@link #send(BinaryNode)} does for a disconnected transport.
-     * <p>Silent-failure behaviour is <em>not</em> changed (documented,
-     * not changed, per the workstream constraint): once the stanza is
-     * built, a disconnected transport still drops it in
-     * {@link #send(BinaryNode)} and the future has already completed
-     * with the message id, exactly as the DM path behaves.
+     * <p>Scoped fail-fast (2026-10-27 decision): when disconnected
+     * and no capture seam is set, the returned future fails promptly
+     * with an {@link IllegalStateException} instead of completing
+     * with a message id for a stanza {@link #send(BinaryNode)}
+     * would drop. The capture seam
+     * ({@code messageSenderForTesting}) stands in for the transport
+     * in tests, so it bypasses this guard — with the seam set, the
+     * stanza is captured as before. The DM/group send paths this
+     * method delegates to for the device-0 case are unchanged.
      *
      * @param pdo caller-built PDO request (type and payload owned by the caller)
      * @return future of the sent message id; fails when not
@@ -2620,6 +2683,9 @@ public final class JaWaClient implements AutoCloseable {
         }
         if (creds == null || creds.meJid == null || creds.meJid.isBlank()) {
             return CompletableFuture.failedFuture(new IllegalStateException("Not authenticated"));
+        }
+        if (isDisconnected() && messageSenderForTesting == null) {
+            return CompletableFuture.failedFuture(disconnectedFailure());
         }
         String ownBareJid = Jid.bare(creds.meJid);
         Wa.Message msg = PeerDataOperations.buildPeerDataOperationMessage(pdo);
@@ -2669,9 +2735,17 @@ public final class JaWaClient implements AutoCloseable {
      * @param messageKey key of the placeholder message (its {@code id} is the cache key)
      * @param msgData original message data preserved for the PDO
      *                response handler, or null to store {@code true}
+     * <p>Scoped fail-fast (2026-10-27 decision): the sender stage
+     * fails the returned future promptly when disconnected, through
+     * the {@link #sendPeerDataOperationMessage} guard (bypassed only
+     * when its capture seam stands in for the transport). The claim
+     * and 2-second delay are unchanged, and the fire-and-forget
+     * auto-send in the decrypt-failure catch still swallows the
+     * failure there, as before.
+     *
      * @return future of null (resend already requested), {@code "RESOLVED"}
      *         (the real message arrived during the delay), or the sent
-     *         PDO message id
+     *         PDO message id; failing promptly when disconnected at send time
      */
     public CompletableFuture<String> requestPlaceholderResend(Wa.MessageKey messageKey, Object msgData) {
         if (messageKey == null || messageKey.getId() == null || messageKey.getId().isBlank()) {
@@ -2952,8 +3026,24 @@ public final class JaWaClient implements AutoCloseable {
         });
     }
 
+    /**
+     * Sends a structured message to a newsletter (channel).
+     *
+     * <p>Scoped fail-fast: when disconnected, the returned future
+     * fails promptly with an {@link IllegalStateException} instead
+     * of completing with a message id for a stanza that
+     * {@link #send(BinaryNode)} dropped (the previous behaviour
+     * logged "Sent" and returned a successful-looking id).
+     *
+     * @param newsletterJid newsletter (channel) JID
+     * @param msg structured message payload
+     * @return future of the message id, failing promptly when disconnected
+     */
     public CompletableFuture<String> sendNewsletterMessage(
             String newsletterJid, Wa.Message msg) {
+        if (isDisconnected()) {
+            return CompletableFuture.failedFuture(disconnectedFailure());
+        }
         String msgId = generateMessageId();
 
         String msgType = "text";
@@ -4043,6 +4133,21 @@ public final class JaWaClient implements AutoCloseable {
             return true;
         }
         return false;
+    }
+
+    /**
+     * Whether the client has no live transport/frame — the exact
+     * condition {@link #send(BinaryNode)} uses to drop a node.
+     * Scoped fail-fast guards reuse this condition so they agree
+     * with {@code send()} about what "disconnected" means.
+     */
+    private boolean isDisconnected() {
+        return transport == null || frame == null;
+    }
+
+    /** Failure used by scoped fail-fast guards for a disconnected client. */
+    private static IllegalStateException disconnectedFailure() {
+        return new IllegalStateException("Not connected: transport/frame is not connected");
     }
 
     public void send(BinaryNode node) {
@@ -5206,9 +5311,10 @@ public final class JaWaClient implements AutoCloseable {
      * <em>or</em> 0, mirroring Baileys' JS truthiness check
      * ({@code fromTimestamp ? ... : null}).
      *
-     * <p>Silent-failure behaviour is documented, not changed: like
-     * every other request method here, a disconnected client drops
-     * the stanza in {@link #send} and the future stays pending.
+     * <p>Scoped fail-fast: this method routes through
+     * {@link #sendIqAsync}, so a disconnected client fails the
+     * future promptly instead of dropping the stanza in
+     * {@link #send} and leaving the future pending.
      *
      * @param type dirty-bit type, e.g. {@code account_sync}
      * @param fromTimestamp lower-bound timestamp, or null/0 to omit it

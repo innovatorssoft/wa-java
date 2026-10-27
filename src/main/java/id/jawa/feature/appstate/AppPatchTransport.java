@@ -42,14 +42,14 @@ import java.util.function.Supplier;
  * when it learns a newer version, or the transport encodes on whatever
  * {@link AppStateVersionStore#load(String)} returns.
  *
- * <p>Silent-failure behaviour is <em>not</em> changed: this class adds
- * no connected check of its own. If the {@link IqSender} is
- * {@code JaWaClient::sendIqAsync}, a disconnected client behaves
- * exactly as every other IQ method does — {@code JaWaClient.send()}
- * logs a warning and drops the node, leaving the future pending —
- * because that behaviour belongs to the client, not to this transport.
- * Callers that need a failure on disconnect must enforce it in their
- * {@link IqSender}.
+ * <p>Scoped fail-fast: this class adds no connected check of its
+ * own. If the {@link IqSender} is {@code JaWaClient::sendIqAsync},
+ * a disconnected client fails the future promptly through that
+ * method's guard, instead of leaving it pending while
+ * {@code JaWaClient.send()} drops the node — because disconnect
+ * behaviour belongs to the client, not to this transport. Callers
+ * that supply their own {@link IqSender} must enforce any
+ * disconnect behaviour in that sender.
  */
 public final class AppPatchTransport {
 
