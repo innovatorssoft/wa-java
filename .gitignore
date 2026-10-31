@@ -21,8 +21,5 @@ auth/
 
 docs/
 dependency-reduced-pom.xml
-scratch/
-run_bot.bat
-run_bot.ps1
-compile.bat
+scratch
 src/main/java/id/ja_wa/proto/Wa.java
