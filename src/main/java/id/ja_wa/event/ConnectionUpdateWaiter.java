@@ -73,7 +73,10 @@ public final class ConnectionUpdateWaiter {
                 } catch (RuntimeException ignored) {
                     match = false;
                 }
-                if (match) result.complete(update);
+                if (match) {
+                    bus.removeListener(this);
+                    result.complete(update);
+                }
             }
         };
         bus.addListener(listener);

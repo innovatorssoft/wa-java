@@ -54,6 +54,7 @@ public final class MediaUpdateWaiter {
                 if (update == null || update.updates() == null) return;
                 for (MessagesMediaUpdate.MediaUpdate u : update.updates()) {
                     if (u != null && messageId.equals(u.messageId())) {
+                        bus.removeListener(this);
                         result.complete(u);
                         return;
                     }

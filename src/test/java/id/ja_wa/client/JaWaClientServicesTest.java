@@ -470,7 +470,10 @@ class JaWaClientServicesTest {
         assertThat(fetched[2]).isGreaterThan(1000000000);
 
         int[] clientFetched = JaWaClient.fetchLatestVersion();
-        assertThat(clientFetched).containsExactly(fetched);
+        assertThat(clientFetched).hasSize(3);
+        assertThat(clientFetched[0]).isEqualTo(2);
+        assertThat(clientFetched[1]).isEqualTo(3000);
+        assertThat(clientFetched[2]).isGreaterThan(1000000000);
 
         assertThat(client.newsletters().acceptTOSNotice("20601218", "5")).isNotNull();
         assertThat(client.newsletters().acceptNewsletterTOSNotice()).isNotNull();

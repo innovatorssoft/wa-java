@@ -168,6 +168,7 @@ class HistorySyncNotificationParserTest {
     @Test
     void lidPnMappingsCoverExplicitConversationAndReceiptFallback() {
         Wa.HistorySync sync = Wa.HistorySync.newBuilder()
+            .setSyncType(Wa.HistorySync.HistorySyncType.RECENT)
             .addPhoneNumberToLidMappings(Wa.PhoneNumberToLIDMapping.newBuilder()
                 .setLidJid("10@lid").setPnJid("11@s.whatsapp.net"))
             .addConversations(Wa.Conversation.newBuilder()
