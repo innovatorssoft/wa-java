@@ -1058,7 +1058,7 @@ public final class JaWaClient implements AutoCloseable {
                 }
                 byte[] plain = transport.decrypt(enc);
                 BinaryNode node = BinaryDecoder.decode(plain);
-                LOG.trace("recv: {}", node);
+                LOG.debug("RECV STANZA: {}", node);
 
                 try {
                     if (handleStanza(node, pair)) continue;
@@ -2565,55 +2565,28 @@ public final class JaWaClient implements AutoCloseable {
         Jid targetJidObj = Jid.parse(toUser);
 
         return queryDevices(queryTargets).thenCompose(devicesMap -> {
-            String resolvedRoutingJid = toUser;
-            String resolvedEncryptionLid = null;
-            if (toUser != null && toUser.endsWith("@lid")) {
-                String mappedPn = LID_TO_PN_MAP.get(toUser);
-                if (mappedPn != null && !mappedPn.isEmpty()) {
-                    LOG.debug("DM dual-identity resolved: route via PN {} but encrypt via LID {}", mappedPn, toUser);
-                    resolvedRoutingJid = mappedPn;
-                    resolvedEncryptionLid = toUser;
-                }
-            }
-            final String finalRoutingJid = resolvedRoutingJid;
-            final String finalEncryptionLid = resolvedEncryptionLid;
-
-            Jid pnBase = Jid.parse(finalRoutingJid);
-            Jid lidBase = finalEncryptionLid != null ? Jid.parse(finalEncryptionLid) : null;
-
             List<String> allDeviceJids = new ArrayList<>();
-            List<String> encryptionDeviceJids = new ArrayList<>();
-
             for (var entry : devicesMap.entrySet()) {
                 Jid base = Jid.parse(entry.getKey());
                 if (base == null) continue;
-                boolean isTarget = targetJidObj != null && base.user().equals(targetJidObj.user());
-
                 for (var d : entry.getValue()) {
-                    if (isTarget && finalEncryptionLid != null && pnBase != null && lidBase != null) {
-                        String wireJid = pnBase.user() + (d.id() != 0 ? ":" + d.id() : "") + "@" + pnBase.server();
-                        String encJid = lidBase.user() + (d.id() != 0 ? ":" + d.id() : "") + "@" + lidBase.server();
-                        allDeviceJids.add(wireJid);
-                        encryptionDeviceJids.add(encJid);
-                    } else {
-                        String jidStr = d.asJid(base.user(), base.server()).asString();
-                        allDeviceJids.add(jidStr);
-                        encryptionDeviceJids.add(jidStr);
-                    }
+                    allDeviceJids.add(d.asJid(base.user(), base.server()).asString());
                 }
             }
 
-            return fetchBundlesAndInstallSessions(encryptionDeviceJids).thenApply(addresses -> {
+            Map<String, String> finalAttrs = new HashMap<>(additionalAttributes);
+
+            return fetchBundlesAndInstallSessions(allDeviceJids).thenApply(addresses -> {
                 String msgId = generateMessageId();
                 messageSendLock.lock();
                 try {
                     MessageSender.Result result = MessageSender.buildDualIdentityStanza(
-                        protocolStore, creds, msgId, finalRoutingJid,
-                        allDeviceJids, encryptionDeviceJids, outboundMsg, additionalNodes);
-                    send(MessageSender.withAdditionalAttributes(result.stanza(), additionalAttributes));
+                        protocolStore, creds, msgId, toUser,
+                        allDeviceJids, allDeviceJids, outboundMsg, additionalNodes);
+                    send(MessageSender.withAdditionalAttributes(result.stanza(), finalAttrs));
                     int ownCount = countOwnDevices(allDeviceJids, ownUser);
                     LOG.info("Sent message id={} to={} ({} device(s) total, {} own-companion DSM)",
-                        msgId, finalRoutingJid, allDeviceJids.size(),
+                        msgId, toUser, allDeviceJids.size(),
                         Math.max(0, ownCount - 1));
                     return msgId;
                 } finally {
@@ -3860,6 +3833,16 @@ public final class JaWaClient implements AutoCloseable {
                 node.attr("jid", creds.meJid),
                 node.attr("lid", creds.meLid),
                 node.attr("platform", creds.platform));
+            if (creds.meLid != null && creds.meJid != null) {
+                Jid myLid = Jid.parse(creds.meLid);
+                Jid myJid = Jid.parse(creds.meJid);
+                if (myLid != null && myJid != null) {
+                    String bareLid = myLid.user() + "@lid";
+                    String barePn = myJid.user() + "@" + Jid.SERVER_WHATSAPP;
+                    LID_TO_PN_MAP.put(bareLid, barePn);
+                    LID_TO_PN_MAP.put(barePn, bareLid);
+                }
+            }
             reconnectAttempts.set(0);
             sendActivePassive();
             sendPresenceAvailable();
@@ -3889,6 +3872,15 @@ public final class JaWaClient implements AutoCloseable {
         }
 
         if ("ack".equals(node.tag())) {
+            String ackId = node.attr("id");
+            String ackClass = node.attr("class");
+            String ackType = node.attr("type");
+            String ackError = node.attr("error");
+            if (ackError != null || "error".equals(ackType)) {
+                LOG.error("SERVER ACK ERROR: id={} class={} type={} error={}", ackId, ackClass, ackType, ackError);
+            } else {
+                LOG.info("SERVER ACK: id={} class={} type={}", ackId, ackClass, ackType);
+            }
             String from = node.attr("from");
             String phash = node.attr("phash");
             if (from != null && phash != null && !phash.isEmpty()) {
@@ -3909,6 +3901,7 @@ public final class JaWaClient implements AutoCloseable {
         }
 
         if ("notification".equals(node.tag()) || "receipt".equals(node.tag())) {
+            LOG.info("SERVER {}: id={} type={} from={}", node.tag().toUpperCase(), node.attr("id"), node.attr("type"), node.attr("from"));
             try { sendAck(node); }
             catch (Throwable t) { LOG.warn("Failed to ack {}", node.tag(), t); }
             if ("notification".equals(node.tag())) {
@@ -4155,6 +4148,7 @@ public final class JaWaClient implements AutoCloseable {
             LOG.warn("Cannot send node while transport/frame is not connected");
             return;
         }
+        LOG.debug("SEND STANZA: {}", node);
         byte[] plain = BinaryEncoder.encode(node);
         byte[] enc = transport.encrypt(plain);
         frame.send(enc);

@@ -1,6 +1,6 @@
 # wa-java Guide — Baileys-port features
 
-This guide covers the features ported from Baileys (`itsliaaa/baileys`) into
+This guide covers the features ported from Baileys (`baileys`) into
 wa-java, across Increments 1–10c. It is written for a developer who already
 has a wa-java checkout on the `baileys-port` branch and wants to use the
 ported surface, not re-implement it.
@@ -38,7 +38,7 @@ Contents:
 
 Conventions used throughout:
 
-- A **JID** is a full WhatsApp address such as `62812345678@s.whatsapp.net`
+- A **JID** is a full WhatsApp address such as `923001234567@s.whatsapp.net`
   (a user), `120207...@g.us` (a group), `120207...@newsletter` (a channel),
   or `status@broadcast` (status). A **bare JID** is the same address without
   a device suffix.

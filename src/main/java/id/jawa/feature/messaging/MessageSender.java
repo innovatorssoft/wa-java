@@ -25,6 +25,19 @@ public final class MessageSender {
 
     private static final Logger LOG = LoggerFactory.getLogger(MessageSender.class);
 
+    private static String resolveDsmDestination(String recipientBareJid, AuthCreds creds) {
+        if (recipientBareJid != null && recipientBareJid.endsWith("@lid") && creds.meLid != null && !creds.meLid.isBlank()) {
+            Jid lidJid = Jid.parse(creds.meLid);
+            if (lidJid != null && recipientBareJid.startsWith(lidJid.user())) {
+                Jid myPn = Jid.parse(creds.meJid);
+                if (myPn != null) {
+                    return myPn.user() + "@" + Jid.SERVER_WHATSAPP;
+                }
+            }
+        }
+        return recipientBareJid;
+    }
+
     private MessageSender() {}
 
     public static Result buildStanza(JaWaProtocolStore store,
@@ -82,7 +95,7 @@ public final class MessageSender {
             if (jid.user().equals(ownUser)) {
                 if (dsmPadded == null) {
                     dsmPadded = MessageEncoder.encode(
-                        MessageEncoder.deviceSent(recipientBareJid, message));
+                        MessageEncoder.deviceSent(resolveDsmDestination(recipientBareJid, creds), message));
                 }
                 plaintext = dsmPadded;
             } else {
@@ -128,9 +141,6 @@ public final class MessageSender {
         attrs.put("to", recipientBareJid);
         attrs.put("id", msgId);
         attrs.put("type", "text");
-        if (recipientBareJid.endsWith("@lid")) {
-            attrs.put("addressing_mode", "lid");
-        }
         BinaryNode stanza = new BinaryNode("message", attrs, outer);
 
         return new Result(stanza, typeMap);
@@ -167,7 +177,7 @@ public final class MessageSender {
         Objects.requireNonNull(creds);
         Objects.requireNonNull(message);
 
-        Jid myJid = Jid.parse(creds.meJid);
+        Jid myJid = Jid.parse(recipientBareJid.endsWith("@lid") && creds.meLid != null && !creds.meLid.isBlank() ? creds.meLid : creds.meJid);
         if (myJid == null) throw new IllegalStateException("creds.meJid invalid");
         SignalProtocolAddress myAddr = new SignalProtocolAddress(myJid.user(), myJid.device());
         String ownUser = myJid.user();
@@ -205,7 +215,7 @@ public final class MessageSender {
             if (isOwnDevice) {
                 if (dsmPadded == null) {
                     dsmPadded = MessageEncoder.encode(
-                        MessageEncoder.deviceSent(recipientBareJid, message));
+                        MessageEncoder.deviceSent(resolveDsmDestination(recipientBareJid, creds), message));
                 }
                 plaintext = dsmPadded;
             } else {
@@ -251,9 +261,6 @@ public final class MessageSender {
         attrs.put("to", recipientBareJid);
         attrs.put("id", msgId);
         attrs.put("type", "text");
-        if (recipientBareJid.endsWith("@lid")) {
-            attrs.put("addressing_mode", "lid");
-        }
         BinaryNode stanza = new BinaryNode("message", attrs, outer);
 
         return new Result(stanza, typeMap);
@@ -343,7 +350,7 @@ public final class MessageSender {
         Objects.requireNonNull(creds);
         Objects.requireNonNull(message);
 
-        Jid myJid = Jid.parse(creds.meJid);
+        Jid myJid = Jid.parse(recipientBareJid.endsWith("@lid") && creds.meLid != null && !creds.meLid.isBlank() ? creds.meLid : creds.meJid);
         if (myJid == null) throw new IllegalStateException("creds.meJid invalid");
         if (myJid.device() == 0) {
             throw new IllegalStateException(
@@ -353,7 +360,7 @@ public final class MessageSender {
         SignalProtocolAddress addr = SessionBootstrap.addressFor(device0);
 
         byte[] dsmPadded = MessageEncoder.encode(
-            MessageEncoder.deviceSent(recipientBareJid, message));
+            MessageEncoder.deviceSent(resolveDsmDestination(recipientBareJid, creds), message));
         boolean includeDeviceIdentity = false;
         Map<SignalProtocolAddress, Integer> typeMap = new HashMap<>();
         List<BinaryNode> participants = new ArrayList<>();
@@ -387,9 +394,6 @@ public final class MessageSender {
         attrs.put("to", recipientBareJid);
         attrs.put("id", msgId);
         attrs.put("type", "text");
-        if (recipientBareJid.endsWith("@lid")) {
-            attrs.put("addressing_mode", "lid");
-        }
         return new Result(new BinaryNode("message", attrs, outer), typeMap);
     }
 
@@ -482,6 +486,7 @@ public final class MessageSender {
                 .setDetails(full.getDetails())
                 .setAccountSignature(full.getAccountSignature());
             if (full.hasDeviceSignature()) b.setDeviceSignature(full.getDeviceSignature());
+            if (full.hasAccountSignatureKey()) b.setAccountSignatureKey(full.getAccountSignatureKey());
 
             return b.build().toByteArray();
         } catch (InvalidProtocolBufferException e) {
