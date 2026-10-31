@@ -6,11 +6,11 @@
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>io.github.jochris</groupId>
-    <artifactId>JaWa</artifactId>
+    <artifactId>Ja_Wa</artifactId>
     <version>0.0.4</version>
-    <name>JaWa</name>
+    <name>Ja_Wa</name>
     <description>Lightweight Java WhatsApp library</description>
-    <url>https://github.com/jochris/JaWa</url>
+    <url>https://github.com/innovatorssoft/wa-java</url>
 
     <licenses>
         <license>
@@ -20,25 +20,26 @@
         </license>
     </licenses>
 
-    <developers>
+        <developers>
         <developer>
-            <id>jochris</id>
-            <name>jochris</name>
-            <email>jonathandev780@gmail.com</email>
+            <id>innovatorssoft</id>
+            <name>Innovators soft</name>
+            <email>innovatorssoft7@gmaile.com</email>
+            <url>https://github.com/innovatorssoft</url>
         </developer>
     </developers>
 
-    <scm>
-        <connection>scm:git:git://github.com/jochris/JaWa.git</connection>
-        <developerConnection>scm:git:scm:git:ssh://github.com:jochris/JaWa.git</developerConnection>
-        <url>https://github.com/jochris/JaWa/tree/main</url>
+        <scm>
+        <connection>scm:git:git://github.com/innovatorssoft/wa-java.git</connection>
+        <developerConnection>scm:git:scm:git:ssh://github.com:innovatorssoft/wa-java.git</developerConnection>
+        <url>https://github.com/innovatorssoft/wa-java</url>
     </scm>
 
     <properties>
         <maven.compiler.source>21</maven.compiler.source>
         <maven.compiler.target>21</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <exec.mainClass>id.jawa.SimpleBot</exec.mainClass>
+        <exec.mainClass>id.ja_wa.SimpleBot</exec.mainClass>
         <!-- Dependency Versions -->
         <bouncycastle.version>1.78.1</bouncycastle.version>
         <signal.version>2.8.1</signal.version>

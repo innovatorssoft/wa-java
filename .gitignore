@@ -25,4 +25,4 @@ scratch/
 run_bot.bat
 run_bot.ps1
 compile.bat
-src/main/java/id/jawa/proto/Wa.java
+src/main/java/id/ja_wa/proto/Wa.java

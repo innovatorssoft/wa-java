@@ -54,8 +54,8 @@ Conventions used throughout:
 ### 1.1 Create a client and connect
 
 ```java
-import id.jawa.client.JaWaClient;
-import id.jawa.domain.store.FileAuthStore;
+import id.ja_wa.client.JaWaClient;
+import id.ja_wa.domain.store.FileAuthStore;
 
 import java.nio.file.Path;
 
@@ -98,9 +98,9 @@ before connecting. It is deliberately unchanged by the port, and it fires
 alongside the event bus (§2):
 
 ```java
-import id.jawa.client.JaWaClient;
-import id.jawa.feature.messaging.MessageReceiver;
-import id.jawa.protocol.codec.BinaryNode;
+import id.ja_wa.client.JaWaClient;
+import id.ja_wa.feature.messaging.MessageReceiver;
+import id.ja_wa.protocol.codec.BinaryNode;
 
 import java.util.List;
 
@@ -136,7 +136,7 @@ client.listener(new JaWaClient.Listener() {
 });
 ```
 
-`QrTerminal.render(String)` (in `id.jawa.feature.pairing`) renders one QR
+`QrTerminal.render(String)` (in `id.ja_wa.feature.pairing`) renders one QR
 string as terminal text; `render(String, int)` takes an explicit quiet-zone
 size. The legacy listener's other callbacks are `onReceipt(Receipt)`,
 `onAppStateKeysReceived(int)`, `onAppStateMutations(PatchName, ...)`,
@@ -165,12 +165,12 @@ inbound messages, and echoes text back. It deliberately uses only
 verified APIs:
 
 ```java
-import id.jawa.client.JaWaClient;
-import id.jawa.domain.store.FileAuthStore;
-import id.jawa.event.ConnectionUpdate;
-import id.jawa.event.MessageUpsert;
-import id.jawa.event.WaEventListener;
-import id.jawa.feature.messaging.MessageReceiver;
+import id.ja_wa.client.JaWaClient;
+import id.ja_wa.domain.store.FileAuthStore;
+import id.ja_wa.event.ConnectionUpdate;
+import id.ja_wa.event.MessageUpsert;
+import id.ja_wa.event.WaEventListener;
+import id.ja_wa.feature.messaging.MessageReceiver;
 
 import java.nio.file.Path;
 
@@ -249,7 +249,7 @@ drop, it does not hide the drop from your listener.
 
 ## 2. Event system
 
-The port adds a Baileys-shaped event model in `id.jawa.event`, alongside
+The port adds a Baileys-shaped event model in `id.ja_wa.event`, alongside
 — not instead of — the legacy single `JaWaClient.Listener` (§1.2). The
 bus is synchronous, per-listener failures are isolated (one listener
 throwing does not stop the next), and dispatch never throws out of the
@@ -258,8 +258,8 @@ client's reader loop: a dispatch failure is logged, not propagated.
 ### 2.1 Subscribing
 
 ```java
-import id.jawa.event.WaEventBus;
-import id.jawa.event.WaEventListener;
+import id.ja_wa.event.WaEventBus;
+import id.ja_wa.event.WaEventListener;
 
 WaEventBus bus = client.eventBus();
 
@@ -278,8 +278,8 @@ You can also dispatch manually, which is useful in tests and in adapters
 that translate another source into Baileys events:
 
 ```java
-import id.jawa.event.BaileysEventType;
-import id.jawa.event.ConnectionUpdate;
+import id.ja_wa.event.BaileysEventType;
+import id.ja_wa.event.ConnectionUpdate;
 
 bus.dispatch(BaileysEventType.CONNECTION_UPDATE, ConnectionUpdate.open());
 ```
@@ -303,7 +303,7 @@ type *is* the payload contract.
 A second, lower-level waiting primitive exists for connection state:
 
 ```java
-import id.jawa.event.ConnectionUpdate;
+import id.ja_wa.event.ConnectionUpdate;
 
 ConnectionUpdate matched = client
     .waitForConnectionUpdate(
@@ -427,7 +427,7 @@ Baileys emits **partials**, and wa-java preserves that semantics.
 `ConnectionUpdate` and `CredsUpdate` are the two places this bites.
 
 ```java
-import id.jawa.event.ConnectionUpdate;
+import id.ja_wa.event.ConnectionUpdate;
 
 // WRONG: replacing your whole connection state with one update.
 ConnectionState state = null; // your own model
@@ -501,7 +501,7 @@ presence/call branches return `false` from stanza handling so the
 legacy `onStanza` fallthrough still fires for existing consumers.
 
 ```java
-import id.jawa.event.CallEvent;
+import id.ja_wa.event.CallEvent;
 
 @Override
 public void onCall(CallEvent call) {
@@ -514,14 +514,14 @@ public void onCall(CallEvent call) {
 }
 ```
 
-`CallStatus` here is `id.jawa.event.CallStatus`; the snippet above
+`CallStatus` here is `id.ja_wa.event.CallStatus`; the snippet above
 assumes the usual imports for it alongside `CallEvent`.
 
 ---
 
 ## 3. InMemoryStore
 
-`InMemoryStore` (`id.jawa.feature.store`) is wa-java's equivalent of
+`InMemoryStore` (`id.ja_wa.feature.store`) is wa-java's equivalent of
 Baileys' `makeInMemoryStore`: a rebuildable in-memory cache of chats,
 messages, contacts, groups, presences, labels, LID mappings, and
 reactions. It is **not** a database and it is **not** persisted unless
@@ -530,7 +530,7 @@ you ask (§3.4).
 ### 3.1 Getting a store, and binding it
 
 ```java
-import id.jawa.feature.store.InMemoryStore;
+import id.ja_wa.feature.store.InMemoryStore;
 
 InMemoryStore store = client.store();   // the client's own store
 ```
@@ -560,8 +560,8 @@ myStore.bind(null);                                   // unbind again
 ### 3.2 Chats and messages
 
 ```java
-import id.jawa.feature.messaging.MessageReceiver;
-import id.jawa.feature.store.InMemoryStore;
+import id.ja_wa.feature.messaging.MessageReceiver;
+import id.ja_wa.feature.store.InMemoryStore;
 
 import java.util.List;
 
@@ -622,9 +622,9 @@ take the same key-shaped arguments as the Baileys key: id, remote JID
 ### 3.3 Contacts, groups, presences, labels, LID mappings, reactions
 
 ```java
-import id.jawa.event.ContactsUpsert;
-import id.jawa.event.GroupsUpsert;
-import id.jawa.event.PresenceUpdate;
+import id.ja_wa.event.ContactsUpsert;
+import id.ja_wa.event.GroupsUpsert;
+import id.ja_wa.event.PresenceUpdate;
 
 // Contacts.
 store.upsertContact(new ContactsUpsert.Contact(
@@ -702,7 +702,7 @@ does not exist; an empty or corrupt file replaces the store with an
 empty one (the store is a rebuildable cache) and returns `true`; any
 other read failure throws `IOException`. The file format is handled by
 `StorePersistence` / `StoreJson` / `FileStorePersistence` in
-`id.jawa.feature.store`; do not hand-edit the snapshot and expect the
+`id.ja_wa.feature.store`; do not hand-edit the snapshot and expect the
 loader to repair it — corrupt means empty, by policy, not best-effort
 recovery.
 
@@ -735,7 +735,7 @@ destination without an error from the router — check your JIDs.
 ### 4.1 The decoded inbound message, and plain text
 
 ```java
-import id.jawa.feature.messaging.MessageReceiver;
+import id.ja_wa.feature.messaging.MessageReceiver;
 
 // Inbound, from onMessageUpsert (§2) or the legacy onMessage callback:
 MessageReceiver.Decoded decoded = upsert.messages().get(0);
@@ -807,8 +807,8 @@ rules are enforced by failing the future, not by a send-time error
 from the server:
 
 ```java
-import id.jawa.feature.messaging.MessageEncoder;
-import id.jawa.proto.Wa;
+import id.ja_wa.feature.messaging.MessageEncoder;
+import id.ja_wa.proto.Wa;
 
 import java.util.List;
 
@@ -882,7 +882,7 @@ encrypted bytes**. wa-java does not encrypt a vote for you, and
 Baileys likewise takes the encrypted vote from the caller:
 
 ```java
-import id.jawa.proto.Wa;
+import id.ja_wa.proto.Wa;
 
 Wa.MessageKey pollKey = Wa.MessageKey.newBuilder()
     .setRemoteJid(chatId).setFromMe(false).setId(pollCreationMsgId).build();
@@ -936,7 +936,7 @@ requires at least one contact. A single contact (not an array) is
 ### 4.6 Lottie stickers, group status, spoiler, interactive templates
 
 ```java
-import id.jawa.feature.messaging.MessageEncoder;
+import id.ja_wa.feature.messaging.MessageEncoder;
 
 // Lottie: a sticker wrapped in a FutureProofMessage, exactly as the
 // Baileys fork wraps it. The flag overload also exists on the plain
@@ -1090,8 +1090,8 @@ return type before you assume a typed result.
 ### 5.1 Groups
 
 ```java
-import id.jawa.feature.messaging.GroupListQuery;
-import id.jawa.feature.messaging.GroupMetadataQuery;
+import id.ja_wa.feature.messaging.GroupListQuery;
+import id.ja_wa.feature.messaging.GroupMetadataQuery;
 
 // Create, leave, and manage membership.
 String groupJid = client.groups().createGroup("Engineering",
@@ -1203,8 +1203,8 @@ the group list.
 ### 5.3 Newsletters (channels)
 
 ```java
-import id.jawa.domain.model.NewsletterMetadata;
-import id.jawa.domain.model.NewsletterMessage;
+import id.ja_wa.domain.model.NewsletterMetadata;
+import id.ja_wa.domain.model.NewsletterMessage;
 
 // Follow / unfollow / mute, and read channel info.
 client.newsletters().follow(newsletterJid).join();
@@ -1259,7 +1259,7 @@ Notes that prevent the usual newsletter mistakes:
   `(queryId, dataPath, jsonVariables)`:
 
 ```java
-import id.jawa.feature.newsletter.NewsletterMexQuery;
+import id.ja_wa.feature.newsletter.NewsletterMexQuery;
 
 NewsletterMexQuery.MexRequest req =
     NewsletterMexQuery.create("My channel", "About this channel");
@@ -1285,7 +1285,7 @@ keeps them separate because confusing them is the main source of
 bugs here:
 
 1. **Patch models** (`AppPatchBuilder` in
-   `id.jawa.feature.appstate`): pure builders, no I/O. For example
+   `id.ja_wa.feature.appstate`): pure builders, no I/O. For example
    `buildRemoveContact(String)` and `buildPushNameSetting(String)`
    take a single argument each; the other builders
    (`buildAddOrEditContact`, `buildLabelEdit`, `buildLabelDelete`,
@@ -1297,8 +1297,8 @@ bugs here:
 2. **Sending a patch.** The client hook is:
 
 ```java
-import id.jawa.feature.appstate.AppPatchBuilder;
-import id.jawa.feature.appstate.AppPatchEncoder;
+import id.ja_wa.feature.appstate.AppPatchBuilder;
+import id.ja_wa.feature.appstate.AppPatchEncoder;
 
 AppPatchBuilder.AppPatch patch =
     AppPatchBuilder.buildRemoveContact("62812345678@s.whatsapp.net");
@@ -1341,9 +1341,9 @@ mapped to `labels.edit` / `labels.association` / `settings.update`
 ### 5.5 Catalog and business profiles
 
 ```java
-import id.jawa.domain.model.BusinessProfile;
-import id.jawa.domain.model.CatalogProduct;
-import id.jawa.feature.catalog.CatalogQuery;
+import id.ja_wa.domain.model.BusinessProfile;
+import id.ja_wa.domain.model.CatalogProduct;
+import id.ja_wa.feature.catalog.CatalogQuery;
 
 // Read a business's catalog and collections.
 CatalogQuery.CatalogResult catalog =
@@ -1379,7 +1379,7 @@ tokenBase64)`, and the bot list is `client.profile().getBotList()`.
 ### 6.1 Presence: sending and receiving
 
 ```java
-import id.jawa.domain.model.ChatPresence;
+import id.ja_wa.domain.model.ChatPresence;
 
 // Sending: typing / recording / paused in a chat, and global availability.
 client.sendChatPresence(chatId, ChatPresence.COMPOSING);
@@ -1494,7 +1494,7 @@ client.media().sendMediaRetryReceipt(decoded, mediaKey).join();
   rewriting content:
 
 ```java
-import id.jawa.proto.Wa;
+import id.ja_wa.proto.Wa;
 
 Wa.MediaRetryNotification notification = client.updateMediaMessage(
     messageId, remoteJid, fromMe, participant, mediaKey).join();
@@ -1524,7 +1524,7 @@ building on any of it.
 
 ### 7.1 App-state sync actions map to events
 
-`AppStateEventMapper` (`id.jawa.feature.appstate`) is a pure mapper:
+`AppStateEventMapper` (`id.ja_wa.feature.appstate`) is a pure mapper:
 it turns a sync action or a mutation into Baileys events, without
 any I/O. Its entry points are `map(Wa.SyncActionData)`,
 `mapMutation(AppStateProcessor.Mutation)`, `mapHistorySet(...)`, and
@@ -1554,7 +1554,7 @@ evolved state; and decode runs with `validateMacs=false`
 ### 7.2 History sync: inline, download, dispatch
 
 History arrives as `HistorySyncNotification`s inside messages.
-`HistorySyncNotificationParser` (`id.jawa.feature.messaging`)
+`HistorySyncNotificationParser` (`id.ja_wa.feature.messaging`)
 is the pure side: `extractNotification(Wa.Message)`,
 `shouldProcessHistoryMessage(Wa.Message.HistorySyncType)`,
 `decodeInline(...)`, `decodeDownloaded(byte[])`,
@@ -1600,8 +1600,8 @@ A peer-data operation is a message to your own account's other
 devices (notably device 0). The manual surface is:
 
 ```java
-import id.jawa.feature.messaging.PeerDataOperations;
-import id.jawa.proto.Wa;
+import id.ja_wa.feature.messaging.PeerDataOperations;
+import id.ja_wa.proto.Wa;
 
 // History-sync-on-demand request, as a PDO payload.
 Wa.Message.PeerDataOperationRequestMessage historyRequest =
@@ -1743,8 +1743,8 @@ the category names are Baileys' verbatim `privacyQuery` names
 `CATEGORY_READRECEIPTS`, and the group-add category).
 
 ```java
-import id.jawa.domain.model.PrivacySettings;
-import id.jawa.domain.model.StatusPrivacy;
+import id.ja_wa.domain.model.PrivacySettings;
+import id.ja_wa.domain.model.StatusPrivacy;
 
 import java.util.List;
 
@@ -1795,7 +1795,7 @@ duration is unparseable — where Baileys would yield `NaN`.
 ### 8.2 Blocking
 
 ```java
-import id.jawa.domain.model.Blocklist;
+import id.ja_wa.domain.model.Blocklist;
 
 // Via the privacy facade (recommended for block operations).
 Blocklist afterBlock = client.privacy().block("62812345678@s.whatsapp.net").join();
@@ -1823,7 +1823,7 @@ will never arrive.
 ### 8.3 Profile, status text, pictures, and push name
 
 ```java
-import id.jawa.domain.model.ProfilePictureInfo;
+import id.ja_wa.domain.model.ProfilePictureInfo;
 
 // Status text (two spellings, same operation).
 client.profile().updateStatus("Working from home").join();
@@ -1900,8 +1900,8 @@ was deliberately not changed by the port).
 ## 9. Media: upload, download, newsletter media
 
 ```java
-import id.jawa.feature.media.MediaConn;
-import id.jawa.feature.media.MediaUploader;
+import id.ja_wa.feature.media.MediaConn;
+import id.ja_wa.feature.media.MediaUploader;
 
 // Download media already referenced by a message.
 byte[] bytes = client.downloadMedia(message);           // Wa.Message
@@ -2159,8 +2159,8 @@ silent failure introduced by the port.
   source of truth for coverage claims; this guide is the source
   of truth for how to *use* what was built.
 - When in doubt about a signature, read the source file named
-  in the section: `id.jawa.client.JaWaClient` for the client
-  surface, `id.jawa.client.*Service` for the facades,
-  `id.jawa.feature.messaging.MessageEncoder` for builders,
-  `id.jawa.event.*` for event payloads, and
-  `id.jawa.feature.store.InMemoryStore` for the store.
+  in the section: `id.ja_wa.client.JaWaClient` for the client
+  surface, `id.ja_wa.client.*Service` for the facades,
+  `id.ja_wa.feature.messaging.MessageEncoder` for builders,
+  `id.ja_wa.event.*` for event payloads, and
+  `id.ja_wa.feature.store.InMemoryStore` for the store.

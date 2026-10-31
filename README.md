@@ -1,9 +1,9 @@
-# JaWa: Lightweight Java WhatsApp Library
+# Ja-Wa: Lightweight Java WhatsApp Library
 
-[![build](https://github.com/jochris/JaWa/actions/workflows/build.yml/badge.svg)](https://github.com/jochris/JaWa/actions/workflows/build.yml)
+[![build](https://github.com/innovatorssoft/wa-java/actions/workflows/build.yml/badge.svg)](https://github.com/innovatorssoft/wa-java/actions/workflows/build.yml)
 [![license](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](LICENSE)
 [![java](https://img.shields.io/badge/java-compatible-orange)](https://openjdk.org/)
-[![Maven Central](https://img.shields.io/maven-central/v/io.github.jochris/JaWa)](https://central.sonatype.com/artifact/io.github.jochris/JaWa)
+[![Maven Central](https://img.shields.io/maven-central/v/io.github.innovatorssoft/wa-java)](https://central.sonatype.com/artifact/io.github.innovatorssoft/wa-java)
 
 > Lightweight **Java** library for WhatsApp Web Multi-Device protocol.
 > Connects backend services, bots, and applications to WhatsApp Web features (Signal E2EE encryption, binary node codecs, QR & Phone pairing, CTA buttons, carousels, lists, and group management).
@@ -12,14 +12,14 @@
 
 ## 📦 Installation
 
-Import `JaWa` as a dependency into your Java project:
+Import `Ja-Wa` as a dependency into your Java project:
 
 ### Maven
 
 ```xml
 <dependency>
     <groupId>io.github.jochris</groupId>
-    <artifactId>JaWa</artifactId>
+    <artifactId>Ja-Wa</artifactId>
     <version>0.0.4</version>
 </dependency>
 ```
@@ -27,17 +27,17 @@ Import `JaWa` as a dependency into your Java project:
 ### Gradle
 
 ```groovy
-implementation 'io.github.jochris:JaWa:0.0.4'
+implementation 'io.github.jochris:Ja-Wa:0.0.4'
 ```
 
 ---
 
 ## 🏗️ Architecture Layout
 
-`JaWa` is structured into clean, domain-driven packages:
+`Ja-Wa` is structured into clean, domain-driven packages:
 
 ```text
-id.jawa
+id.ja_wa
 ├── client/                     Primary Client Facade & Modular Sub-Services
 ├── protocol/                   Wire Protocol, Codecs & Cryptography
 │   ├── connection/             WebSocket, Noise XX Handshake & Transport
@@ -61,7 +61,7 @@ id.jawa
 `JaWaClient` organizes functionality into clean, domain-scoped sub-services for clearer and more discoverable API access:
 
 ```java
-client.messages().sendText(chatJid, "Hello from JaWa!");
+client.messages().sendText(chatJid, "Hello from Ja-Wa!");
 client.messages().sendReaction(chatJid, msgId, null, false, "👍");
 String nextId = client.messages().generateMessageId();
 
@@ -76,7 +76,7 @@ client.media().sendImage(chatJid, imageBytes, "image/jpeg", "Check this out!");
 
 client.newsletters().sendText(newsletterJid, "New update published!");
 
-client.profile().updateStatus("Building with JaWa ☕");
+client.profile().updateStatus("Building with Ja-Wa ☕");
 
 client.chats().subscribePresence(targetJid);
 client.chats().sendChatPresence(chatJid, ChatPresence.COMPOSING);
@@ -203,9 +203,9 @@ Extract clean phone number digits from incoming sender JID, with automatic LID-t
 ```java
 package com.example;
 
-import id.jawa.client.JaWaClient;
-import id.jawa.domain.store.FileAuthStore;
-import id.jawa.feature.messaging.MessageReceiver;
+import id.ja_wa.client.JaWaClient;
+import id.ja_wa.domain.store.FileAuthStore;
+import id.ja_wa.feature.messaging.MessageReceiver;
 
 import java.nio.file.Path;
 
@@ -262,8 +262,8 @@ Connect and pair using an 8-character pairing code sent directly to your phone n
 ```java
 package com.example;
 
-import id.jawa.client.JaWaClient;
-import id.jawa.domain.store.FileAuthStore;
+import id.ja_wa.client.JaWaClient;
+import id.ja_wa.domain.store.FileAuthStore;
 
 import java.nio.file.Path;
 import java.util.List;
@@ -318,9 +318,9 @@ Connect and pair by scanning an ASCII QR matrix in the terminal:
 ```java
 package com.example;
 
-import id.jawa.client.JaWaClient;
-import id.jawa.domain.store.FileAuthStore;
-import id.jawa.feature.pairing.QrTerminal;
+import id.ja_wa.client.JaWaClient;
+import id.ja_wa.domain.store.FileAuthStore;
+import id.ja_wa.feature.pairing.QrTerminal;
 
 import java.nio.file.Path;
 import java.util.List;
@@ -364,11 +364,11 @@ Send rich interactive call-to-action buttons (URL link, copy promo code, quick r
 ```java
 package com.example;
 
-import id.jawa.client.JaWaClient;
-import id.jawa.feature.messaging.MessageEncoder;
-import id.jawa.feature.messaging.MessageEncoder.CtaButton;
-import id.jawa.feature.messaging.MessageEncoder.ListRow;
-import id.jawa.feature.messaging.MessageEncoder.ListSection;
+import id.ja_wa.client.JaWaClient;
+import id.ja_wa.feature.messaging.MessageEncoder;
+import id.ja_wa.feature.messaging.MessageEncoder.CtaButton;
+import id.ja_wa.feature.messaging.MessageEncoder.ListRow;
+import id.ja_wa.feature.messaging.MessageEncoder.ListSection;
 
 import java.util.List;
 
@@ -376,7 +376,7 @@ public class ButtonsAndListExample {
 
     public static void sendCtaButtons(JaWaClient client, String chatJid) {
         List<CtaButton> buttons = List.of(
-            CtaButton.url("🌐 Visit GitHub", "https://github.com/jochris/JaWa"),
+            CtaButton.url("🌐 Visit GitHub", "https://github.com/innovatorssoft/wa-java"),
             CtaButton.copy("📋 Copy Code", "JAWA-PROMO-2026"),
             CtaButton.quickReply("🏓 Ping Bot", "ping_cmd")
         );
@@ -425,8 +425,8 @@ Send horizontal scrolling carousel cards featuring images, descriptions, and act
 ```java
 package com.example;
 
-import id.jawa.client.JaWaClient;
-import id.jawa.feature.messaging.MessageEncoder.CtaButton;
+import id.ja_wa.client.JaWaClient;
+import id.ja_wa.feature.messaging.MessageEncoder.CtaButton;
 
 import java.util.List;
 
@@ -436,7 +436,7 @@ public class CarouselExample {
         List<JaWaClient.CarouselCardInput> cards = List.of(
             new JaWaClient.CarouselCardInput(
                 "Card 1: Feature Overview",
-                "Learn more about JaWa features",
+                "Learn more about Ja-Wa features",
                 imageBytes,
                 "image/jpeg",
                 "Slide 1",
@@ -469,8 +469,8 @@ Save and restore WhatsApp credentials & session state using an SQLite database (
 ```java
 package com.example;
 
-import id.jawa.client.JaWaClient;
-import id.jawa.domain.store.SqliteAuthStore;
+import id.ja_wa.client.JaWaClient;
+import id.ja_wa.domain.store.SqliteAuthStore;
 
 import java.nio.file.Path;
 import java.util.Map;
@@ -520,8 +520,8 @@ Automatically download and decrypt attachments (Image, Video, Audio PTT, Documen
 ```java
 package com.example;
 
-import id.jawa.client.JaWaClient;
-import id.jawa.feature.messaging.MessageReceiver;
+import id.ja_wa.client.JaWaClient;
+import id.ja_wa.feature.messaging.MessageReceiver;
 
 public class MediaDownloadExample {
 
@@ -548,7 +548,7 @@ Manage account bio status, fetch profile picture URLs, and manage contact blockl
 ```java
 package com.example;
 
-import id.jawa.client.JaWaClient;
+import id.ja_wa.client.JaWaClient;
 
 import java.util.List;
 
@@ -579,7 +579,7 @@ Manage chat pin, archive, mute states, and ephemeral disappearing message timers
 ```java
 package com.example;
 
-import id.jawa.client.JaWaClient;
+import id.ja_wa.client.JaWaClient;
 
 public class ChatManagementExample {
 
@@ -634,8 +634,8 @@ Inspect and configure account privacy visibility across categories (last seen, p
 ```java
 package com.example;
 
-import id.jawa.client.JaWaClient;
-import id.jawa.domain.model.PrivacySettings;
+import id.ja_wa.client.JaWaClient;
+import id.ja_wa.domain.model.PrivacySettings;
 
 public class PrivacyExample {
 
@@ -679,9 +679,9 @@ Generate personal contact QR links (`https://wa.me/qr/<code>`), revoke them, or 
 ```java
 package com.example;
 
-import id.jawa.client.JaWaClient;
-import id.jawa.domain.model.BusinessMessageLinkTarget;
-import id.jawa.domain.model.ContactQrTarget;
+import id.ja_wa.client.JaWaClient;
+import id.ja_wa.domain.model.BusinessMessageLinkTarget;
+import id.ja_wa.domain.model.ContactQrTarget;
 
 public class QrAndShortLinkExample {
 
@@ -716,9 +716,9 @@ Fetch full WhatsApp business profiles (address, email, description, website list
 ```java
 package com.example;
 
-import id.jawa.client.JaWaClient;
-import id.jawa.domain.model.BusinessProfile;
-import id.jawa.domain.model.UserInfo;
+import id.ja_wa.client.JaWaClient;
+import id.ja_wa.domain.model.BusinessProfile;
+import id.ja_wa.domain.model.UserInfo;
 
 import java.util.List;
 import java.util.Map;
@@ -763,8 +763,8 @@ Control group join approval requirements, member add mode (admin only versus all
 ```java
 package com.example;
 
-import id.jawa.client.JaWaClient;
-import id.jawa.domain.model.GroupJoinRequest;
+import id.ja_wa.client.JaWaClient;
+import id.ja_wa.domain.model.GroupJoinRequest;
 
 import java.util.List;
 
@@ -800,9 +800,9 @@ Interact with WhatsApp Channels / Newsletters by subscribing to live updates, fo
 ```java
 package com.example;
 
-import id.jawa.client.JaWaClient;
-import id.jawa.domain.model.NewsletterMessage;
-import id.jawa.domain.model.NewsletterMetadata;
+import id.ja_wa.client.JaWaClient;
+import id.ja_wa.domain.model.NewsletterMessage;
+import id.ja_wa.domain.model.NewsletterMetadata;
 
 import java.util.List;
 
@@ -860,7 +860,7 @@ Reject incoming WhatsApp voice and video calls programmatically:
 ```java
 package com.example;
 
-import id.jawa.client.JaWaClient;
+import id.ja_wa.client.JaWaClient;
 
 public class CallManagementExample {
 
@@ -906,7 +906,7 @@ Change the companion device display name sent in presence broadcasts:
 ```java
 package com.example;
 
-import id.jawa.client.JaWaClient;
+import id.ja_wa.client.JaWaClient;
 
 public class PushNameExample {
 
@@ -929,7 +929,7 @@ Safely unlink the companion device from WhatsApp Web, purge credentials from sto
 ```java
 package com.example;
 
-import id.jawa.client.JaWaClient;
+import id.ja_wa.client.JaWaClient;
 
 public class LogoutExample {
 
@@ -952,8 +952,8 @@ Fetch and parse structured order details from incoming `OrderMessage` containing
 ```java
 package com.example;
 
-import id.jawa.client.JaWaClient;
-import id.jawa.domain.model.OrderDetails;
+import id.ja_wa.client.JaWaClient;
+import id.ja_wa.domain.model.OrderDetails;
 
 public class OrderExample {
 
@@ -986,7 +986,7 @@ Star messages, delete chats, or clear message histories:
 ```java
 package com.example;
 
-import id.jawa.client.JaWaClient;
+import id.ja_wa.client.JaWaClient;
 
 public class StarAndChatExample {
 
@@ -1012,9 +1012,9 @@ Retrieve full blocklist with companion LID and phone number mappings, or block a
 ```java
 package com.example;
 
-import id.jawa.client.JaWaClient;
-import id.jawa.domain.model.Blocklist;
-import id.jawa.domain.model.BlocklistItem;
+import id.ja_wa.client.JaWaClient;
+import id.ja_wa.domain.model.Blocklist;
+import id.ja_wa.domain.model.BlocklistItem;
 
 public class BlocklistExample {
 
@@ -1043,8 +1043,8 @@ Check status broadcast audience settings (contacts, blacklist, or whitelist mode
 ```java
 package com.example;
 
-import id.jawa.client.JaWaClient;
-import id.jawa.domain.model.StatusPrivacy;
+import id.ja_wa.client.JaWaClient;
+import id.ja_wa.domain.model.StatusPrivacy;
 
 import java.util.List;
 
@@ -1071,7 +1071,7 @@ Update the user profile "About" bio text via WhatsApp Web MEX mutation:
 ```java
 package com.example;
 
-import id.jawa.client.JaWaClient;
+import id.ja_wa.client.JaWaClient;
 
 public class ProfileStatusExample {
 
@@ -1094,8 +1094,8 @@ Manage WhatsApp Communities, inspect child subgroups, query linked participants 
 ```java
 package com.example;
 
-import id.jawa.client.JaWaClient;
-import id.jawa.domain.model.CommunitySubGroup;
+import id.ja_wa.client.JaWaClient;
+import id.ja_wa.domain.model.CommunitySubGroup;
 
 import java.util.List;
 
@@ -1128,8 +1128,8 @@ Accept private group invitations sent as invite messages (containing group JID, 
 ```java
 package com.example;
 
-import id.jawa.client.JaWaClient;
-import id.jawa.protocol.codec.BinaryNode;
+import id.ja_wa.client.JaWaClient;
+import id.ja_wa.protocol.codec.BinaryNode;
 
 public class GroupInviteMessageExample {
 
@@ -1155,8 +1155,8 @@ Fetch structured profile picture metadata including direct path, image ID, and U
 ```java
 package com.example;
 
-import id.jawa.client.JaWaClient;
-import id.jawa.domain.model.ProfilePictureInfo;
+import id.ja_wa.client.JaWaClient;
+import id.ja_wa.domain.model.ProfilePictureInfo;
 
 public class ProfilePictureExample {
 
@@ -1188,8 +1188,8 @@ Discover WhatsApp AI personas and bot accounts registered on the server:
 ```java
 package com.example;
 
-import id.jawa.client.JaWaClient;
-import id.jawa.domain.model.BotListInfo;
+import id.ja_wa.client.JaWaClient;
+import id.ja_wa.domain.model.BotListInfo;
 
 import java.util.List;
 
@@ -1216,7 +1216,7 @@ Send static or animated WebP stickers to private chats or groups:
 ```java
 package com.example;
 
-import id.jawa.client.JaWaClient;
+import id.ja_wa.client.JaWaClient;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
@@ -1246,8 +1246,8 @@ Explicitly delete uploaded media files from WhatsApp CDN servers using direct pa
 ```java
 package com.example;
 
-import id.jawa.client.JaWaClient;
-import id.jawa.feature.media.MediaCrypto;
+import id.ja_wa.client.JaWaClient;
+import id.ja_wa.feature.media.MediaCrypto;
 
 public class MediaDeleteExample {
 
@@ -1270,9 +1270,9 @@ Request phone re-upload when media files expire or return 404/410, and decrypt i
 ```java
 package com.example;
 
-import id.jawa.client.JaWaClient;
-import id.jawa.feature.messaging.MessageReceiver;
-import id.jawa.proto.Wa;
+import id.ja_wa.client.JaWaClient;
+import id.ja_wa.feature.messaging.MessageReceiver;
+import id.ja_wa.proto.Wa;
 
 public class MediaRetryExample {
 
@@ -1301,7 +1301,7 @@ Mark messages or view-once media as read locally on companion devices without se
 ```java
 package com.example;
 
-import id.jawa.client.JaWaClient;
+import id.ja_wa.client.JaWaClient;
 
 public class PrivacyReceiptsExample {
 
@@ -1325,7 +1325,7 @@ This project is licensed under the terms of the **GNU General Public License v3.
 
 ## Baileys event compatibility (Increment 1)
 
-The new `id.jawa.event` package ports the Baileys event model to Java, alongside the
+The new `id.ja_wa.event` package ports the Baileys event model to Java, alongside the
 existing single `JaWaClient.Listener` (which is unchanged). Register listeners with
 `client.addEventListener(...)` / `client.removeEventListener(...)`, or use
 `client.eventBus()` directly:
@@ -1391,7 +1391,7 @@ Increment 2 adds the in-memory store, notification dispatch, message-content
 builders, and the newsletter upload path — all on top of Increment 1's event
 package, with no existing public API removed.
 
-### In-memory store (`id.jawa.feature.store.InMemoryStore`)
+### In-memory store (`id.ja_wa.feature.store.InMemoryStore`)
 
 The wa-java equivalent of Baileys' `makeInMemoryStore`, reachable as
 `client.store()`. It keeps chats, contacts, messages, groups, presences,
@@ -1492,7 +1492,7 @@ newsletter path map: `MediaUploader.upload(..., newsletter=true)` uploads to
 
 Increment 3 adds newsletter/community/catalog/contact/label server APIs, app-state sync-action mapping, store persistence, single-group metadata and profile-picture (tcToken) queries, status-mention builders, and spoiler messages via real proto regeneration.
 
-- **Events now dispatched from real client data (27 of 33 user-facing):** Increment 2's 23, plus `labels.edit`, `labels.association`, `settings.update`, and `chats.lock`, all dispatched from decoded app-state sync actions in `JaWaClient.requestAppStateSync` via `id.jawa.feature.appstate.AppStateEventMapper`. Still not dispatched from any path: `messaging-history.set`, `messaging-history.status`, and `message-capping.update` (see below). The store-bound set is unchanged.
+- **Events now dispatched from real client data (27 of 33 user-facing):** Increment 2's 23, plus `labels.edit`, `labels.association`, `settings.update`, and `chats.lock`, all dispatched from decoded app-state sync actions in `JaWaClient.requestAppStateSync` via `id.ja_wa.feature.appstate.AppStateEventMapper`. Still not dispatched from any path: `messaging-history.set`, `messaging-history.status`, and `message-capping.update` (see below). The store-bound set is unchanged.
 - **Newsletter:** `NewsletterMexQuery` builders (create/update/name/description/removePicture/subscribers/subscribed/adminCount/changeOwner/demote/delete/capping) and `NewsletterService` facades via `sendMexQuery`; `NewsletterMessageDecoder` for plaintext newsletter messages; `NewsletterLinkedProfiles` inbound parser. Newsletter promote does not exist as a Baileys query and was not invented.
 - **Community:** `CommunityQuery` (create, createGroup, metadata, leave, subject/description/settings/member-add/join-approval/ephemeral, invite, participants, request-participants) and `GroupService` facades; `GroupService.queryGroupMetadata` for full single-group metadata.
 - **Catalog/product/business:** `CatalogQuery` + `CatalogProduct` and `ProfileService` facades (catalog, collections, product create/update/delete, business-profile delta, cover-photo update/remove). Product-image and cover-photo uploads remain builders-only (no upload step in wa-java).

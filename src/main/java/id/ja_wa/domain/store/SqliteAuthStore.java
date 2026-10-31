@@ -1,0 +1,483 @@
+package id.ja_wa.domain.store;
+
+import id.ja_wa.domain.model.AuthCreds;
+import id.ja_wa.domain.model.SignedPreKey;
+import id.ja_wa.protocol.crypto.Bytes;
+import id.ja_wa.protocol.crypto.KeyPair25519;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.Map;
+
+/**
+ * SQLite-based implementation of {@link AuthStore} providing single-file transactional storage
+ * for credentials, sessions, pre-keys, sender keys, and app-state synchronization keys.
+ */
+public final class SqliteAuthStore implements AuthStore, AutoCloseable {
+
+    private final String jdbcUrl;
+
+    /**
+     * Initializes a new SQLite auth store located at the specified database file path.
+     *
+     * @param dbFile path to the SQLite database file
+     */
+    public SqliteAuthStore(Path dbFile) {
+        if (dbFile.getParent() != null) {
+            try {
+                Files.createDirectories(dbFile.getParent());
+            } catch (IOException e) {
+                throw new IllegalStateException("Failed to create directory for SQLite DB: " + dbFile, e);
+            }
+        }
+        this.jdbcUrl = "jdbc:sqlite:" + dbFile.toAbsolutePath();
+        initDb();
+    }
+
+    /**
+     * Initializes a new SQLite auth store with a string path.
+     *
+     * @param dbPath filesystem path to the SQLite database file
+     */
+    public SqliteAuthStore(String dbPath) {
+        this(Path.of(dbPath));
+    }
+
+    private Connection getConnection() throws SQLException {
+        return DriverManager.getConnection(jdbcUrl);
+    }
+
+    private void initDb() {
+        try (Connection conn = getConnection(); Statement stmt = conn.createStatement()) {
+            stmt.executeUpdate("""
+                CREATE TABLE IF NOT EXISTS credentials (
+                    key TEXT PRIMARY KEY,
+                    value TEXT
+                );
+            """);
+            stmt.executeUpdate("""
+                CREATE TABLE IF NOT EXISTS sessions (
+                    address TEXT PRIMARY KEY,
+                    record BLOB
+                );
+            """);
+            stmt.executeUpdate("""
+                CREATE TABLE IF NOT EXISTS prekeys (
+                    id INTEGER PRIMARY KEY,
+                    priv_key BLOB,
+                    pub_key BLOB
+                );
+            """);
+            stmt.executeUpdate("""
+                CREATE TABLE IF NOT EXISTS sender_keys (
+                    name TEXT PRIMARY KEY,
+                    record BLOB
+                );
+            """);
+            stmt.executeUpdate("""
+                CREATE TABLE IF NOT EXISTS appstate_keys (
+                    id TEXT PRIMARY KEY,
+                    key_data BLOB
+                );
+            """);
+            stmt.executeUpdate("""
+                CREATE TABLE IF NOT EXISTS appstate_versions (
+                    name TEXT PRIMARY KEY,
+                    version INTEGER NOT NULL,
+                    hash BLOB NOT NULL,
+                    index_map TEXT NOT NULL
+                );
+            """);
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to initialize SQLite database tables: " + jdbcUrl, e);
+        }
+    }
+
+    @Override
+    public synchronized AuthCreds load() throws IOException {
+        Map<String, String> kv = readKv();
+        if (kv.isEmpty() || kv.get("noiseKey.priv") == null) {
+            return null;
+        }
+
+        AuthCreds c = new AuthCreds();
+        c.noiseKey = new KeyPair25519(b64(kv.get("noiseKey.priv")), b64(kv.get("noiseKey.pub")));
+        c.signedIdentityKey = new KeyPair25519(
+            b64(kv.get("identityKey.priv")), b64(kv.get("identityKey.pub")));
+        c.signedPreKey = new SignedPreKey(
+            Integer.parseInt(kv.get("signedPreKey.id")),
+            new KeyPair25519(b64(kv.get("signedPreKey.priv")), b64(kv.get("signedPreKey.pub"))),
+            b64(kv.get("signedPreKey.sig")));
+        c.registrationId   = Integer.parseInt(kv.get("registrationId"));
+        c.advSecretKey     = b64(kv.get("advSecretKey"));
+        c.nextPreKeyId     = parseIntOrDefault(kv.get("nextPreKeyId"), 1);
+        c.firstUnuploadedPreKeyId = parseIntOrDefault(kv.get("firstUnuploadedPreKeyId"), 1);
+        c.accountSyncCounter      = parseIntOrDefault(kv.get("accountSyncCounter"), 0);
+        c.account  = b64Opt(kv.get("account"));
+        c.meJid    = kv.get("meJid");
+        c.meLid    = kv.get("meLid");
+        c.pushName = kv.get("pushName");
+        c.platform = kv.get("platform");
+        c.myAppStateKeyId = kv.get("myAppStateKeyId");
+        return c;
+    }
+
+    @Override
+    public synchronized void save(AuthCreds c) throws IOException {
+        Map<String, String> kv = new LinkedHashMap<>();
+        kv.put("noiseKey.priv",     Bytes.toBase64(c.noiseKey.privateKey()));
+        kv.put("noiseKey.pub",      Bytes.toBase64(c.noiseKey.publicKey()));
+        kv.put("identityKey.priv",  Bytes.toBase64(c.signedIdentityKey.privateKey()));
+        kv.put("identityKey.pub",   Bytes.toBase64(c.signedIdentityKey.publicKey()));
+        kv.put("signedPreKey.id",   Integer.toString(c.signedPreKey.keyId()));
+        kv.put("signedPreKey.priv", Bytes.toBase64(c.signedPreKey.keyPair().privateKey()));
+        kv.put("signedPreKey.pub",  Bytes.toBase64(c.signedPreKey.keyPair().publicKey()));
+        kv.put("signedPreKey.sig",  Bytes.toBase64(c.signedPreKey.signature()));
+        kv.put("registrationId",    Integer.toString(c.registrationId));
+        kv.put("advSecretKey",      Bytes.toBase64(c.advSecretKey));
+        kv.put("nextPreKeyId",      Integer.toString(c.nextPreKeyId));
+        kv.put("firstUnuploadedPreKeyId", Integer.toString(c.firstUnuploadedPreKeyId));
+        kv.put("accountSyncCounter", Integer.toString(c.accountSyncCounter));
+        if (c.account  != null) kv.put("account",  Bytes.toBase64(c.account));
+        if (c.meJid    != null) kv.put("meJid",    c.meJid);
+        if (c.meLid    != null) kv.put("meLid",    c.meLid);
+        if (c.pushName != null) kv.put("pushName", c.pushName);
+        if (c.platform != null) kv.put("platform", c.platform);
+        if (c.myAppStateKeyId != null) kv.put("myAppStateKeyId", c.myAppStateKeyId);
+        writeKv(kv);
+    }
+
+    @Override
+    public boolean isPaired() throws IOException {
+        AuthCreds c = load();
+        return c != null && c.account != null && c.meJid != null;
+    }
+
+    public synchronized Map<String, byte[]> loadSessions() throws IOException {
+        Map<String, byte[]> out = new HashMap<>();
+        try (Connection conn = getConnection();
+             Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery("SELECT address, record FROM sessions")) {
+            while (rs.next()) {
+                out.put(rs.getString("address"), rs.getBytes("record"));
+            }
+        } catch (SQLException e) {
+            throw new IOException("Failed to read sessions from SQLite: " + jdbcUrl, e);
+        }
+        return out;
+    }
+
+    public synchronized void saveSession(String address, byte[] record) {
+        try (Connection conn = getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(
+                 "INSERT INTO sessions (address, record) VALUES (?, ?) ON CONFLICT(address) DO UPDATE SET record = excluded.record")) {
+            pstmt.setString(1, address);
+            pstmt.setBytes(2, record);
+            pstmt.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to save session for " + address + " to SQLite", e);
+        }
+    }
+
+    public synchronized void deleteSession(String address) {
+        try (Connection conn = getConnection();
+             PreparedStatement pstmt = conn.prepareStatement("DELETE FROM sessions WHERE address = ?")) {
+            pstmt.setString(1, address);
+            pstmt.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to delete session for " + address + " from SQLite", e);
+        }
+    }
+
+    public synchronized Map<Integer, KeyPair25519> loadPreKeys() throws IOException {
+        Map<Integer, KeyPair25519> out = new HashMap<>();
+        try (Connection conn = getConnection();
+             Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery("SELECT id, priv_key, pub_key FROM prekeys")) {
+            while (rs.next()) {
+                int id = rs.getInt("id");
+                byte[] priv = rs.getBytes("priv_key");
+                byte[] pub = rs.getBytes("pub_key");
+                if (priv != null && pub != null && priv.length == 32 && pub.length == 32) {
+                    out.put(id, new KeyPair25519(priv, pub));
+                }
+            }
+        } catch (SQLException e) {
+            throw new IOException("Failed to read prekeys from SQLite: " + jdbcUrl, e);
+        }
+        return out;
+    }
+
+    public synchronized void savePreKey(int id, KeyPair25519 kp) {
+        try (Connection conn = getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(
+                 "INSERT INTO prekeys (id, priv_key, pub_key) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET priv_key = excluded.priv_key, pub_key = excluded.pub_key")) {
+            pstmt.setInt(1, id);
+            pstmt.setBytes(2, kp.privateKey());
+            pstmt.setBytes(3, kp.publicKey());
+            pstmt.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to save prekey " + id + " to SQLite", e);
+        }
+    }
+
+    public synchronized void deletePreKey(int id) {
+        try (Connection conn = getConnection();
+             PreparedStatement pstmt = conn.prepareStatement("DELETE FROM prekeys WHERE id = ?")) {
+            pstmt.setInt(1, id);
+            pstmt.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to delete prekey " + id + " from SQLite", e);
+        }
+    }
+
+    public synchronized void prunePreKeys(int keepCount) {
+        try (Connection conn = getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(
+                 "DELETE FROM prekeys WHERE id NOT IN (SELECT id FROM prekeys ORDER BY id DESC LIMIT ?)")) {
+            pstmt.setInt(1, keepCount);
+            pstmt.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to prune prekeys in SQLite", e);
+        }
+    }
+
+    public synchronized Map<String, byte[]> loadSenderKeys() throws IOException {
+        Map<String, byte[]> out = new HashMap<>();
+        try (Connection conn = getConnection();
+             Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery("SELECT name, record FROM sender_keys")) {
+            while (rs.next()) {
+                out.put(rs.getString("name"), rs.getBytes("record"));
+            }
+        } catch (SQLException e) {
+            throw new IOException("Failed to read sender keys from SQLite: " + jdbcUrl, e);
+        }
+        return out;
+    }
+
+    public synchronized void saveSenderKey(String name, byte[] record) {
+        try (Connection conn = getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(
+                 "INSERT INTO sender_keys (name, record) VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET record = excluded.record")) {
+            pstmt.setString(1, name);
+            pstmt.setBytes(2, record);
+            pstmt.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to save sender key " + name + " to SQLite", e);
+        }
+    }
+
+    public synchronized void deleteSenderKey(String name) {
+        try (Connection conn = getConnection();
+             PreparedStatement pstmt = conn.prepareStatement("DELETE FROM sender_keys WHERE name = ?")) {
+            pstmt.setString(1, name);
+            pstmt.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to delete sender key " + name + " from SQLite", e);
+        }
+    }
+
+    public synchronized Map<String, byte[]> loadAppStateKeys() throws IOException {
+        Map<String, byte[]> out = new HashMap<>();
+        try (Connection conn = getConnection();
+             Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery("SELECT id, key_data FROM appstate_keys")) {
+            while (rs.next()) {
+                out.put(rs.getString("id"), rs.getBytes("key_data"));
+            }
+        } catch (SQLException e) {
+            throw new IOException("Failed to read app-state keys from SQLite: " + jdbcUrl, e);
+        }
+        return out;
+    }
+
+    public synchronized void saveAppStateKey(String id, byte[] keyData) {
+        try (Connection conn = getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(
+                 "INSERT INTO appstate_keys (id, key_data) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET key_data = excluded.key_data")) {
+            pstmt.setString(1, id);
+            pstmt.setBytes(2, keyData);
+            pstmt.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to save app-state key " + id + " to SQLite", e);
+        }
+    }
+
+    public synchronized void deleteAppStateKey(String id) {
+        try (Connection conn = getConnection();
+             PreparedStatement pstmt = conn.prepareStatement("DELETE FROM appstate_keys WHERE id = ?")) {
+            pstmt.setString(1, id);
+            pstmt.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to delete app-state key " + id + " from SQLite", e);
+        }
+    }
+
+    /**
+     * Increment 5: loads every stored app-state-sync version state
+     * (Baileys {@code 'app-state-sync-version'}), as
+     * {@code name -> LtHashState}. The {@code index_map} column holds
+     * one {@code <standard-base64 indexMac>:<standard-base64 valueMac>}
+     * line per live index, the same text form
+     * {@link id.ja_wa.feature.appstate.FileAppStateVersionStore} writes
+     * to its per-collection files, so the two backends stay
+     * interchangeable. Rows whose hash is not 128 bytes or whose map
+     * does not parse are skipped, never returned half-decoded.
+     */
+    public synchronized Map<String, id.ja_wa.feature.appstate.LtHashState> loadAppStateVersions() throws IOException {
+        Map<String, id.ja_wa.feature.appstate.LtHashState> out = new HashMap<>();
+        try (Connection conn = getConnection();
+             Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery("SELECT name, version, hash, index_map FROM appstate_versions")) {
+            while (rs.next()) {
+                String name = rs.getString("name");
+                byte[] hash = rs.getBytes("hash");
+                String mapText = rs.getString("index_map");
+                if (name == null || hash == null || hash.length != 128 || mapText == null) continue;
+                Map<String, byte[]> map = id.ja_wa.feature.appstate.FileAppStateVersionStore.parseIndexMap(mapText);
+                if (map == null) continue;
+                out.put(name, new id.ja_wa.feature.appstate.LtHashState(rs.getLong("version"), hash, map));
+            }
+        } catch (SQLException e) {
+            throw new IOException("Failed to read app-state versions from SQLite: " + jdbcUrl, e);
+        }
+        return out;
+    }
+
+    /** Increment 5: upserts one collection's app-state-sync version state. */
+    public synchronized void saveAppStateVersion(String name,
+                                                 id.ja_wa.feature.appstate.LtHashState state) {
+        if (name == null || state == null) throw new IllegalArgumentException("name and state must not be null");
+        try (Connection conn = getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(
+                 "INSERT INTO appstate_versions (name, version, hash, index_map) VALUES (?, ?, ?, ?) "
+                     + "ON CONFLICT(name) DO UPDATE SET version = excluded.version, hash = excluded.hash, "
+                     + "index_map = excluded.index_map")) {
+            pstmt.setString(1, name);
+            pstmt.setLong(2, state.version());
+            pstmt.setBytes(3, state.hash());
+            pstmt.setString(4, id.ja_wa.feature.appstate.FileAppStateVersionStore.formatIndexMap(
+                state.indexValueMap()));
+            pstmt.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to save app-state version for " + name + " to SQLite", e);
+        }
+    }
+
+    /** Increment 5: deletes one collection's stored app-state-sync version state. */
+    public synchronized void deleteAppStateVersion(String name) {
+        try (Connection conn = getConnection();
+             PreparedStatement pstmt = conn.prepareStatement("DELETE FROM appstate_versions WHERE name = ?")) {
+            pstmt.setString(1, name);
+            pstmt.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to delete app-state version for " + name + " from SQLite", e);
+        }
+    }
+
+    private Map<String, String> readKv() throws IOException {
+        Map<String, String> kv = new LinkedHashMap<>();
+        try (Connection conn = getConnection();
+             Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery("SELECT key, value FROM credentials")) {
+            while (rs.next()) {
+                kv.put(rs.getString("key"), rs.getString("value"));
+            }
+        } catch (SQLException e) {
+            throw new IOException("Failed to read credentials from SQLite: " + jdbcUrl, e);
+        }
+        return kv;
+    }
+
+    private void writeKv(Map<String, String> kv) throws IOException {
+        try (Connection conn = getConnection()) {
+            conn.setAutoCommit(false);
+            try (PreparedStatement pstmt = conn.prepareStatement(
+                    "INSERT INTO credentials (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")) {
+                for (Map.Entry<String, String> e : kv.entrySet()) {
+                    pstmt.setString(1, e.getKey());
+                    pstmt.setString(2, e.getValue());
+                    pstmt.addBatch();
+                }
+                pstmt.executeBatch();
+                conn.commit();
+            } catch (SQLException e) {
+                conn.rollback();
+                throw new IOException("Failed to save credentials to SQLite: " + jdbcUrl, e);
+            }
+        } catch (SQLException e) {
+            throw new IOException("Failed to connect to SQLite: " + jdbcUrl, e);
+        }
+    }
+
+    private static byte[] b64(String s)    { return s == null ? null : Bytes.fromBase64(s); }
+    private static byte[] b64Opt(String s) { return s == null ? null : Bytes.fromBase64(s); }
+    private static int parseIntOrDefault(String s, int d) {
+        return s == null ? d : Integer.parseInt(s);
+    }
+
+    public synchronized void vacuum() {
+        try (Connection conn = getConnection(); Statement stmt = conn.createStatement()) {
+            stmt.executeUpdate("VACUUM");
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to VACUUM SQLite database", e);
+        }
+    }
+
+    public synchronized boolean checkIntegrity() {
+        try (Connection conn = getConnection();
+             Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery("PRAGMA integrity_check")) {
+            return rs.next() && "ok".equalsIgnoreCase(rs.getString(1));
+        } catch (SQLException e) {
+            return false;
+        }
+    }
+
+    public synchronized void clearAll() {
+        try (Connection conn = getConnection(); Statement stmt = conn.createStatement()) {
+            stmt.executeUpdate("DELETE FROM credentials");
+            stmt.executeUpdate("DELETE FROM sessions");
+            stmt.executeUpdate("DELETE FROM prekeys");
+            stmt.executeUpdate("DELETE FROM sender_keys");
+            stmt.executeUpdate("DELETE FROM appstate_keys");
+            stmt.executeUpdate("DELETE FROM appstate_versions");
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to clear SQLite tables", e);
+        }
+    }
+
+    public synchronized Map<String, Integer> getStats() {
+        Map<String, Integer> stats = new LinkedHashMap<>();
+        String[] tables = {"credentials", "sessions", "prekeys", "sender_keys", "appstate_keys", "appstate_versions"};
+        try (Connection conn = getConnection(); Statement stmt = conn.createStatement()) {
+            for (String table : tables) {
+                try (ResultSet rs = stmt.executeQuery("SELECT COUNT(*) FROM " + table)) {
+                    stats.put(table, rs.next() ? rs.getInt(1) : 0);
+                }
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to fetch SQLite stats", e);
+        }
+        return stats;
+    }
+
+    @Override
+    public void clear() {
+        clearAll();
+    }
+
+    @Override
+    public void close() {
+    }
+}

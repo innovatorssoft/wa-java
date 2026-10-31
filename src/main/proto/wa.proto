@@ -1,7 +1,7 @@
 syntax = "proto2";
 package proto;
 
-option java_package = "id.jawa.proto";
+option java_package = "id.ja_wa.proto";
 option java_outer_classname = "Wa";
 option java_multiple_files = false;
 
